@@ -1,4 +1,11 @@
-# Team 973 GreyScout
+# Team 973 greybots-apps
+
+npm-workspaces monorepo:
+
+- `apps/greyscout`: GreyScout, the scouting app
+- `apps/preflight`: Preflight, the offline-first pit crew app (see `apps/preflight/docs/architecture.md`)
+- `packages/common`: shared Vue components, styles, and the Supabase client
+- `supabase/`: the shared Supabase project
 
 ## Installation
 
@@ -19,9 +26,14 @@ supabase secrets set TBA_API_KEY=<your-tba-api-key>
 
 ## Development 
 
-To start the website in development mode:
+To start GreyScout in development mode:
 ```bash
 npm run dev
+```
+
+To start Preflight in development mode (or use `serve:preflight` to test the offline service worker at http://localhost:4173):
+```bash
+npm run dev:preflight
 ```
 
 To format the code:

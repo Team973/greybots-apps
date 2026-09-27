@@ -1,0 +1,50 @@
+import { createRouter, createWebHistory } from 'vue-router';
+import type { Role } from '@/lib/roles';
+import { useDeviceStore } from '@/stores/device-store';
+import { useSessionStore } from '@/stores/session-store';
+import HomeView from '@/views/HomeView.vue';
+import LoginView from '@/views/LoginView.vue';
+import SetupView from '@/views/SetupView.vue';
+import SettingsView from '@/views/SettingsView.vue';
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    title?: string;
+    // Routes are signed-in only unless this is explicitly false.
+    requiresAuth?: boolean;
+    minRole?: Role;
+  }
+}
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', name: 'home', component: HomeView, meta: { title: 'Home' } },
+    { path: '/setup', name: 'setup', component: SetupView, meta: { title: 'Setup', requiresAuth: false } },
+    { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', requiresAuth: false } },
+    { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
+    { path: '/:pathMatch(.*)*', redirect: '/' }
+  ]
+});
+
+router.beforeEach((to) => {
+  const device = useDeviceStore();
+  const session = useSessionStore();
+
+  // First run: the device must pick kiosk or web mode before anything else.
+  if (!device.isConfigured) return to.name === 'setup' ? true : { name: 'setup' };
+  if (to.name === 'setup') return { name: 'home' };
+
+  if (to.name === 'login' && session.isSignedIn) return { name: 'home' };
+  if (to.meta.requiresAuth !== false && !session.isSignedIn) {
+    return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
+  }
+  if (to.meta.minRole && !session.hasRole(to.meta.minRole)) return { name: 'home' };
+  return true;
+});
+
+router.afterEach((to) => {
+  document.title = to.meta.title ? `${to.meta.title} | Preflight` : 'Preflight';
+});
+
+export default router;
