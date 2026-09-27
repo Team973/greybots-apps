@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 5
     defaults:
       run:
-        working-directory: ./util
+        working-directory: ./apps/greyscout/util
     steps:
       - name: Check out default branch
         uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.10'
           enable-cache: true
-          cache-dependency-glob: 'util/uv.lock'
+          cache-dependency-glob: 'apps/greyscout/util/uv.lock'
 
       - run: uv sync --locked
 
