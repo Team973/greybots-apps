@@ -8,8 +8,13 @@ description: Conventions and workflow for developing GreyScout, Team 973's FRC s
 FRC Team 973's scouting app: match scouting, pit scouting, team analysis, and
 a drag-and-drop pick list. Frontend is Vue 3 (mostly Options API, some
 `<script setup>`) + Pinia + Vue Router, backed by Supabase (Postgres, RLS,
-Storage). A separate `util/` directory is a Python/uv toolkit that syncs
-event/team/robot-photo data from The Blue Alliance into Supabase.
+Storage). The app lives at `apps/greyscout/` in an npm-workspaces monorepo;
+generic/reusable Vue code (base UI components, charts, theming, the Supabase
+client) lives in `packages/common/` and is imported as `@greybots/common/...`.
+The `supabase/` project (migrations, schema, Edge Functions) stays at the
+repo root so any future app can share it. A separate `apps/greyscout/util/`
+directory is a Python/uv toolkit that syncs event/team/robot-photo data from
+The Blue Alliance into Supabase.
 
 ## Workflow rules
 
@@ -19,8 +24,9 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
 - **Only push when the user explicitly says "push it"** (or equivalent), even
   if a commit was just made. Each push needs its own explicit go-ahead.
 - Before considering a frontend change done: run `npm run type-check` and
-  `npm run build`, then revert the build output — it's git-tracked:
-  `git checkout -- dist/ && git clean -fd dist/`.
+  `npm run build` (from the repo root — these proxy to the `apps/greyscout`
+  workspace), then revert the build output — it's git-tracked:
+  `git checkout -- apps/greyscout/dist/ && git clean -fd apps/greyscout/dist/`.
 - For UI changes, live-test with the claude-in-chrome browser tools rather
   than just trusting the build: log in, navigate, screenshot, verify, then
   log out. Test account: `test@greybots.com` / `test973` (role: member).
@@ -44,11 +50,11 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
 
 ## Data model conventions
 
-- Scouting forms (`src/lib/2026/match-scouting-form.ts`,
-  `src/lib/2026/pit-scouting-form.ts`) return an array of
+- Scouting forms (`apps/greyscout/src/lib/2026/match-scouting-form.ts`,
+  `apps/greyscout/src/lib/2026/pit-scouting-form.ts`) return an array of
   `{ key, name, components: [{ key, label, type, options, defaultValue,
   value, required, error }] }`. `parseScoutData()` in
-  `src/lib/data-submission.ts` flattens this to
+  `apps/greyscout/src/lib/data-submission.ts` flattens this to
   `db_data[section.key + "_" + component.key] = value` for the DB insert.
   `validateForm()` in the same file handles required-field validation per
   component `type` (text/textarea, radio, number, dropdown) — a component
@@ -126,7 +132,8 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
 
 ## Known gotchas
 
-- **The whole app scrolls inside `#app`, not the window.** `main.css` sets
+- **The whole app scrolls inside `#app`, not the window.**
+  `packages/common/src/styles/main.css` sets
   `#app { position: fixed; overflow: auto; }`, so `window.scrollBy()` /
   `document.scrollingElement` are silent no-ops. Any custom scroll logic
   (autoscroll, scroll-to-element, etc.) must target
@@ -140,7 +147,8 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
   the documented `@start`/`@end` events, track pointer position via
   `document`-level `pointermove`/`touchmove`/`mousemove` listeners, and
   scroll the real container (`#app`, see above) directly. See
-  `src/views/PicklistView.vue` for the reference implementation.
+  `apps/greyscout/src/views/PicklistView.vue` for the reference
+  implementation.
 - Browser automation (`left_click_drag`, synthetic `dispatchEvent` sequences)
   does not reliably reproduce real held-drag physics for SortableJS —
   it's fine for confirming a drag reorder *works*, but not for validating
@@ -148,7 +156,7 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
   via `javascript_tool` can also stall/freeze the tab (seen once when
   simulating a long held drag) — keep synthetic drag scripts short, and get
   the user to confirm real-device feel for anything speed/timing-sensitive.
-- `util/private_credentials.json` must **never** be tracked in git — it's
+- `apps/greyscout/util/private_credentials.json` must **never** be tracked in git — it's
   gitignored; don't remove that pattern, and never print its contents.
 - `router.ts` has had duplicate route `path`s registered under different
   `name`s (e.g. Match Scouting and Match Preview both on `/match`) — vue-
@@ -175,15 +183,16 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
   end up with two independently-reasonable-looking rotations/flips (one
   in a data-relabeling helper, one in the renderer) that compose back to
   a no-op — the exact bug that made an alliance-flip toggle visibly do
-  nothing in the auto-path feature (see `docs/auto-paths.md`'s
+  nothing in the auto-path feature (see `apps/greyscout/docs/auto-paths.md`'s
   "Coordinate frame" section for the full writeup and the fix).
 
-## Python util toolkit (`util/`)
+## Python util toolkit (`apps/greyscout/util/`)
 
-- uv-managed (`uv run python util/main.py --mode event|offline|photos`,
-  from inside `util/`). `pyproject.toml` has `[tool.uv] package = false`
-  since the scripts import each other flatly (not as a package) — don't
-  add a `[build-system]` table without also fixing those imports.
+- uv-managed (`uv run python main.py --mode event|offline|photos`,
+  from inside `apps/greyscout/util/`). `pyproject.toml` has
+  `[tool.uv] package = false` since the scripts import each other flatly
+  (not as a package) — don't add a `[build-system]` table without also
+  fixing those imports.
 - The nightly GitHub Actions workflow
   (`.github/workflows/update_data.yaml`) uses `astral-sh/setup-uv` +
   `uv sync --locked` + `uv run`, and passes `TBA_CREDENTIALS`/
@@ -198,9 +207,11 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
   output on this Windows/git-bash environment — write a script file and run
   it with `uv run python <file>.py` instead.
 - The `SUPABASE_CREDENTIALS` GitHub secret is independent of the frontend's
-  `projectId`/`publicKey` in `src/lib/constants.ts` — when migrating
-  Supabase projects, both must be updated together or the nightly sync
-  silently starts hitting a stale/deleted project (DNS `ConnectError`).
+  `supabaseProjectId`/publishable key in
+  `packages/common/src/supabase/client.ts` (shared by every app in this
+  monorepo) — when migrating Supabase projects, both must be updated
+  together or the nightly sync silently starts hitting a stale/deleted
+  project (DNS `ConnectError`).
 
 ## CSV import/export
 
@@ -208,5 +219,5 @@ event/team/robot-photo data from The Blue Alliance into Supabase.
   (a trailing blank line from Excel/Sheets exports otherwise produces a
   null-filled row that fails a not-null constraint on the whole batch).
 - CSV export uses `Papa.unparse()` + a `Blob`/temporary `<a download>` link
-  — see `exportTeamListCsv()` in `src/views/PicklistView.vue` for the
-  pattern.
+  — see `exportTeamListCsv()` in `apps/greyscout/src/views/PicklistView.vue`
+  for the pattern.
