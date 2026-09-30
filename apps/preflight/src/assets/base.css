@@ -73,3 +73,35 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* Plain form controls used where the Material components don't fit
+   (native date/time pickers, selects). */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  font-size: 0.85rem;
+}
+
+.field > span {
+  opacity: 0.75;
+}
+
+.field input,
+.field select,
+.field textarea {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-color);
+  background: var(--background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 1rem;
+  color-scheme: light dark;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 64px;
+}

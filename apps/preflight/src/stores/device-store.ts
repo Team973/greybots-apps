@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { db, getMeta, setMeta } from '@/lib/db';
-import { defaultIdleLockMinutes, kioskSessionKey } from '@/lib/constants';
+import { defaultIdleLockMinutes, isDesktopBuild, kioskSessionKey } from '@/lib/constants';
 import { signOutAccount } from '@/lib/greybots-account';
 
 // kiosk: shared device, pit crew sign in with local PINs, fully offline.
@@ -42,6 +42,10 @@ export const useDeviceStore = defineStore('device', {
     actions: {
         async load() {
             this.config = (await getMeta<DeviceConfig>(deviceConfigKey)) ?? null;
+            // Web builds have no setup step: every browser is a personal device.
+            if (!isDesktopBuild && this.config?.mode !== 'web') {
+                await this.configure('web', 'Browser');
+            }
             this.loaded = true;
         },
 

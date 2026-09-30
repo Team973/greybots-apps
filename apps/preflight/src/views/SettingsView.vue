@@ -5,7 +5,7 @@ import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import CrewManager from '@/components/CrewManager.vue';
 import SyncPanel from '@/components/SyncPanel.vue';
-import { appVersion } from '@/lib/constants';
+import { appVersion, isDesktopBuild } from '@/lib/constants';
 import { isStoragePersistent } from '@/lib/db';
 import { useDeviceStore } from '@/stores/device-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -67,7 +67,7 @@ async function reset() {
 
   <div v-if="canManageDevice" class="card">
     <h2>Reset device</h2>
-    <p class="hint">Erases all Preflight data stored on this device{{ device.isKiosk ? ', including crew members' : '' }}, and returns to first-time setup.</p>
+    <p class="hint">Erases all Preflight data stored on this device{{ device.isKiosk ? ', including crew members' : '' }}, and {{ isDesktopBuild ? 'returns to first-time setup' : 'signs you out' }}.</p>
     <div class="form-row">
       <md-outlined-button @click="reset">Reset device</md-outlined-button>
     </div>

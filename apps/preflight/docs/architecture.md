@@ -29,18 +29,31 @@ work in a secure context: **HTTPS or `http://localhost`**. That means
 Preflight can't be served to a tablet over plain `http://<laptop-ip>:port`.
 Supported ways to run it:
 
-1. **Hosted (recommended)**: open the Vercel deployment once while online,
+1. **Hosted (web build)**: open the Vercel deployment once while online,
    then install it (Chrome/Edge "Install app", iPad "Add to Home Screen").
    After that it runs entirely from the device.
-2. **Local on a laptop**: `npm run serve:preflight` builds the app and serves
-   it at `http://localhost:4173`. Load it once, and the service worker keeps
-   it available even if the server stops.
+2. **Desktop (pit laptop / kiosk)**: `npm run serve:preflight` builds the
+   desktop target and serves it at `http://localhost:4173`. Load it once, and
+   the service worker keeps it available even if the server stops.
+
+### Build targets
+
+The build target is set at build time by `VITE_DEPLOY_TARGET`
+(`isDesktopBuild` in `src/lib/constants.ts`):
+
+- **Web** (the default; what Vercel builds): there is no setup screen. Every
+  browser is a personal device, so first launch goes straight to sign-in, or
+  to Home if the user is already signed in.
+- **Desktop** (`--mode desktop`, which loads `.env.desktop`): first launch
+  shows the Kiosk vs. Personal choice (`/setup`). Used for the pit laptop
+  or kiosk.
 
 ## Device modes
 
-Each device picks a mode on first launch (`/setup`). The choice is stored in
-the `meta` table and can only be changed with **Settings → Reset device**,
-which wipes all local data.
+On a desktop build, each device picks a mode on first launch (`/setup`). Web
+builds are always in web mode. The choice is stored in the `meta` table and
+can only be changed with **Settings → Reset device**, which wipes all local
+data.
 
 ### Kiosk (shared device)
 
@@ -104,7 +117,7 @@ Both modes use the same `admin > lead > member > observer` ladder
    `supabase/database/schemas/prod.sql`):
 
    ```sql
-   -- Shared helper; create it once, with the first synced table.
+   -- Shared helper; already created by 20260929120000_add_preflight_schedule.sql.
    CREATE OR REPLACE FUNCTION public.preflight_sync_row() RETURNS trigger
    LANGUAGE plpgsql AS $$
    BEGIN
@@ -142,6 +155,33 @@ Both modes use the same `admin > lead > member > observer` ladder
    (`src/lib/sync/local-repo.ts`). They set the bookkeeping fields and
    schedule a push.
 
+## Schedule
+
+The Schedule page (`/schedule`, members and above) is a Google Calendar-style
+view of the whole event, built on FullCalendar's time grid.
+
+- **Event settings** (lead/admin): TBA event key, team number (default 973),
+  name, and first/last day. They're stored as the shared `active_event` row
+  in `PreflightSetting`, so every device shows the same event. "Look up on
+  TBA" fills in the name, dates, and timezone; everything can also be entered
+  by hand while offline.
+- **TBA matches** (`src/lib/schedule/tba-import.ts`): the `tba-proxy` Edge
+  Function's `get_team_schedule` action returns the event and our team's
+  matches. Each match becomes a `PreflightScheduleItem` whose id is derived
+  from the TBA match key, so two devices importing at once converge on the
+  same row. Blocks start at the actual, then predicted, then published time
+  and last `matchBlockMinutes`. Only changed rows are written, and matches TBA
+  drops are soft-deleted. Import runs from the "Import from TBA" button, when
+  the event changes, and every 5 minutes on a lead/admin device with the
+  schedule open and online. It needs a Supabase session (a kiosk's linked
+  account works).
+- **Custom events** (lead/admin): drag across empty time to create, drag to
+  move, drag the bottom edge to resize, and tap to edit or delete. Each one
+  has a type (Event / Practice / Pit / Programming / Admin), which drives its color and the filter
+  toggles. Matches can't be dragged; they're colored by our alliance.
+- Times are shown in the device's timezone. A notice appears when that
+  differs from the event's TBA timezone.
+
 ## Deployment
 
 - **Vercel**: create a second Vercel project from this repo with **Root
@@ -157,7 +197,9 @@ Both modes use the same `admin > lead > member > observer` ladder
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev:preflight` | Vite dev server with HMR. The service worker is disabled in dev. |
-| `npm run build:preflight` | Type-check and production build. |
-| `npm run serve:preflight` | Build, then serve at http://localhost:4173 with the service worker active. Use this to test offline behavior. |
+| `npm run dev:preflight` | Vite dev server (web target) with HMR. The service worker is disabled in dev. |
+| `npm run dev:preflight-desktop` | Dev server for the desktop target (shows kiosk/personal setup). |
+| `npm run build:preflight` | Type-check and production build (web target, as Vercel builds it). |
+| `npm run build:preflight-desktop` | Type-check and production build for the desktop target. |
+| `npm run serve:preflight` | Build the desktop target, then serve it at http://localhost:4173 with the service worker active. Use this to run a pit laptop or to test offline behavior. |
 | `npm run type-check:preflight` | Type-check only. |
