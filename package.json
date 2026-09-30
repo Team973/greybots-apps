@@ -12,7 +12,12 @@
     "preview": "npm run preview -w apps/greyscout",
     "type-check": "npm run type-check -w apps/greyscout",
     "lint": "npm run lint -w apps/greyscout",
-    "format": "npm run format -w apps/greyscout"
+    "format": "npm run format -w apps/greyscout",
+    "dev:preflight": "npm run dev -w apps/preflight",
+    "build:preflight": "npm run build -w apps/preflight",
+    "preview:preflight": "npm run preview -w apps/preflight",
+    "serve:preflight": "npm run serve -w apps/preflight",
+    "type-check:preflight": "npm run type-check -w apps/preflight"
   },
   "devDependencies": {
     "@rushstack/eslint-patch": "^1.8.0",

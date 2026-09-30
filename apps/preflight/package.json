@@ -1,0 +1,27 @@
+{
+  "name": "preflight",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "run-p type-check \"build-only {@}\" --",
+    "preview": "vite preview",
+    "serve": "vite build && vite preview --port 4173 --strictPort",
+    "build-only": "vite build",
+    "type-check": "vue-tsc --build --force",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path ../../.gitignore",
+    "format": "prettier --write src/"
+  },
+  "dependencies": {
+    "@greybots/common": "*",
+    "dexie": "^4.0.10",
+    "pinia": "^2.1.7",
+    "vue": "^3.4.29",
+    "vue-router": "^4.3.3"
+  },
+  "devDependencies": {
+    "vite-plugin-pwa": "^0.21.2",
+    "workbox-window": "^7.3.0"
+  }
+}
