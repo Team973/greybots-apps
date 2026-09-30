@@ -5,15 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "vite --mode desktop",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
-    "serve": "vite build && vite preview --port 4173 --strictPort",
+    "build:desktop": "run-p type-check build-only:desktop",
+    "serve": "vite build --mode desktop && vite preview --port 4173 --strictPort",
     "build-only": "vite build",
+    "build-only:desktop": "vite build --mode desktop",
     "type-check": "vue-tsc --build --force",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path ../../.gitignore",
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "@fullcalendar/core": "^6.1.21",
+    "@fullcalendar/interaction": "^6.1.21",
+    "@fullcalendar/timegrid": "^6.1.21",
+    "@fullcalendar/vue3": "^6.1.21",
     "@greybots/common": "*",
     "dexie": "^4.0.10",
     "pinia": "^2.1.7",

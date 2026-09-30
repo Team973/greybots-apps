@@ -3,9 +3,13 @@
 // has no INSERT/DELETE policy for authenticated clients — see
 // supabase/database/schemas/prod.sql), never reach the browser (issue #26).
 //
-// Actions (POST body: { action, event_id }):
+// Actions (POST body: { action, event_id, team_number? }):
 //   - get_oprs: any authenticated user. Passes through TBA's
 //     /event/{event_id}/oprs response verbatim (no DB write).
+//   - get_team_schedule: any authenticated user. Returns the event's
+//     name/dates/timezone and team_number's matches at the event, including
+//     scheduled/predicted/actual times (no DB write). Used by Preflight's
+//     schedule, which stores the result in its own synced tables.
 //   - refresh_schedule: lead/admin only. Ports
 //     util/match_schedule.py's update_match_schedule_for_event — full
 //     delete+insert of the event's Match rows. ScoutAssignment isn't FK'd to
@@ -68,7 +72,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Not authenticated." }, 401);
   }
 
-  let body: { action?: string; event_id?: string };
+  let body: { action?: string; event_id?: string; team_number?: number };
   try {
     body = await req.json();
   } catch {
@@ -88,6 +92,37 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: `TBA request failed: ${response.status}` }, 502);
     }
     return jsonResponse(await response.json());
+  }
+
+  if (action === "get_team_schedule") {
+    const teamNumber = Number(body.team_number);
+    if (!Number.isInteger(teamNumber) || teamNumber <= 0) {
+      return jsonResponse({ error: "team_number is required." }, 400);
+    }
+
+    const [eventResponse, matchesResponse] = await Promise.all([
+      tbaFetch(`/event/${eventId}`, tbaApiKey),
+      tbaFetch(`/team/frc${teamNumber}/event/${eventId}/matches/simple`, tbaApiKey),
+    ]);
+    if (eventResponse.status === 404) {
+      return jsonResponse({ error: `Event ${eventId} not found on TBA.` }, 404);
+    }
+    if (!eventResponse.ok || !matchesResponse.ok) {
+      return jsonResponse({ error: `TBA request failed: ${eventResponse.status}/${matchesResponse.status}` }, 502);
+    }
+
+    const event = await eventResponse.json();
+    const matches = await matchesResponse.json();
+    return jsonResponse({
+      event: {
+        key: event.key,
+        name: event.short_name || event.name,
+        start_date: event.start_date,
+        end_date: event.end_date,
+        timezone: event.timezone,
+      },
+      matches: Array.isArray(matches) ? matches : [],
+    });
   }
 
   if (action === "refresh_schedule") {

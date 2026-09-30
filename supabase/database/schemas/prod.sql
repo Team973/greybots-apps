@@ -105,6 +105,24 @@ $$;
 ALTER FUNCTION "public"."enforce_user_profile_update"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."preflight_sync_row"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  -- Drop an incoming update that's older than the stored row.
+  IF TG_OP = 'UPDATE' AND NEW.updated_at < OLD.updated_at THEN
+    RETURN NULL;
+  END IF;
+  -- clock_timestamp(), not now(), so rows in one transaction still get
+  -- distinct, increasing cursor values.
+  NEW.synced_at := clock_timestamp();
+  RETURN NEW;
+END $$;
+
+
+ALTER FUNCTION "public"."preflight_sync_row"() OWNER TO "postgres";
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";
@@ -445,6 +463,43 @@ CREATE TABLE IF NOT EXISTS "public"."ScoutAssignment" (
 ALTER TABLE "public"."ScoutAssignment" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."PreflightSetting" (
+    "id" "uuid" NOT NULL,
+    "key" "text" NOT NULL,
+    "value" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text"
+);
+
+
+ALTER TABLE "public"."PreflightSetting" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."PreflightScheduleItem" (
+    "id" "uuid" NOT NULL,
+    "event_key" "text" NOT NULL,
+    "kind" "text" NOT NULL,
+    "category" "text" NOT NULL,
+    "title" "text" NOT NULL,
+    "notes" "text",
+    "start_at" timestamp with time zone NOT NULL,
+    "end_at" timestamp with time zone NOT NULL,
+    "match_key" "text",
+    "match_info" "jsonb",
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text",
+    CONSTRAINT "PreflightScheduleItem_kind_check" CHECK (("kind" = ANY (ARRAY['match'::"text", 'custom'::"text"]))),
+    CONSTRAINT "PreflightScheduleItem_category_check" CHECK (("category" = ANY (ARRAY['event'::"text", 'match'::"text", 'pit'::"text", 'admin'::"text", 'practice'::"text", 'programming'::"text"])))
+);
+
+
+ALTER TABLE "public"."PreflightScheduleItem" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."StrategyBoard" (
     "id" bigint NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
@@ -493,6 +548,14 @@ ALTER TABLE "public"."User" OWNER TO "postgres";
 
 
 CREATE OR REPLACE TRIGGER "enforce_user_profile_update" BEFORE UPDATE ON "public"."User" FOR EACH ROW EXECUTE FUNCTION "public"."enforce_user_profile_update"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightSetting" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightScheduleItem" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
 
 
 ALTER TABLE ONLY "public"."Event"
@@ -570,6 +633,21 @@ ALTER TABLE ONLY "public"."ScoutAssignment"
 
 
 
+ALTER TABLE ONLY "public"."PreflightSetting"
+    ADD CONSTRAINT "PreflightSetting_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."PreflightSetting"
+    ADD CONSTRAINT "PreflightSetting_key_key" UNIQUE ("key");
+
+
+
+ALTER TABLE ONLY "public"."PreflightScheduleItem"
+    ADD CONSTRAINT "PreflightScheduleItem_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."RobotPhoto"
     ADD CONSTRAINT "RobotPhoto_pkey" PRIMARY KEY ("team_number");
 
@@ -615,6 +693,14 @@ CREATE UNIQUE INDEX "picklist_team_unique" ON "public"."PickList" USING "btree" 
 
 
 CREATE UNIQUE INDEX "scoutassignment_slot_unique" ON "public"."ScoutAssignment" USING "btree" ("event_id", "match_number", "alliance", "slot_index");
+
+
+
+CREATE INDEX "preflight_setting_synced_at_idx" ON "public"."PreflightSetting" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_schedule_item_synced_at_idx" ON "public"."PreflightScheduleItem" USING "btree" ("synced_at");
 
 
 
@@ -870,6 +956,30 @@ CREATE POLICY "Enable update for authenticated users only" ON "public"."ScoutAss
 CREATE POLICY "Enable delete for authenticated users only" ON "public"."ScoutAssignment" FOR DELETE TO "authenticated" USING (true);
 
 
+
+CREATE POLICY "Enable read access for members" ON "public"."PreflightSetting" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for leads and admins" ON "public"."PreflightSetting" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for leads and admins" ON "public"."PreflightSetting" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable read access for members" ON "public"."PreflightScheduleItem" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for leads and admins" ON "public"."PreflightScheduleItem" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for leads and admins" ON "public"."PreflightScheduleItem" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
+
+
 ALTER TABLE "public"."Event" ENABLE ROW LEVEL SECURITY;
 
 
@@ -919,6 +1029,12 @@ ALTER TABLE "public"."Playoffs" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."ScoutAssignment" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightSetting" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightScheduleItem" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -1239,6 +1355,18 @@ GRANT ALL ON TABLE "public"."PickList" TO "service_role";
 GRANT ALL ON TABLE "public"."Playoffs" TO "anon";
 GRANT ALL ON TABLE "public"."Playoffs" TO "authenticated";
 GRANT ALL ON TABLE "public"."Playoffs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightSetting" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightSetting" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightSetting" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightScheduleItem" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightScheduleItem" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightScheduleItem" TO "service_role";
 
 
 

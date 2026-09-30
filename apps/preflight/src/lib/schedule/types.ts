@@ -1,0 +1,84 @@
+import type { SyncedRecord } from '@/lib/sync/types';
+
+// Adding a category also needs the PreflightScheduleItem_category_check
+// constraint updated in a migration.
+export type ScheduleCategory = 'event' | 'match' | 'practice' | 'pit' | 'programming' | 'admin';
+
+// Display order for filters and pickers.
+export const scheduleCategories: ScheduleCategory[] = ['event', 'match', 'practice', 'pit', 'programming', 'admin'];
+
+// Categories a lead/admin can pick for a custom event ('match' is reserved
+// for TBA-imported matches).
+export const customCategories = scheduleCategories.filter((c) => c !== 'match');
+
+export const categoryLabels: Record<ScheduleCategory, string> = {
+    event: 'Event',
+    match: 'Matches',
+    practice: 'Practice',
+    pit: 'Pit',
+    programming: 'Programming',
+    admin: 'Admin'
+};
+
+// Block colors. Matches use their alliance color instead (see matchColor).
+export const categoryColors: Record<ScheduleCategory, string> = {
+    event: '#6d4fb3',
+    match: '#c62828',
+    practice: '#2e7d32',
+    pit: '#b05703',
+    programming: '#ad1457',
+    admin: '#52606d'
+};
+
+export function matchColor(alliance: 'red' | 'blue' | null | undefined): string {
+    return alliance === 'red' ? '#c62828' : alliance === 'blue' ? '#1565c0' : '#616161';
+}
+
+export function scheduleItemColor(item: Pick<ScheduleItem, 'kind' | 'category' | 'match_info'>): string {
+    return item.kind === 'match' ? matchColor(item.match_info?.alliance) : categoryColors[item.category];
+}
+
+export interface MatchInfo {
+    comp_level: string;
+    set_number: number;
+    match_number: number;
+    // Our alliance in this match, if we're in it.
+    alliance: 'red' | 'blue' | null;
+    red: number[];
+    blue: number[];
+    // ISO timestamps from TBA; null when TBA doesn't have them yet.
+    scheduled_time: string | null;
+    predicted_time: string | null;
+    actual_time: string | null;
+}
+
+export interface ScheduleItem extends SyncedRecord {
+    event_key: string;
+    kind: 'match' | 'custom';
+    category: ScheduleCategory;
+    title: string;
+    notes: string | null;
+    start_at: string;
+    end_at: string;
+    match_key: string | null;
+    match_info: MatchInfo | null;
+    updated_by_name: string | null;
+}
+
+export interface Setting<T = unknown> extends SyncedRecord {
+    key: string;
+    value: T;
+    updated_by_name: string | null;
+}
+
+// The event the schedule is built around. Shared by every device.
+export interface ActiveEvent {
+    event_key: string;
+    team_number: number;
+    name: string;
+    // Local calendar dates, "YYYY-MM-DD", inclusive.
+    start_date: string;
+    end_date: string;
+    // IANA timezone from TBA, e.g. "America/Los_Angeles".
+    timezone: string | null;
+}
