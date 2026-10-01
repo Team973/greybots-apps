@@ -52,7 +52,7 @@ const events = computed<EventInput[]>(() => [
     start: item.start_at,
     end: item.end_at,
     // TBA matches can't be dragged; their time comes from the import.
-    editable: props.canEdit && item.kind === 'custom',
+    editable: props.canEdit && item.kind !== 'match',
     extendedProps: { item },
     backgroundColor: scheduleItemColor(item),
     classNames: item.kind === 'match' ? ['sched-match'] : []

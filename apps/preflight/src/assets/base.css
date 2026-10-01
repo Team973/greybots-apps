@@ -154,6 +154,24 @@ dialog .form-row {
   font-size: 0.9rem;
 }
 
+/* Small square button for row actions (move, delete). */
+.icon-small {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  cursor: pointer;
+}
+
+.icon-small:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .icon-button {
   width: 36px;
   height: 36px;

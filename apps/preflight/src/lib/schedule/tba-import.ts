@@ -166,6 +166,7 @@ export async function importTbaSchedule(activeEvent: ActiveEvent, editorName: st
             end_at: end.toISOString(),
             match_key: match.key,
             match_info: info,
+            phase: null,
             updated_by_name: editorName
         });
         if (current && !current.deleted) result.updated++;

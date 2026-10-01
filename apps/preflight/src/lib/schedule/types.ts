@@ -60,9 +60,24 @@ export interface MatchInfo {
     actual_time: string | null;
 }
 
+// Timeline groups for milestones (requirements §2.1.1). Adding a phase also
+// needs the PreflightScheduleItem_phase_check constraint updated.
+export type MilestonePhase = 'prep' | 'competition' | 'elimination' | 'closeout';
+export const milestonePhases: MilestonePhase[] = ['prep', 'competition', 'elimination', 'closeout'];
+export const phaseLabels: Record<MilestonePhase, string> = {
+    prep: 'Event preparation',
+    competition: 'Competition day',
+    elimination: 'Elimination tournament',
+    closeout: 'Event closeout'
+};
+
+// 'match': imported from TBA. 'custom': a one-off calendar entry.
+// 'milestone': part of the event timeline (issue #79).
+export type ScheduleKind = 'match' | 'custom' | 'milestone';
+
 export interface ScheduleItem extends SyncedRecord {
     event_key: string;
-    kind: 'match' | 'custom';
+    kind: ScheduleKind;
     category: ScheduleCategory;
     title: string;
     notes: string | null;
@@ -70,6 +85,8 @@ export interface ScheduleItem extends SyncedRecord {
     end_at: string;
     match_key: string | null;
     match_info: MatchInfo | null;
+    // Timeline group (milestones only).
+    phase?: MilestonePhase | null;
     updated_by_name: string | null;
 }
 

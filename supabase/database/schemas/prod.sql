@@ -492,8 +492,10 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightScheduleItem" (
     "deleted" boolean DEFAULT false NOT NULL,
     "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
     "updated_by_name" "text",
-    CONSTRAINT "PreflightScheduleItem_kind_check" CHECK (("kind" = ANY (ARRAY['match'::"text", 'custom'::"text"]))),
-    CONSTRAINT "PreflightScheduleItem_category_check" CHECK (("category" = ANY (ARRAY['event'::"text", 'match'::"text", 'pit'::"text", 'admin'::"text", 'practice'::"text", 'programming'::"text"])))
+    "phase" "text",
+    CONSTRAINT "PreflightScheduleItem_kind_check" CHECK (("kind" = ANY (ARRAY['match'::"text", 'custom'::"text", 'milestone'::"text"]))),
+    CONSTRAINT "PreflightScheduleItem_category_check" CHECK (("category" = ANY (ARRAY['event'::"text", 'match'::"text", 'pit'::"text", 'admin'::"text", 'practice'::"text", 'programming'::"text"]))),
+    CONSTRAINT "PreflightScheduleItem_phase_check" CHECK ((("phase" IS NULL) OR ("phase" = ANY (ARRAY['prep'::"text", 'competition'::"text", 'elimination'::"text", 'closeout'::"text"]))))
 );
 
 

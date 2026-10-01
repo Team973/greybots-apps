@@ -264,6 +264,20 @@ view of the whole event, built on FullCalendar's time grid.
   toggles. Matches can't be dragged; they're colored by our alliance.
 - Times are shown in the device's timezone. A notice appears when that
   differs from the event's TBA timezone.
+- **Event timeline** (`src/lib/schedule/milestones.ts`): milestones for the
+  whole event (load-in through departure) are schedule items of kind
+  `milestone`, each with a `phase` (event preparation, competition day,
+  elimination tournament, event closeout). So they appear on the calendar,
+  follow the type filters, and sync like any other item. The Schedule page's
+  **Timeline** view lists them by phase. Leads/admins add the standard set
+  from the requirements doc (ids are derived from the event and template key,
+  so devices converge; planned times are only starting points), then add,
+  rename, retime, reorder (neighbors trade start times), or delete them per
+  event. `currentPhase()` gives the phase the event is in right now.
+- A live query (`useLiveQuery`) must only await database calls. Awaiting
+  anything else inside it (e.g. `uuidFromName`, which hashes) makes Dexie
+  lose track of what the query read, and it stops updating. Compute such
+  values outside the query.
 
 ## Dialog conventions
 

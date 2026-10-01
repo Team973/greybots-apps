@@ -407,23 +407,6 @@ input.checklist-name {
   cursor: default;
 }
 
-.icon-small {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--accent-color);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--primary-text-color);
-  font: inherit;
-  cursor: pointer;
-}
-
-.icon-small:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
 .add-link {
   align-self: flex-start;
   padding: 0;

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import EventSettingsDialog from '@/components/schedule/EventSettingsDialog.vue';
+import MilestoneTimeline from '@/components/schedule/MilestoneTimeline.vue';
 import ScheduleCalendar from '@/components/schedule/ScheduleCalendar.vue';
 import ScheduleItemDialog from '@/components/schedule/ScheduleItemDialog.vue';
 import { clockNow } from '@greybots/common/lib/now';
@@ -115,11 +116,30 @@ onBeforeUnmount(() => {
 });
 watch(() => [activeEvent.value?.event_key, canImport.value], autoImport);
 
+// Calendar, or the event timeline of milestones (issue #79). Remembered per device.
+type ScheduleMode = 'calendar' | 'timeline';
+const modeStorageKey = 'preflight_schedule_mode';
+function loadMode(): ScheduleMode {
+  try {
+    return localStorage.getItem(modeStorageKey) === 'timeline' ? 'timeline' : 'calendar';
+  } catch {
+    return 'calendar';
+  }
+}
+const mode = ref<ScheduleMode>(loadMode());
+watch(mode, (value) => {
+  try {
+    localStorage.setItem(modeStorageKey, value);
+  } catch {
+    // Storage unavailable; the choice just won't persist.
+  }
+});
+
 // --- Dialogs ---
 const settingsOpen = ref(false);
 // The dialog gets the live copy of an existing item (looked up by id), so its
 // autosave never writes back stale fields.
-const itemDialog = ref<{ itemId: string | null; draft: { start: string; end: string } | null } | null>(null);
+const itemDialog = ref<{ itemId: string | null; draft: { start: string; end: string } | null; kind?: 'custom' | 'milestone' } | null>(null);
 const dialogItem = computed(() => (itemDialog.value?.itemId ? items.value.find((i) => i.id === itemDialog.value!.itemId) ?? null : null));
 // Close the dialog if its item is deleted (e.g. from another device).
 watch(dialogItem, (item) => {
@@ -134,10 +154,10 @@ function onSelect(range: { start: string; end: string }) {
   itemDialog.value = { itemId: null, draft: range };
 }
 
-function newEvent() {
+function newItem(kind: 'custom' | 'milestone') {
   const start = new Date(clockNow());
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
-  itemDialog.value = { itemId: null, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
+  itemDialog.value = { itemId: null, kind, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
 }
 
 async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: () => void) {
@@ -173,6 +193,10 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
             <template v-if="lastImportAt"> · TBA synced {{ new Date(lastImportAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }}</template>
           </span>
         </div>
+        <div class="mode-toggle" role="group" aria-label="Schedule view">
+          <button :class="{ on: mode === 'calendar' }" :aria-pressed="mode === 'calendar'" @click="mode = 'calendar'">Calendar</button>
+          <button :class="{ on: mode === 'timeline' }" :aria-pressed="mode === 'timeline'" @click="mode = 'timeline'">Timeline</button>
+        </div>
         <div class="filters" role="group" aria-label="Show event types">
           <label v-for="c in categories" :key="c" class="filter">
             <input v-model="visibleCategories" type="checkbox" :value="c" :style="{ accentColor: filterColors[c] }" />
@@ -180,7 +204,7 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
           </label>
         </div>
         <div v-if="canEdit" class="actions">
-          <md-filled-button @click="newEvent">New event</md-filled-button>
+          <md-filled-button v-if="mode === 'calendar'" @click="newItem('custom')">New event</md-filled-button>
           <md-outlined-button :disabled="!canImport || importing" @click="runImport()">
             {{ importing ? 'Importing…' : 'Import from TBA' }}
           </md-outlined-button>
@@ -197,7 +221,16 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
       <p v-if="importMessage" class="hint notice">{{ importMessage }}</p>
       <p v-if="importError" class="error-text notice">{{ importError }}</p>
 
-      <div class="calendar-wrap">
+      <div v-if="mode === 'timeline'" class="calendar-wrap">
+        <MilestoneTimeline
+          :event="activeEvent"
+          :items="visibleItems"
+          :can-edit="canEdit"
+          @open="(item) => (itemDialog = { itemId: item.id, draft: null })"
+          @add="newItem('milestone')"
+        />
+      </div>
+      <div v-else class="calendar-wrap">
         <ScheduleCalendar
           :event="activeEvent"
           :items="visibleItems"
@@ -218,6 +251,7 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
       :event-key="activeEvent.event_key"
       :item="dialogItem"
       :draft="itemDialog?.draft ?? null"
+      :kind="itemDialog?.kind"
       :can-edit="canEdit"
       @close="itemDialog = null"
     />
@@ -257,6 +291,27 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
 .title h1 {
   margin: 0;
   font-size: 1.4rem;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--accent-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mode-toggle button {
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mode-toggle button.on {
+  background: var(--accent-color);
+  font-weight: 600;
 }
 
 .filters {
