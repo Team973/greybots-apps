@@ -1,6 +1,13 @@
 import { computed, type Ref } from 'vue';
 import { useNow } from '@greybots/common/lib/now';
-import { getChecklistSequence, getPitRoles, type ChecklistSequence, type PitRole } from '@/lib/checklists/config';
+import {
+    getChecklistSequence,
+    getPitRoles,
+    getPracticeChecklist,
+    type ChecklistDef,
+    type ChecklistSequence,
+    type PitRole
+} from '@/lib/checklists/config';
 import { useLiveQuery } from '@/lib/live-query';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import { effectiveStatus, listStatusHistory, type RobotStatusEntry } from './robot-status';
@@ -14,11 +21,12 @@ export function useRobotFlow(eventKey: Ref<string>, matches: Ref<ScheduleItem[]>
     const history = useLiveQuery<RobotStatusEntry[] | null>(() => listStatusHistory(eventKey.value), null, eventKey);
     const sequence = useLiveQuery<ChecklistSequence>(getChecklistSequence, { checklists: [] });
     const roles = useLiveQuery<PitRole[]>(getPitRoles, []);
+    const practice = useLiveQuery<ChecklistDef | null>(getPracticeChecklist, null);
 
     const loaded = computed(() => history.value !== null);
     const latest = computed(() => history.value?.[0] ?? null);
     const effective = computed(() => effectiveStatus(latest.value, matches.value, now.value));
     const elapsedMs = computed(() => (effective.value.since ? now.value - Date.parse(effective.value.since) : null));
 
-    return { now, history, loaded, latest, effective, elapsedMs, sequence, roles };
+    return { now, history, loaded, latest, effective, elapsedMs, sequence, roles, practice };
 }

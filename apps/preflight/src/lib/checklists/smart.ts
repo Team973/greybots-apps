@@ -60,6 +60,18 @@ export function evaluateStep(step: ChecklistStep, ctx: StepContext): SmartInfo {
         const swap = bumperSwap(ctx.matches, ctx.now);
         return { skipped: swap.needed === false, note: swap.reason };
     }
+    if (step.condition === 'bumper_hint') {
+        // Advice only: the step still has to be done.
+        const swap = bumperSwap(ctx.matches, ctx.now);
+        if (swap.needed && swap.next && swap.nextMatch) {
+            return { skipped: false, note: `Recommended: swap to ${colorName(swap.next)} bumpers now. ${swap.nextMatch.title} is ${colorName(swap.next)}.` };
+        }
+        if (swap.needed === false && swap.next && swap.nextMatch) {
+            return { skipped: false, note: `No swap needed: ${swap.nextMatch.title} is ${colorName(swap.next)} too.` };
+        }
+        if (swap.next && swap.nextMatch) return { skipped: false, note: `${swap.nextMatch.title} is ${colorName(swap.next)}.` };
+        return { skipped: false, note: null };
+    }
     return { skipped: false, note: null };
 }
 

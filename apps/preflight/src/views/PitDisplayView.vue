@@ -12,7 +12,7 @@ import { activeStepIndex } from '@/lib/checklists/smart';
 import { activeLayout, defaultDisplayConfig, getDisplayConfig, type DisplayConfig } from '@/lib/display/display';
 import { useLiveQuery } from '@/lib/live-query';
 import { activeRepairs, listRepairs, type Repair } from '@/lib/repairs/repairs';
-import { robotStatusColors } from '@/lib/robot-status/robot-status';
+import { isPracticeChecklist, robotStatusColors } from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { formatTime } from '@/lib/schedule/dates';
 import { currentPhase, milestoneState, sortMilestones } from '@/lib/schedule/milestones';
@@ -54,9 +54,15 @@ const widgetRows = computed(() => {
 // --- Checklist in progress ---
 const sequence = flow.sequence;
 const checklistIndex = computed(() => flow.latest.value?.checklist_index ?? 0);
-const pitChecklist = computed(() => (status.value === 'pending' ? sequence.value.checklists[checklistIndex.value] ?? null : null));
+const onPractice = computed(() => isPracticeChecklist(flow.latest.value));
+const pitChecklist = computed(() => {
+  if (status.value !== 'pending') return null;
+  return onPractice.value ? flow.practice.value : sequence.value.checklists[checklistIndex.value] ?? null;
+});
 const pitLink = computed(() =>
-  resolveMatchLink(sequenceMatchLink(sequence.value, checklistIndex.value), matchContext(matches.value, now.value))
+  onPractice.value
+    ? { label: null, matchKey: null }
+    : resolveMatchLink(sequenceMatchLink(sequence.value, checklistIndex.value), matchContext(matches.value, now.value))
 );
 const runId = computed(() => (status.value === 'pending' ? flow.latest.value?.run_id ?? '' : ''));
 const pitChecks = useLiveQuery<ChecklistCheck[]>(() => (runId.value ? listChecks(eventKey.value, runId.value) : []), [], runId);
@@ -80,6 +86,8 @@ const headline = computed(() => {
       return 'Repair in progress';
     case 'ready':
       return 'Robot Ready';
+    case 'practice':
+      return 'At practice field';
     case 'away':
       return match ? `Away · ${match.title}` : 'Away';
     default:

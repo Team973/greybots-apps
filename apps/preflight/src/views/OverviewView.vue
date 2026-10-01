@@ -15,7 +15,19 @@ import { sequenceMatchLink } from '@/lib/checklists/config';
 import { matchContext, resolveMatchLink } from '@/lib/checklists/instances';
 import { useLiveQuery } from '@/lib/live-query';
 import { activeRepairs, listRepairs, type Repair } from '@/lib/repairs/repairs';
-import { advanceChecklist, markDeparted, markInbound, resumeChecklist, robotArrived, startRepair } from '@/lib/robot-status/robot-status';
+import {
+  advanceChecklist,
+  canGoToPractice,
+  departForPractice,
+  isPracticeChecklist,
+  markDeparted,
+  markInbound,
+  resumeChecklist,
+  returnFromPractice,
+  robotArrived,
+  startPracticeChecklist,
+  startRepair
+} from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
 import { defaultMatchPrep, getMatchPrep, type MatchPrep } from '@/lib/schedule/timing';
@@ -29,6 +41,8 @@ import { useSessionStore } from '@/stores/session-store';
 //   Repair   - red banner; resume the interrupted checklist or go to pre-match;
 //              the repair log takes over from the schedule
 //   Ready    - schedule and tasks, with "Robot departed"
+//   Practice - the practice field side trip: its checklist (Pending), then
+//              "At practice field" until the robot is back for pre-match
 //   Away     - same, with "Match over" (also automatic when the match ends)
 const session = useSessionStore();
 const isMember = computed(() => session.hasRole('member'));
@@ -82,12 +96,30 @@ const onResume = (index: number) =>
 // with the next one (issue #82).
 const checklistIndex = computed(() => flow.latest.value?.checklist_index ?? 0);
 const checklistCount = computed(() => flow.sequence.value.checklists.length);
-const activeChecklist = computed(() => flow.sequence.value.checklists[checklistIndex.value] ?? null);
+// The practice field side trip interrupts the sequence with its own checklist.
+const onPracticeChecklist = computed(() => isPracticeChecklist(flow.latest.value));
+const activeChecklist = computed(() =>
+  onPracticeChecklist.value ? flow.practice.value : flow.sequence.value.checklists[checklistIndex.value] ?? null
+);
 const checklistLink = computed(() =>
-  resolveMatchLink(sequenceMatchLink(flow.sequence.value, checklistIndex.value), matchContext(matches.value, flow.now.value))
+  onPracticeChecklist.value
+    ? { label: null, matchKey: null }
+    : resolveMatchLink(sequenceMatchLink(flow.sequence.value, checklistIndex.value), matchContext(matches.value, flow.now.value))
 );
 // Finishing a checklist loads the next one, or Robot Ready after the last.
-const onChecklistComplete = () => act(() => advanceChecklist(eventKey.value, flow.latest.value!, flow.sequence.value, editor()));
+// Finishing the practice field checklist sends the robot to the practice field.
+const onChecklistComplete = () =>
+  act(() =>
+    onPracticeChecklist.value
+      ? departForPractice(eventKey.value, flow.latest.value!, editor())
+      : advanceChecklist(eventKey.value, flow.latest.value!, flow.sequence.value, editor())
+  );
+
+// The practice field is on offer once the robot is clear of post-match and
+// not in repairs.
+const canPractice = computed(() => !!flow.practice.value && canGoToPractice(flow.latest.value, status.value, flow.sequence.value));
+const onPractice = () => act(() => startPracticeChecklist(eventKey.value, flow.practice.value!, editor()));
+const onPracticeReturn = () => act(() => returnFromPractice(eventKey.value, flow.sequence.value, editor()));
 // "Repairs" switches straight to Repair in progress (no prompt: repairs get
 // logged and assigned from the repair screen).
 const onRepairs = () => act(() => startRepair(eventKey.value, flow.latest.value!, editor()));
@@ -109,13 +141,15 @@ const historyOpen = ref(false);
 
   <div v-else-if="!flow.loaded.value" class="overview-loading hint">Loading…</div>
 
-  <div v-else class="overview" :class="`state-${status}`">
+  <!-- "At practice field" uses the same layout as Ready. -->
+  <div v-else class="overview" :class="`state-${status === 'practice' ? 'ready' : status}`">
     <p v-if="actionError" class="error-text area-notice">{{ actionError }}</p>
 
     <template v-if="status === 'pending' && flow.latest.value">
       <div class="pending-bar area-bar">
         <strong>Robot in the pit</strong>
-        <span>{{ flow.sequence.value.checklists.length ? 'Working through checklists' : 'No checklists configured' }}</span>
+        <span v-if="onPracticeChecklist">Getting ready for the practice field</span>
+        <span v-else>{{ flow.sequence.value.checklists.length ? 'Working through checklists' : 'No checklists configured' }}</span>
         <InstalledBatteryChip />
         <ActiveRepairChip :repairs="repairsInProgress" />
         <span class="bar-spacer"></span>
@@ -127,19 +161,25 @@ const historyOpen = ref(false);
         :run-id="flow.latest.value.run_id ?? ''"
         :checklist="activeChecklist"
         :fallback-name="flow.latest.value.pending_label"
-        :eyebrow="activeChecklist ? `Checklist ${checklistIndex + 1} of ${checklistCount}` : null"
+        :eyebrow="onPracticeChecklist ? 'Before the practice field' : activeChecklist ? `Checklist ${checklistIndex + 1} of ${checklistCount}` : null"
         :match-label="checklistLink.label"
         :match-key="checklistLink.matchKey"
         :roles="flow.roles.value"
         :matches="matches"
         :now="flow.now.value"
         :elapsed-ms="flow.elapsedMs.value"
-        :finish-label="checklistIndex + 1 < checklistCount ? 'Done · next checklist' : 'Done · robot ready'"
+        :finish-label="onPracticeChecklist ? 'Done · to the practice field' : checklistIndex + 1 < checklistCount ? 'Done · next checklist' : 'Done · robot ready'"
         can-repair
         @complete="onChecklistComplete"
         @repairs="onRepairs"
       >
-        <template #progress>
+        <!-- Big buttons beside Repairs: out to the practice field, or (from its
+             checklist) back to pre-match without going. -->
+        <template v-if="isMember && (canPractice || onPracticeChecklist)" #actions>
+          <button v-if="onPracticeChecklist" class="flow-button prematch" :disabled="busy" @click="onPracticeReturn">Back to pre-match</button>
+          <button v-else class="flow-button practice" :disabled="busy" @click="onPractice">Practice field</button>
+        </template>
+        <template v-if="!onPracticeChecklist" #progress>
           <ol class="progress" aria-label="Checklist sequence">
             <li v-for="(c, i) in flow.sequence.value.checklists" :key="c.id" :class="{ done: i < checklistIndex, current: i === checklistIndex }">
               {{ c.name }}
@@ -187,6 +227,9 @@ const historyOpen = ref(false);
         :repairs="repairsInProgress"
         :can-act="isMember"
         :busy="busy"
+        :can-practice="canPractice"
+        @practice="onPractice"
+        @practice-return="onPracticeReturn"
         @arrived="onArrived"
         @departed="onDeparted"
         @match-over="onMatchOver"
@@ -311,6 +354,41 @@ const historyOpen = ref(false);
 
 .bar-spacer {
   flex: 1;
+}
+
+/* Same size as the runner's Repairs button, which they sit beside. */
+.flow-button {
+  padding: 16px 20px;
+  border: 2px solid;
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  font-size: 1.2rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.flow-button:disabled {
+  opacity: 0.6;
+}
+
+.flow-button.practice {
+  border-color: #00838f;
+  color: #26c6da;
+}
+
+.flow-button.practice:hover {
+  background: rgba(0, 131, 143, 0.15);
+}
+
+.flow-button.prematch {
+  border-color: #ffc107;
+  color: #ffc107;
+}
+
+.flow-button.prematch:hover {
+  background: rgba(255, 193, 7, 0.12);
 }
 
 .bar-link {

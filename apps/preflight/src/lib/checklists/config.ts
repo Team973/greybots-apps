@@ -17,10 +17,14 @@ export interface PitRole {
 
 // A "smart" step only applies in some situations; when it doesn't, it's
 // shown as skipped and checked off automatically. See ./smart.ts.
-export type StepCondition = 'bumper_swap';
+//   bumper_swap: skipped when the bumpers are already the next match's color.
+//   bumper_hint: never skipped; it just says whether a swap is worth doing
+//                now (for when the color doesn't matter yet, e.g. practice).
+export type StepCondition = 'bumper_swap' | 'bumper_hint';
 
 export const stepConditionLabels: Record<StepCondition, string> = {
-    bumper_swap: 'Only if a bumper swap is needed (from the TBA schedule)'
+    bumper_swap: 'Only if a bumper swap is needed (from the TBA schedule)',
+    bumper_hint: 'Always, and suggest a bumper swap if the next match is another color'
 };
 
 // What a step records when it's completed, beyond who and when.
@@ -79,6 +83,11 @@ export interface ChecklistSequence {
 const pitRolesKey = 'pit_roles';
 const sequenceKey = 'checklist_sequence';
 const adhocKey = 'adhoc_checklists';
+const practiceKey = 'practice_checklist';
+
+// The practice field checklist is a fixed part of the pit flow (see
+// lib/robot-status), so it has a fixed id rather than a generated one.
+export const practiceChecklistId = 'practice';
 
 export async function getPitRoles(): Promise<PitRole[]> {
     return (await getSetting<{ roles: PitRole[] }>(pitRolesKey))?.roles ?? [];
@@ -104,6 +113,49 @@ export function saveAdhocChecklists(checklists: ChecklistDef[], editorName: stri
     return saveSetting(adhocKey, { checklists }, editorName);
 }
 
+// What to do before the robot goes to the practice field. Until a lead edits
+// it, this is the suggested checklist, with its roles matched by name to the
+// current roster.
+export async function getPracticeChecklist(): Promise<ChecklistDef> {
+    return (await getSetting<ChecklistDef>(practiceKey)) ?? defaultPracticeChecklist(await getPitRoles());
+}
+
+export function savePracticeChecklist(checklist: ChecklistDef, editorName: string | null) {
+    return saveSetting(practiceKey, { ...checklist, id: practiceChecklistId }, editorName);
+}
+
+export function defaultPracticeChecklist(roles: PitRole[]): ChecklistDef {
+    const byName = new Map(roles.map((r) => [r.name.trim().toLowerCase(), r.id]));
+    const ids = (...names: string[]) => names.map((n) => byName.get(n.toLowerCase())).filter((id): id is string => !!id);
+    const step = (key: string, title: string, instructions: string, roleNames: string[], extra: Partial<ChecklistStep> = {}): ChecklistStep => ({
+        // Stable ids, so reading the default twice gives the same checklist.
+        id: `practice-${key}`,
+        title,
+        instructions,
+        role_ids: ids(...roleNames),
+        condition: null,
+        input: 'check',
+        ...extra
+    });
+    return {
+        id: practiceChecklistId,
+        name: 'Practice field',
+        match_link: 'none',
+        steps: [
+            step('battery', 'Swap in a charged battery', 'Put in the next charged battery and record which one it is.', ['Battery'], { input: 'battery' }),
+            step(
+                'bumpers',
+                'Bumpers installed',
+                "Either color is fine for the practice field. If the next match is the other color, swapping now saves doing it before the match.",
+                ['Mechanical', 'Drive Team'],
+                { condition: 'bumper_hint' }
+            ),
+            step('spool', 'Spool packed', 'Tether spool packed and going with the robot.', ['Programming']),
+            step('driver-station', 'Driver station ready', 'Laptop charged, controllers plugged in, and the right code deployed.', ['Programming'])
+        ]
+    };
+}
+
 export function newId(): string {
     return crypto.randomUUID();
 }
@@ -112,8 +164,15 @@ export function newStep(title = ''): ChecklistStep {
     return { id: newId(), title, instructions: '', role_ids: [], condition: null, input: 'check' };
 }
 
+// Steps from the suggested checklists as they were before steps could record
+// anything. A pit that loaded those keeps them as saved, so these still record
+// the battery (with the recommendation) without anyone re-editing the step.
+// Choosing a "Records" value on Pit setup overrides this.
+const legacyBatterySteps = ['record battery number'];
+
 export function stepInput(step: ChecklistStep): StepInput {
-    return step.input ?? 'check';
+    if (step.input) return step.input;
+    return legacyBatterySteps.includes(step.title.trim().toLowerCase()) ? 'battery' : 'check';
 }
 
 // The checklist to resume at after repairs: the one flagged pre-match, or

@@ -3,6 +3,7 @@ import {
   matchLinkLabels,
   newStep,
   stepConditionLabels,
+  stepInput,
   stepInputLabels,
   stepInputs,
   type ChecklistDef,
@@ -24,6 +25,9 @@ const props = defineProps<{
   inSequence?: boolean;
   // What "Belongs to" means when it's left on automatic.
   autoLinkLabel: string;
+  // A built-in checklist (the practice field one): it can't be moved,
+  // removed, or tied to a match.
+  fixed?: boolean;
 }>();
 const emit = defineEmits<{ move: [delta: number]; remove: []; prematch: [on: boolean] }>();
 
@@ -54,7 +58,7 @@ function setLink(value: string) {
     <div class="checklist-head">
       <span v-if="inSequence" class="badge">{{ index + 1 }}</span>
       <input v-model="checklist.name" class="checklist-name" :readonly="!canEdit" placeholder="Checklist name" aria-label="Checklist name" />
-      <template v-if="canEdit">
+      <template v-if="canEdit && !fixed">
         <button class="icon-small" :disabled="index === 0" aria-label="Move checklist up" @click="emit('move', -1)">↑</button>
         <button class="icon-small" :disabled="index === count - 1" aria-label="Move checklist down" @click="emit('move', 1)">↓</button>
         <button class="icon-small" aria-label="Delete checklist" @click="emit('remove')">✕</button>
@@ -65,7 +69,7 @@ function setLink(value: string) {
         <input type="checkbox" :checked="!!checklist.prematch" :disabled="!canEdit" @change="emit('prematch', ($event.target as HTMLInputElement).checked)" />
         Pre-match checklist (repairs can jump here)
       </label>
-      <label class="inline-select">
+      <label v-if="!fixed" class="inline-select">
         <span>Belongs to</span>
         <select :value="checklist.match_link ?? ''" :disabled="!canEdit" @change="setLink(($event.target as HTMLSelectElement).value)">
           <option value="">{{ autoLinkLabel }}</option>
@@ -89,7 +93,7 @@ function setLink(value: string) {
         <div class="step-options">
           <label class="inline-select">
             <span>Records</span>
-            <select :value="step.input ?? 'check'" :disabled="!canEdit" @change="step.input = ($event.target as HTMLSelectElement).value as typeof step.input">
+            <select :value="stepInput(step)" :disabled="!canEdit" @change="step.input = ($event.target as HTMLSelectElement).value as typeof step.input">
               <option v-for="input in stepInputs" :key="input" :value="input">{{ stepInputLabels[input] }}</option>
             </select>
           </label>
