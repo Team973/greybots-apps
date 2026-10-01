@@ -173,6 +173,35 @@ dialog .form-row {
   }
 }
 
+/* Quick-create chips (task and repair presets). They wrap, so every option
+   is visible at once with no scrolling. */
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.preset-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-color);
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.preset-chip:hover,
+.preset-chip.on {
+  border-color: var(--header-color);
+}
+
+.preset-chip.on {
+  background: var(--accent-color);
+}
+
 /* Small square button for row actions (move, delete). */
 .icon-small {
   flex: none;
