@@ -293,6 +293,16 @@ view of the whole event, built on FullCalendar's time grid.
   lose track of what the query read, and it stops updating. Compute such
   values outside the query.
 
+## Notes
+
+The Notes page (`/notes`, members and above; `PreflightNote`,
+`src/lib/notes/notes.ts`) holds quick, timestamped notes for the active
+event. "+" creates a note at the top and opens it with the cursor in the
+title; an open note saves automatically. Each note records who wrote it and
+when (`noted_at`, on the app clock), can be dragged to reorder (a float
+`sort_order`, like tasks), and can link to a match, a subsystem, and a robot.
+Subsystem and robot are free text with suggestions (`src/lib/subsystems.ts`).
+
 ## Dialog conventions
 
 - Dialogs use `AppDialog` and stay compact enough to fit a short screen
