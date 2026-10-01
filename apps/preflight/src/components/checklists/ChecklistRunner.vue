@@ -113,7 +113,7 @@ async function act(action: () => Promise<unknown>) {
 const text = ref('');
 const batteryId = ref('');
 const scanOpen = ref(false);
-const { batteries, readings, uses } = useBatteries();
+const { loaded: batteriesLoaded, batteries, readings, uses } = useBatteries();
 const usable = computed(() => batteries.value.filter((b) => b.status !== 'retired'));
 const chosenBattery = computed(() => usable.value.find((b) => b.id === batteryId.value) ?? null);
 // The next battery in the rotation after the one installed most recently.
@@ -133,11 +133,12 @@ watch(
 );
 // A battery step starts on the recommended battery, so confirming it is one
 // tap; any other battery can be picked or scanned instead. (Set once per
-// step, as soon as the registry has loaded.)
+// step, once the registry and the usage history have both loaded: the
+// recommendation depends on which battery went in last.)
 watch(
-  () => [activeStep.value?.id, activeInput.value, recommended.value?.id] as const,
+  () => [activeStep.value?.id, activeInput.value, batteriesLoaded.value, recommended.value?.id] as const,
   () => {
-    if (activeInput.value !== 'battery' || suggested.value || !recommended.value) return;
+    if (activeInput.value !== 'battery' || suggested.value || !batteriesLoaded.value || !recommended.value) return;
     suggested.value = { id: recommended.value.id, number: recommended.value.number, after: lastInstalled.value?.number ?? null };
     if (!batteryId.value) batteryId.value = recommended.value.id;
   },
@@ -250,8 +251,11 @@ const lastMatchKey = computed(
       </p>
       <button v-if="canAct" class="primary-action small" :disabled="busy" @click="emit('complete')">Continue</button>
     </div>
-    <div v-if="canAct && canRepair" class="repair-row">
-      <button class="repair-button" :disabled="busy" @click="emit('repairs')">Repairs</button>
+    <!-- The big ways out of this checklist: whatever the parent offers (e.g.
+         the practice field), then Repairs. -->
+    <div v-if="canAct && (canRepair || $slots.actions)" class="repair-row">
+      <slot name="actions" />
+      <button v-if="canRepair" class="repair-button" :disabled="busy" @click="emit('repairs')">Repairs</button>
     </div>
     <slot name="footer" />
     <p v-if="error" class="error-text">{{ error }}</p>
@@ -482,12 +486,20 @@ const lastMatchKey = computed(
 
 /* Full width of the panel, so it's easy to hit in a hurry. */
 .repair-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: auto;
   padding-top: 4px;
 }
 
+/* Buttons the parent adds to the row share the width with Repairs. */
+.repair-row > :deep(*) {
+  flex: 1 1 160px;
+}
+
 .repair-button {
-  width: 100%;
+  flex: 1 1 160px;
   padding: 16px 20px;
   border: 2px solid #c62828;
   border-radius: 12px;

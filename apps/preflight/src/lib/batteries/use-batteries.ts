@@ -15,9 +15,15 @@ import {
 // Live view of the battery registry with each battery's latest readings and
 // history, plus the battery that's in the robot right now.
 export function useBatteries() {
-    const batteries = useLiveQuery<Battery[]>(listBatteries, []);
-    const measurements = useLiveQuery<BatteryMeasurement[]>(() => listMeasurements(), []);
-    const uses = useLiveQuery<BatteryUse[]>(() => listBatteryUses(), []);
+    // Null until each query has answered, so callers that decide something
+    // from the data (e.g. which battery to recommend) can wait for all of it.
+    const batteryRows = useLiveQuery<Battery[] | null>(listBatteries, null);
+    const measurementRows = useLiveQuery<BatteryMeasurement[] | null>(() => listMeasurements(), null);
+    const useRows = useLiveQuery<BatteryUse[] | null>(() => listBatteryUses(), null);
+    const loaded = computed(() => batteryRows.value !== null && measurementRows.value !== null && useRows.value !== null);
+    const batteries = computed(() => batteryRows.value ?? []);
+    const measurements = computed(() => measurementRows.value ?? []);
+    const uses = computed(() => useRows.value ?? []);
 
     const measurementsByBattery = computed(() => {
         const map = new Map<string, BatteryMeasurement[]>();
@@ -38,5 +44,5 @@ export function useBatteries() {
     const installed = computed(() => installedUse(uses.value));
     const installedBattery = computed(() => batteries.value.find((b) => b.id === installed.value?.battery_id) ?? null);
 
-    return { batteries, measurements, uses, measurementsByBattery, usesByBattery, readings, installed, installedBattery };
+    return { loaded, batteries, measurements, uses, measurementsByBattery, usesByBattery, readings, installed, installedBattery };
 }

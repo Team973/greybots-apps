@@ -13,6 +13,7 @@ import {
   getAdhocChecklists,
   getChecklistSequence,
   getPitRoles,
+  getPracticeChecklist,
   matchLinkLabels,
   newId,
   newStep,
@@ -20,6 +21,7 @@ import {
   saveAdhocChecklists,
   saveChecklistSequence,
   savePitRoles,
+  savePracticeChecklist,
   suggestedRoleNames,
   type ChecklistDef,
   type ChecklistSequence,
@@ -39,11 +41,14 @@ const editor = () => session.user?.name ?? null;
 const remoteRoles = useLiveQuery<PitRole[] | null>(getPitRoles, null);
 const remoteSequence = useLiveQuery<ChecklistSequence | null>(getChecklistSequence, null);
 const remoteAdhoc = useLiveQuery<ChecklistDef[] | null>(getAdhocChecklists, null);
+const remotePractice = useLiveQuery<ChecklistDef | null>(getPracticeChecklist, null);
 
 // Local working copies the form edits.
 const roles = ref<PitRole[]>([]);
 const sequence = ref<ChecklistSequence>({ checklists: [] });
 const adhoc = ref<ChecklistDef[]>([]);
+// The practice field checklist always exists (a suggested one until edited).
+const practice = ref<ChecklistDef | null>(null);
 const loaded = computed(() => remoteRoles.value !== null && remoteSequence.value !== null && remoteAdhoc.value !== null);
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -63,6 +68,11 @@ const sequenceSave = useAutosave(() => sequence.value, (value) => saveChecklistS
 const adhocSave = useAutosave(() => adhoc.value, (value) => saveAdhocChecklists(clone(value), editor()), {
   enabled: () => canEdit.value && loaded.value,
   validate: (value) => validateChecklists(value)
+});
+
+const practiceSave = useAutosave(() => practice.value, (value) => savePracticeChecklist(clone(value!), editor()), {
+  enabled: () => canEdit.value && loaded.value && !!practice.value,
+  validate: (value) => (value ? validateChecklists([value]) : null)
 });
 
 // Take in changes saved elsewhere, unless there are local edits in flight.
@@ -91,6 +101,19 @@ watch(
     if (value === null || busy(adhocSave.state.value)) return;
     adhoc.value = clone(value);
     adhocSave.reset();
+  },
+  { immediate: true }
+);
+
+watch(
+  remotePractice,
+  (value) => {
+    if (value === null || busy(practiceSave.state.value)) return;
+    // Until it's saved, the suggested checklist is rebuilt on every read
+    // (its roles follow the roster); don't let that reset edits in the form.
+    if (practice.value && JSON.stringify(value) === JSON.stringify(practice.value)) return;
+    practice.value = clone(value);
+    practiceSave.reset();
   },
   { immediate: true }
 );
@@ -141,7 +164,7 @@ const missingRoles = computed(() => {
 function removeRole(index: number) {
   const [role] = roles.value.splice(index, 1);
   // Drop the role from any steps that used it.
-  for (const checklist of [...sequence.value.checklists, ...adhoc.value]) {
+  for (const checklist of [...sequence.value.checklists, ...adhoc.value, ...(practice.value ? [practice.value] : [])]) {
     for (const step of checklist.steps) step.role_ids = step.role_ids.filter((id) => id !== role.id);
   }
 }
@@ -238,6 +261,19 @@ const sequenceAutoLink = (index: number) =>
           />
           <p v-if="!sequence.checklists.length" class="hint">No checklists yet. When the robot arrives it will go straight to Robot Ready.</p>
           <button v-if="canEdit" class="add-link" @click="sequence.checklists.push(blankChecklist())">+ Add checklist</button>
+        </section>
+
+        <!-- Practice field checklist -->
+        <section v-if="practice" class="panel">
+          <header class="panel-header">
+            <h2>Practice field checklist</h2>
+            <AutosaveStatus v-if="canEdit" :state="practiceSave.state.value" :error="practiceSave.error.value" />
+          </header>
+          <p class="hint">
+            Run from the Overview before taking the robot to the practice field. It's offered once the post-match checklists are done and
+            the robot isn't in repairs; afterwards the pit goes to the pre-match checklist.
+          </p>
+          <ChecklistEditor :checklist="practice" :index="0" :count="1" :roles="roles" :can-edit="canEdit" auto-link-label="" fixed />
         </section>
 
         <!-- Ad-hoc checklists -->

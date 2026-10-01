@@ -182,6 +182,14 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   the pit goes back to the interrupted checklist (same run, so its checked
   steps are kept) or straight to the pre-match checklist (the one flagged
   pre-match on Pit setup, else the last checklist).
+- **Practice field:** a side trip, offered only once the robot is clear of
+  post-match and not in repairs: on the pre-match checklist (or a later one)
+  or Robot Ready. A big "Practice field" button beside Repairs (or beside
+  "Robot departed" when Ready) starts the practice field checklist, which
+  runs like any other (Pending). Finishing it puts the robot *At practice
+  field*; "Back from practice field" then starts the pre-match checklist from
+  the top in a new run, since the robot has been driven. From the practice
+  checklist, "Back to pre-match" does the same without going.
 - **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
   over"), the schedule strip, and tasks. (The `CountdownTimer` component is
   in `@greybots/common` but not shown for now.)
@@ -191,7 +199,9 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   doesn't change, the step is checked off as *skipped* (grayed out, with the
   reason) and counts as complete. Skips are computed, not stored, so they
   follow schedule changes; when the schedule can't tell (e.g. before the
-  first match), the step stays a normal step.
+  first match), the step stays a normal step. `bumper_hint` never skips: it
+  only says whether swapping now is worth it (used by the practice field
+  checklist, where either color will do).
 
 How it's stored:
 
@@ -199,7 +209,10 @@ How it's stored:
   append-only log; the newest entry is the current status, so devices never
   overwrite each other. Arriving starts a *run* (`run_id`). Each checklist
   is its own Pending entry (`checklist_index`), which is what resets the
-  timer. Departing records the match the robot left for (`match_key`).
+  timer. Departing records the match the robot left for (`match_key`). A
+  Pending entry for the practice field checklist has `checklist_id =
+  'practice'` instead of an index, and `practice` is the status while the
+  robot is at the practice field.
 - **Automatic Inbound:** `effectiveStatus()` shows Away as Inbound once that
   match has ended. This is computed, not written, so no device writes
   transitions in the background. The only transitions written automatically
@@ -250,6 +263,11 @@ in the list stays selectable on that record.
 
 - **Pit checklists:** the standard sequence above, run on the Overview every
   pit visit (the `checklist_sequence` setting).
+- **Practice field checklist:** the one built-in checklist (the
+  `practice_checklist` setting, id `practice`), run from the Overview as
+  described above. Until it's edited it's a suggested one: swap in a charged
+  battery, bumpers installed (with the swap hint), spool packed, and driver
+  station ready, the last two for Programming.
 - **Other checklists:** started by hand from the Checklists page
   (`/checklists`) when needed, e.g. start of day, a bumper swap, or a
   subsystem deep dive (the `adhoc_checklists` setting). Each run is a

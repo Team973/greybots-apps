@@ -1,6 +1,6 @@
 import { clockNow } from '@greybots/common/lib/now';
 import { db } from '@/lib/db';
-import type { ChecklistSequence } from '@/lib/checklists/config';
+import { practiceChecklistId, prematchIndex, type ChecklistDef, type ChecklistSequence } from '@/lib/checklists/config';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import { saveRecord } from '@/lib/sync/local-repo';
 import type { SyncedRecord } from '@/lib/sync/types';
@@ -12,16 +12,19 @@ export const robotStatusTable = 'robotStatus';
 //   -> Robot Ready -> Robot departed -> Away -> (match ends) -> Inbound
 // From any checklist, "Repairs" switches to Repair in progress, which then
 // resumes that checklist or jumps to the pre-match checklist.
-export type RobotStatus = 'inbound' | 'pending' | 'repair' | 'ready' | 'away';
+// Once the post-match checklists are clear, the pit can take a side trip:
+//   Practice field checklist (Pending) -> At practice field -> pre-match
+export type RobotStatus = 'inbound' | 'pending' | 'repair' | 'ready' | 'away' | 'practice';
 
-export const robotStatuses: RobotStatus[] = ['inbound', 'pending', 'repair', 'ready', 'away'];
+export const robotStatuses: RobotStatus[] = ['inbound', 'pending', 'repair', 'ready', 'away', 'practice'];
 
 export const robotStatusLabels: Record<RobotStatus, string> = {
     inbound: 'Inbound',
     pending: 'Pending',
     repair: 'Repair in progress',
     ready: 'Robot Ready',
-    away: 'Away'
+    away: 'Away',
+    practice: 'At practice field'
 };
 
 // Background and text colors (mockup: pending = yellow).
@@ -30,7 +33,8 @@ export const robotStatusColors: Record<RobotStatus, { bg: string; fg: string }> 
     pending: { bg: '#ffc107', fg: '#1a1a1a' },
     repair: { bg: '#c62828', fg: '#ffffff' },
     ready: { bg: '#2e7d32', fg: '#ffffff' },
-    away: { bg: '#1565c0', fg: '#ffffff' }
+    away: { bg: '#1565c0', fg: '#ffffff' },
+    practice: { bg: '#00838f', fg: '#ffffff' }
 };
 
 // One entry in the append-only status log. The newest entry is the current
@@ -49,6 +53,9 @@ export interface RobotStatusEntry extends SyncedRecord {
     // Active checklist in the sequence (status 'pending'), or the one repairs
     // interrupted (status 'repair'), 0-based.
     checklist_index: number | null;
+    // For a 'pending' entry outside the sequence: which checklist is being
+    // run ('practice'). Absent on rows from before this existed.
+    checklist_id?: string | null;
     // The match the robot left for (status 'away').
     match_key: string | null;
     updated_by_name: string | null;
@@ -114,7 +121,8 @@ export function effectiveStatus(entry: RobotStatusEntry | null, matches: Schedul
     return { status: entry.status, since: entry.set_at, entry, autoInbound: false, match };
 }
 
-type EntryFields = Pick<RobotStatusEntry, 'status'> & Partial<Pick<RobotStatusEntry, 'pending_label' | 'note' | 'run_id' | 'checklist_index' | 'match_key'>>;
+type EntryFields = Pick<RobotStatusEntry, 'status'> &
+    Partial<Pick<RobotStatusEntry, 'pending_label' | 'note' | 'run_id' | 'checklist_index' | 'checklist_id' | 'match_key'>>;
 
 function append(eventKey: string, fields: EntryFields, editor: string | null) {
     return saveRecord<RobotStatusEntry>(robotStatusTable, {
@@ -124,6 +132,7 @@ function append(eventKey: string, fields: EntryFields, editor: string | null) {
         note: fields.note?.trim() || null,
         run_id: fields.run_id ?? null,
         checklist_index: fields.checklist_index ?? null,
+        checklist_id: fields.checklist_id ?? null,
         match_key: fields.match_key ?? null,
         set_at: new Date(clockNow()).toISOString(),
         set_by_name: editor,
@@ -175,6 +184,52 @@ export function resumeChecklist(eventKey: string, repair: RobotStatusEntry, inde
     return append(eventKey, { status: 'pending', run_id: repair.run_id ?? crypto.randomUUID(), checklist_index: index, pending_label: checklist.name }, editor);
 }
 
+// --- Practice field ---------------------------------------------------------
+
+// True while the pit is on the practice field checklist.
+export function isPracticeChecklist(entry: RobotStatusEntry | null): boolean {
+    return entry?.status === 'pending' && entry.checklist_id === practiceChecklistId;
+}
+
+// The practice field is only on offer once the robot is clear of post-match:
+// on the pre-match checklist (or a later one), or Ready. Never during
+// post-match checklists or repairs, and not while it's already under way.
+export function canGoToPractice(entry: RobotStatusEntry | null, status: RobotStatus, sequence: ChecklistSequence): boolean {
+    if (status === 'ready') return true;
+    if (status !== 'pending' || !entry || isPracticeChecklist(entry)) return false;
+    return (entry.checklist_index ?? 0) >= prematchIndex(sequence);
+}
+
+// Start the practice field checklist. It gets its own run, so its steps
+// start unchecked every time.
+export function startPracticeChecklist(eventKey: string, checklist: ChecklistDef, editor: string | null) {
+    return append(
+        eventKey,
+        { status: 'pending', run_id: crypto.randomUUID(), checklist_id: practiceChecklistId, pending_label: checklist.name },
+        editor
+    );
+}
+
+// The practice field checklist is done: the robot leaves for the practice
+// field. Does nothing if another device already moved on.
+export async function departForPractice(eventKey: string, current: RobotStatusEntry, editor: string | null) {
+    const [latest] = await listStatusHistory(eventKey);
+    if (!latest || latest.id !== current.id) return null;
+    return append(eventKey, { status: 'practice', run_id: current.run_id }, editor);
+}
+
+// Back from the practice field (or not going after all): on to the pre-match
+// checklist, in a new run so it starts from the top. Anything checked on
+// pre-match before the trip doesn't count: the robot has been driven since.
+export function returnFromPractice(eventKey: string, sequence: ChecklistSequence, editor: string | null) {
+    const index = prematchIndex(sequence);
+    const checklist = sequence.checklists[index];
+    const runId = crypto.randomUUID();
+    return checklist
+        ? append(eventKey, { status: 'pending', run_id: runId, checklist_index: index, pending_label: checklist.name }, editor)
+        : append(eventKey, { status: 'ready', run_id: runId }, editor);
+}
+
 export function markDeparted(eventKey: string, matchKey: string | null, editor: string | null, note?: string) {
     return append(eventKey, { status: 'away', match_key: matchKey, note }, editor);
 }
@@ -198,5 +253,7 @@ export function setStatusManually(
             return append(eventKey, { status: 'repair', note: options.note }, editor);
         case 'ready':
             return append(eventKey, { status: 'ready', note: options.note }, editor);
+        case 'practice':
+            return append(eventKey, { status: 'practice', note: options.note }, editor);
     }
 }

@@ -9,8 +9,8 @@ import type { MatchPrep } from '@/lib/schedule/timing';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import { robotStatusColors, type EffectiveStatus } from '@/lib/robot-status/robot-status';
 
-// The big, glanceable state banner for Inbound / Robot Ready / Away, with the
-// one action that moves the pit to the next state.
+// The big, glanceable state banner for Inbound / Robot Ready / Away / At
+// practice field, with the one action that moves the pit to the next state.
 const props = defineProps<{
   effective: EffectiveStatus;
   elapsedMs: number | null;
@@ -21,8 +21,10 @@ const props = defineProps<{
   repairs: Repair[];
   canAct: boolean;
   busy: boolean;
+  // Offer the practice field side trip (when Ready).
+  canPractice: boolean;
 }>();
-const emit = defineEmits<{ arrived: []; departed: []; matchOver: []; history: [] }>();
+const emit = defineEmits<{ arrived: []; departed: []; matchOver: []; practice: []; practiceReturn: []; history: [] }>();
 
 const colors = computed(() => robotStatusColors[props.effective.status]);
 const elapsed = computed(() => (props.elapsedMs === null ? null : formatClock(props.elapsedMs)));
@@ -31,6 +33,7 @@ const title = computed(() => {
   const { status, match } = props.effective;
   if (status === 'away') return match ? `Away · ${match.title}` : 'Away';
   if (status === 'ready') return 'Robot Ready';
+  if (status === 'practice') return 'At practice field';
   return 'Inbound';
 });
 
@@ -41,6 +44,7 @@ const subtitle = computed(() => {
     return elapsed.value ? `Waiting for the robot · ${elapsed.value}` : 'Waiting for the robot';
   }
   if (status === 'ready') return elapsed.value ? `Ready for ${elapsed.value}` : 'Ready';
+  if (status === 'practice') return elapsed.value ? `Left ${elapsed.value} ago · pre-match when it's back` : 'Pre-match when it returns';
   return elapsed.value ? `Left ${elapsed.value} ago` : 'On the field';
 });
 </script>
@@ -59,7 +63,11 @@ const subtitle = computed(() => {
     </div>
     <template v-if="canAct">
       <button v-if="effective.status === 'inbound'" class="hero-action" :disabled="busy" @click="emit('arrived')">Robot arrived</button>
-      <button v-else-if="effective.status === 'ready'" class="hero-action" :disabled="busy" @click="emit('departed')">Robot departed</button>
+      <div v-else-if="effective.status === 'ready'" class="hero-actions">
+        <button class="hero-action" :disabled="busy" @click="emit('departed')">Robot departed</button>
+        <button v-if="canPractice" class="hero-action outline" :disabled="busy" @click="emit('practice')">Practice field</button>
+      </div>
+      <button v-else-if="effective.status === 'practice'" class="hero-action" :disabled="busy" @click="emit('practiceReturn')">Back from practice field</button>
       <button v-else-if="effective.status === 'away'" class="hero-action secondary" :disabled="busy" @click="emit('matchOver')">Match over</button>
     </template>
     <button class="history-link" @click="emit('history')">Status history</button>
@@ -119,6 +127,26 @@ const subtitle = computed(() => {
   cursor: pointer;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
   touch-action: manipulation;
+}
+
+/* Two equally big choices side by side (Robot Ready). */
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.hero-actions .hero-action {
+  min-width: min(280px, 90%);
+}
+
+.hero-action.outline {
+  border: 3px solid #ffffff;
+  background: transparent;
+  color: #ffffff;
+  box-shadow: none;
 }
 
 .hero-action:active {
