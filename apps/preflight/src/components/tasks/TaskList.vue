@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import draggable from 'vuedraggable';
 import TaskDialog from './TaskDialog.vue';
 import { useLiveQuery } from '@/lib/live-query';
-import { formatElapsed, useNow } from '@/lib/now';
+import { formatElapsed, useNow } from '@greybots/common/lib/now';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import { completeTask, listTasks, reopenTask, reorderTask, type Task } from '@/lib/tasks/tasks';
 import { useSessionStore } from '@/stores/session-store';

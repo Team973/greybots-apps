@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { RouterLink } from 'vue-router';
-import CountdownTimer from '@/components/overview/CountdownTimer.vue';
+import CountdownTimer from '@greybots/common/components/CountdownTimer.vue';
+import { useNow } from '@greybots/common/lib/now';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
 import RobotStatusCard from '@/components/robot-status/RobotStatusCard.vue';
 import TaskList from '@/components/tasks/TaskList.vue';
 import { useLiveQuery } from '@/lib/live-query';
-import { useNow } from '@/lib/now';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
 import type { ActiveEvent, ScheduleItem } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
@@ -25,7 +25,7 @@ const matches = computed(() =>
 );
 const nextMatch = computed(() => {
   const next = matches.value.find((m) => Date.parse(m.start_at) > now.value);
-  return next ? { title: next.title, start: next.start_at } : null;
+  return next ? { label: next.title, at: next.start_at } : null;
 });
 </script>
 
@@ -50,7 +50,7 @@ const nextMatch = computed(() => {
 
     <TaskList v-if="eventKey" class="area-tasks" :event-key="eventKey" :matches="matches" />
     <RobotStatusCard v-if="eventKey" class="area-status" :event-key="eventKey" />
-    <CountdownTimer class="area-timer" :next-match="nextMatch" />
+    <CountdownTimer class="panel area-timer" :target="nextMatch" target-button-label="Next match" storage-key="preflight_timer" />
   </div>
 </template>
 

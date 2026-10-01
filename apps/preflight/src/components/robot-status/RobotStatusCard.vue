@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import RobotStatusDialog from './RobotStatusDialog.vue';
 import { useLiveQuery } from '@/lib/live-query';
-import { formatElapsed, useNow } from '@/lib/now';
+import { formatElapsed, useNow } from '@greybots/common/lib/now';
 import { listStatusHistory, robotStatusColors, statusText, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
 import { useSessionStore } from '@/stores/session-store';
 

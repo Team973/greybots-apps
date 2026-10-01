@@ -1,10 +1,21 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
-import { useNow } from '@/lib/now';
+import { useNow } from '../lib/now';
 
-// Pit countdown timer (Overview mockup). Its state is per device and kept in
-// localStorage so it survives page switches and reloads.
-const props = defineProps<{ nextMatch: { title: string; start: string } | null }>();
+// Countdown timer with +/− buttons per digit of MM:SS, Start/Pause, and
+// Reset. Optionally it can count down to an app-supplied target time (e.g.
+// the team's next match). Its state is per device and kept in localStorage
+// under `storageKey`, so it survives page switches and reloads.
+const props = withDefaults(
+  defineProps<{
+    // What the target button counts down to; null when nothing is upcoming.
+    target?: { label: string; at: string | number } | null;
+    // Label for the target button. The button is hidden when this is unset.
+    targetButtonLabel?: string;
+    storageKey?: string;
+  }>(),
+  { target: null, targetButtonLabel: undefined, storageKey: 'countdown_timer' }
+);
 
 interface TimerState {
   // The value dialed in with the +/− buttons.
@@ -17,12 +28,11 @@ interface TimerState {
   label: string | null;
 }
 
-const storageKey = 'preflight_timer';
 const maxSetMs = (99 * 60 + 59) * 1000;
 
 function load(): TimerState {
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null');
+    const saved = JSON.parse(localStorage.getItem(props.storageKey) ?? 'null');
     if (saved && typeof saved.setMs === 'number') return saved;
   } catch {
     // Unreadable storage; start fresh.
@@ -33,7 +43,7 @@ function load(): TimerState {
 const state = reactive<TimerState>(load());
 watch(state, (value) => {
   try {
-    localStorage.setItem(storageKey, JSON.stringify(value));
+    localStorage.setItem(props.storageKey, JSON.stringify(value));
   } catch {
     // Storage unavailable; the timer just won't persist.
   }
@@ -87,16 +97,16 @@ function reset() {
   state.label = null;
 }
 
-function countToNextMatch() {
-  if (!props.nextMatch) return;
-  state.endsAt = Date.parse(props.nextMatch.start);
+function countToTarget() {
+  if (!props.target) return;
+  state.endsAt = typeof props.target.at === 'number' ? props.target.at : Date.parse(props.target.at);
   state.pausedMs = null;
-  state.label = props.nextMatch.title;
+  state.label = props.target.label;
 }
 </script>
 
 <template>
-  <section class="panel timer-panel" :class="{ finished }">
+  <section class="countdown-timer" :class="{ finished }">
     <div class="digit-buttons">
       <button v-for="(step, i) in digitSteps" :key="`up${i}`" :disabled="!canAdjust" :aria-label="`Add ${step / 1000} seconds`" @click="adjust(step, 1)">+</button>
     </div>
@@ -108,15 +118,22 @@ function countToNextMatch() {
     <div class="controls">
       <button class="start" :class="{ pause: running }" @click="startPause">{{ running ? 'Pause' : 'Start' }}</button>
       <button @click="reset">Reset</button>
-      <button :disabled="!nextMatch" :title="nextMatch ? `Count down to ${nextMatch.title}` : 'No upcoming match'" @click="countToNextMatch">
-        Next match
+      <button
+        v-if="targetButtonLabel"
+        :disabled="!target"
+        :title="target ? `Count down to ${target.label}` : 'Nothing upcoming'"
+        @click="countToTarget"
+      >
+        {{ targetButtonLabel }}
       </button>
     </div>
   </section>
 </template>
 
 <style scoped>
-.timer-panel {
+.countdown-timer {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
