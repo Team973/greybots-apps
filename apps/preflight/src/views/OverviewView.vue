@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import ChecklistRun from '@/components/overview/ChecklistRun.vue';
+import NextMatchLine from '@/components/overview/NextMatchLine.vue';
 import RepairPanel from '@/components/overview/RepairPanel.vue';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
 import StatusHero from '@/components/overview/StatusHero.vue';
@@ -11,6 +12,7 @@ import { useLiveQuery } from '@/lib/live-query';
 import { markDeparted, markInbound, resumeChecklist, robotArrived } from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
+import { defaultMatchPrep, getMatchPrep, type MatchPrep } from '@/lib/schedule/timing';
 import type { ActiveEvent, ScheduleItem } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
 
@@ -38,6 +40,9 @@ const status = computed(() => flow.effective.value.status);
 
 // The match the robot is heading to: the first one not yet over.
 const departingFor = computed(() => matches.value.find((m) => Date.parse(m.end_at) > flow.now.value) ?? null);
+
+// Countdown, prep, and queue deadlines for it (issue #80).
+const prep = useLiveQuery<MatchPrep>(getMatchPrep, defaultMatchPrep);
 
 const busy = ref(false);
 const actionError = ref<string | null>(null);
@@ -83,6 +88,7 @@ const historyOpen = ref(false);
         <strong>Robot in the pit</strong>
         <span>{{ flow.sequence.value.checklists.length ? 'Working through checklists' : 'No checklists configured' }}</span>
         <span class="bar-spacer"></span>
+        <NextMatchLine :match="departingFor" :prep="prep" :now="flow.now.value" />
         <button class="bar-link" @click="historyOpen = true">Status history</button>
       </div>
       <ChecklistRun
@@ -105,6 +111,9 @@ const historyOpen = ref(false);
         :elapsed-ms="flow.elapsedMs.value"
         :can-act="isMember"
         :busy="busy"
+        :next-match="departingFor"
+        :prep="prep"
+        :now="flow.now.value"
         @resume="onResume"
         @history="historyOpen = true"
       />
@@ -118,6 +127,7 @@ const historyOpen = ref(false);
         :effective="flow.effective.value"
         :elapsed-ms="flow.elapsedMs.value"
         :next-match="departingFor"
+        :prep="prep"
         :now="flow.now.value"
         :can-act="isMember"
         :busy="busy"

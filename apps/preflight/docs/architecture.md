@@ -258,6 +258,20 @@ view of the whole event, built on FullCalendar's time grid.
   the event changes, and every 5 minutes on a lead/admin device with the
   schedule open and online. It needs a Supabase session (a kiosk's linked
   account works).
+- **Match timing** (`src/lib/schedule/timing.ts`): each match has a
+  published time, an estimate, an actual start, and a completion time (TBA's
+  `post_result_time`). The estimate is, in order: a manual override for that
+  match (set from the match on the calendar), the published time plus the
+  manual field delay ("running 12 min behind", under **Match timing**), TBA's
+  prediction, then the published time. The delay and overrides are the
+  `match_timing` setting (lead/admin), so they work offline and sync to every
+  device. `listScheduleItems()` moves each match to its estimate and attaches
+  its `times`, so the calendar, countdowns, automatic Inbound, and smart steps
+  all follow it. Feature code should read the schedule through that function,
+  not the table.
+- **Prep timing** (the `match_prep` setting): how long before a match to
+  start prep and to leave for the queue. `matchDeadlines()` turns that into
+  deadlines, shown with the countdown on the Overview (`NextMatchLine`).
 - **Custom events** (lead/admin): drag across empty time to create, drag to
   move, drag the bottom edge to resize, and tap to edit or delete. Each one
   has a type (Event / Practice / Pit / Programming / Admin), which drives its color and the filter

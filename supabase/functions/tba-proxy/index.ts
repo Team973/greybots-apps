@@ -102,7 +102,9 @@ Deno.serve(async (req) => {
 
     const [eventResponse, matchesResponse] = await Promise.all([
       tbaFetch(`/event/${eventId}`, tbaApiKey),
-      tbaFetch(`/team/frc${teamNumber}/event/${eventId}/matches/simple`, tbaApiKey),
+      // The full model (not /simple) for post_result_time, i.e. when the
+      // match actually finished. Trimmed below to the fields Preflight uses.
+      tbaFetch(`/team/frc${teamNumber}/event/${eventId}/matches`, tbaApiKey),
     ]);
     if (eventResponse.status === 404) {
       return jsonResponse({ error: `Event ${eventId} not found on TBA.` }, 404);
@@ -121,7 +123,20 @@ Deno.serve(async (req) => {
         end_date: event.end_date,
         timezone: event.timezone,
       },
-      matches: Array.isArray(matches) ? matches : [],
+      matches: (Array.isArray(matches) ? matches : []).map((match) => ({
+        key: match.key,
+        comp_level: match.comp_level,
+        set_number: match.set_number,
+        match_number: match.match_number,
+        alliances: {
+          red: { team_keys: match.alliances?.red?.team_keys ?? [] },
+          blue: { team_keys: match.alliances?.blue?.team_keys ?? [] },
+        },
+        time: match.time ?? null,
+        predicted_time: match.predicted_time ?? null,
+        actual_time: match.actual_time ?? null,
+        post_result_time: match.post_result_time ?? null,
+      })),
     });
   }
 

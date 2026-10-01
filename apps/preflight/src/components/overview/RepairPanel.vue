@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { formatClock } from '@greybots/common/lib/now';
+import NextMatchLine from './NextMatchLine.vue';
 import { prematchIndex, type ChecklistSequence } from '@/lib/checklists/config';
+import type { MatchPrep } from '@/lib/schedule/timing';
+import type { ScheduleItem } from '@/lib/schedule/types';
 import { robotStatusColors, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
 
 // Repair in progress: a compact red strip with how long repairs have taken,
@@ -14,6 +17,9 @@ const props = defineProps<{
   elapsedMs: number | null;
   canAct: boolean;
   busy: boolean;
+  nextMatch: ScheduleItem | null;
+  prep: MatchPrep;
+  now: number;
 }>();
 const emit = defineEmits<{ resume: [index: number]; history: [] }>();
 
@@ -36,6 +42,7 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
         <template v-if="fromChecklist">Interrupted {{ fromChecklist.name }}</template>
         <template v-if="entry.note"> · {{ entry.note }}</template>
       </p>
+      <NextMatchLine class="next" :match="nextMatch" :prep="prep" :now="now" />
     </div>
     <p class="elapsed" title="Time in repair">{{ elapsedMs === null ? '--:--' : formatClock(elapsedMs) }}</p>
     <div v-if="canAct" class="actions">
@@ -73,6 +80,11 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
 .from {
   margin: 4px 0 0;
   opacity: 0.9;
+}
+
+.next {
+  justify-content: flex-start;
+  margin-top: 6px;
 }
 
 .elapsed {
