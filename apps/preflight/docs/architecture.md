@@ -100,6 +100,22 @@ Both modes use the same `admin > lead > member > observer` ladder
 - **Leads and admins** also get Pit setup, and are the only ones who can
   change shared settings and the schedule.
 
+**Roles are per app.** An account's row in the shared `User` table has
+`role` (its role in GreyScout) and `preflight_role` (its role here), so
+someone can be a scouting lead and only an observer in the pit. Preflight
+reads `preflight_role`, and its database policies check it.
+
+Both apps show the same People table (`UserManagement` in
+`@greybots/common`, with the rules in `lib/user-roles.ts`): everyone with an
+account and their role in each app, each changeable from either app. A role
+is changed by someone with enough authority *in the app the role is for*:
+promote up to your own level anyone below you, and only admins demote. The
+database enforces this (`enforce_user_profile_update`); the dropdowns only
+offer what it will accept. In Preflight it's under Settings and needs a
+connection and a server session; on a kiosk that's the linked account, so
+only kiosk admins see it. Kiosk crew members (local PIN users) are separate
+and still managed under Crew.
+
 ### Navigation
 
 The nav bar (`src/components/NavBar.vue`) shows the page links as a strip.

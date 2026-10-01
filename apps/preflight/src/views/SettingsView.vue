@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
+import UserManagement from '@greybots/common/components/UserManagement.vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import CrewManager from '@/components/CrewManager.vue';
@@ -19,6 +20,13 @@ const sync = useSyncStore();
 // On a kiosk only admins may change device settings; on a personal device
 // the signed-in owner can.
 const canManageDevice = computed(() => !device.isKiosk || session.hasRole('admin'));
+
+// Accounts and their per-app roles live on the server, so the People table
+// needs a connection and a server session. On a kiosk that session is the
+// linked account's, so only the kiosk's admins get to act as it.
+const canSeePeople = computed(() => sync.online && sync.hasServerSession && (!device.isKiosk || session.hasRole('admin')));
+// Our own role may be what changed.
+const onRolesChanged = () => session.refreshWebProfile().catch(() => undefined);
 
 const deviceName = ref(device.deviceName);
 const idleLockMinutes = ref(String(device.config?.idleLockMinutes ?? 0));
@@ -63,6 +71,15 @@ async function reset() {
   </div>
 
   <SyncPanel />
+
+  <div v-if="canSeePeople" class="card people-card">
+    <h2>People</h2>
+    <p class="hint">
+      Everyone with a greybots-apps account, and their role in each app. Shared with GreyScout: a change here shows up there.
+      <template v-if="device.isKiosk"> Changes are made as this kiosk's linked account.</template>
+    </p>
+    <UserManagement @changed="onRolesChanged" />
+  </div>
 
   <CrewManager v-if="device.isKiosk && session.hasRole('admin')" />
 

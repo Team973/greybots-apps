@@ -7,7 +7,7 @@ import SearchableDropdown from "@greybots/common/components/SearchableDropdown.v
 import { useEventStore } from "@/stores/event-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { queryEventMatchSchedule, queryAllEvents } from "@/lib/data-query";
-import { fetchAllUsers } from "@/lib/user-query";
+import { fetchAllUsers } from "@greybots/common/lib/user-roles";
 import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assignScoutToSlots } from "@/lib/scout-assignment-query";
 </script>
 
@@ -350,7 +350,7 @@ export default {
 
             if (this.authStore.isLead) {
                 const [people, eventAssignments] = await Promise.all([
-                    fetchAllUsers(),
+                    fetchAllUsers().catch(() => []),
                     queryScoutAssignments(currentEventId)
                 ]);
 
