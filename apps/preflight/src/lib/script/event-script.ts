@@ -194,14 +194,18 @@ export interface GenericChecklist {
 // field and the checklists that are started by hand.
 export function buildGenericChecklists(
     sequence: ChecklistSequence,
-    practice: ChecklistDef | null,
+    flow: { startOfDay: ChecklistDef | null; practice: ChecklistDef | null; endOfDay: ChecklistDef | null },
     adhoc: ChecklistDef[],
     roles: PitRole[]
 ): GenericChecklist[] {
     const render = (c: ChecklistDef): ScriptChecklist => ({ name: c.name || 'Untitled checklist', steps: c.steps.map((s) => genericStep(s, roles)) });
+    const one = (c: ChecklistDef | null, group: string) => (c ? [{ key: `flow:${c.id}`, group, checklist: render(c) }] : []);
+    // In the order they come up through a day.
     return [
+        ...one(flow.startOfDay, 'When the day starts'),
         ...sequence.checklists.map((c) => ({ key: `sequence:${c.id}`, group: 'Every pit visit', checklist: render(c) })),
-        ...(practice ? [{ key: `practice:${practice.id}`, group: 'Before the practice field', checklist: render(practice) }] : []),
+        ...one(flow.practice, 'Before the practice field'),
+        ...one(flow.endOfDay, 'When the day ends'),
         ...adhoc.map((c) => ({ key: `adhoc:${c.id}`, group: 'When needed', checklist: render(c) }))
     ];
 }

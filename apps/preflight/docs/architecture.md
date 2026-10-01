@@ -223,6 +223,15 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   field*; "Back from practice field" then starts the pre-match checklist from
   the top in a new run, since the robot has been driven. From the practice
   checklist, "Back to pre-match" does the same without going.
+- **Break:** "Take a break" (from a checklist or from repairs) pauses the pit
+  while the robot isn't ready, e.g. for lunch. "Back to work" returns to
+  exactly where the pit was: the same checklist in the same run, with its
+  checked steps kept. Break time is never counted in the stats.
+- **Ending and starting the day:** "End the day" runs the end of day
+  checklist; finishing it puts the pit in *Day ended*, where nothing is timed
+  (so a laptop left on overnight doesn't run up a timer). It can be called
+  off part-way, which goes back to where the pit was. "Start day" then runs
+  the start of day checklist, and finishing that goes to pre-match.
 - **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
   over"), the schedule strip, and tasks. (The `CountdownTimer` component is
   in `@greybots/common` but not shown for now.)
@@ -243,9 +252,11 @@ How it's stored:
   overwrite each other. Arriving starts a *run* (`run_id`). Each checklist
   is its own Pending entry (`checklist_index`), which is what resets the
   timer. Departing records the match the robot left for (`match_key`). A
-  Pending entry for the practice field checklist has `checklist_id =
-  'practice'` instead of an index, and `practice` is the status while the
-  robot is at the practice field.
+  Pending entry for a checklist outside the sequence has a `checklist_id`
+  (`practice`, `start_of_day`, or `end_of_day`) instead of an index.
+  `practice`, `break`, and `day_ended` are statuses of their own. Going
+  back from a break (or a called-off end of day) appends a copy of the entry
+  before it (`resumePrevious`), so the log stays append-only.
 - **Automatic Inbound:** `effectiveStatus()` shows Away as Inbound once that
   match has ended. This is computed, not written, so no device writes
   transitions in the background. The only transitions written automatically
@@ -296,11 +307,10 @@ in the list stays selectable on that record.
 
 - **Pit checklists:** the standard sequence above, run on the Overview every
   pit visit (the `checklist_sequence` setting).
-- **Practice field checklist:** the one built-in checklist (the
-  `practice_checklist` setting, id `practice`), run from the Overview as
-  described above. Until it's edited it's a suggested one: swap in a charged
-  battery, bumpers installed (with the swap hint), spool packed, and driver
-  station ready, the last two for Programming.
+- **Flow checklists:** three built-in checklists that the pit flow runs at
+  fixed points, each with a fixed id and its own setting: `practice` (before
+  the practice field), `start_of_day`, and `end_of_day`. Each is a suggested
+  checklist until a lead edits it on Pit setup.
 - **Other checklists:** started by hand from the Checklists page
   (`/checklists`) when needed, e.g. start of day, a bumper swap, or a
   subsystem deep dive (the `adhoc_checklists` setting). Each run is a
@@ -433,6 +443,13 @@ the next entry, and from the checked steps.
 - **Slowest steps:** a step's time is the gap from the step before it,
   counting only time spent on that checklist, so a repair in the middle isn't
   blamed on the next step.
+- **Not counted:** breaks, the start and end of day checklists, and anything
+  after the day is ended.
+- **Clean up** (admins, `cleanup.ts`): remove one turnaround with the ✕ beside
+  its bar (for one left running because the day wasn't ended), or clear all
+  timing data from before a chosen match. Both soft-delete status log entries
+  and checked steps, never the newest status entry (that's the pit's current
+  state), and never repairs, tasks, notes, or batteries.
 - The chart colors (`.viz-root` in `base.css`) are a fixed three-series
   palette checked for color-blind separation in both themes. Stages are also
   named in a legend and available as a table, so color is never the only cue.

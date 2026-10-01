@@ -11,10 +11,14 @@ import type { ScheduleItem } from '@/lib/schedule/types';
 // A *turnaround* is one pit visit: from the robot coming into the pit to it
 // being ready. Its time is the sum of the time spent on the pit checklists
 // and in repairs. Time spent on the practice field side trip (its checklist,
-// and being at the practice field) and time sitting Ready never counts.
+// and being at the practice field), on a break, on the start and end of day
+// checklists, and sitting Ready never counts. Ending the day closes whatever
+// was open, so nothing runs overnight.
 
 // What the pit was doing during a stretch of the log.
-type SegmentKind = 'post' | 'pre' | 'repair' | 'practice_prep' | 'practice' | 'ready' | 'out';
+// 'aside' is time that belongs to no turnaround: a break, or the start / end
+// of day checklists. 'out' ends a pit visit: inbound, away, or day ended.
+type SegmentKind = 'post' | 'pre' | 'repair' | 'practice_prep' | 'practice' | 'ready' | 'aside' | 'out';
 
 interface Segment {
     entry: RobotStatusEntry;
@@ -39,6 +43,10 @@ export interface Turnaround {
     // post + repair + pre, and the same without repairs.
     total: number;
     withoutRepairs: number;
+    // The status log entries and checklist runs it's made of, for removing
+    // it (see ./cleanup.ts).
+    entryIds: string[];
+    runIds: string[];
 }
 
 export interface Sample {
@@ -72,6 +80,8 @@ function classify(entry: RobotStatusEntry, sequence: ChecklistSequence): Segment
     switch (entry.status) {
         case 'pending':
             if (entry.checklist_id === practiceChecklistId) return 'practice_prep';
+            // Start of day and end of day.
+            if (entry.checklist_id) return 'aside';
             return (entry.checklist_index ?? 0) >= prematchIndex(sequence) ? 'pre' : 'post';
         case 'repair':
             return 'repair';
@@ -79,6 +89,8 @@ function classify(entry: RobotStatusEntry, sequence: ChecklistSequence): Segment
             return 'practice';
         case 'ready':
             return 'ready';
+        case 'break':
+            return 'aside';
         default:
             return 'out';
     }
@@ -112,6 +124,8 @@ function buildTurnarounds(segments: Segment[], matches: ScheduleItem[]): Turnaro
         readyAt: number | null;
         // Still working (the newest entry is a checklist or repair).
         unfinished: boolean;
+        entryIds: string[];
+        runIds: Set<string>;
     }
     let open: Open | null = null;
 
@@ -129,7 +143,9 @@ function buildTurnarounds(segments: Segment[], matches: ScheduleItem[]): Turnaro
             repair: current.repair,
             pre: current.pre,
             total,
-            withoutRepairs: current.post + current.pre
+            withoutRepairs: current.post + current.pre,
+            entryIds: current.entryIds,
+            runIds: [...current.runIds]
         });
     };
 
@@ -139,14 +155,19 @@ function buildTurnarounds(segments: Segment[], matches: ScheduleItem[]): Turnaro
             open = null;
             continue;
         }
-        open ??= { start: segment.start, post: 0, repair: 0, pre: 0, readyAt: null, unfinished: false };
+        // A visit starts with pit work, not with a break or the start of day
+        // checklist.
+        if (!open && segment.kind === 'aside') continue;
+        open ??= { start: segment.start, post: 0, repair: 0, pre: 0, readyAt: null, unfinished: false, entryIds: [], runIds: new Set() };
+        open.entryIds.push(segment.entry.id);
+        if (segment.entry.run_id) open.runIds.add(segment.entry.run_id);
         if (segment.kind === 'ready') {
             open.readyAt = segment.start;
         } else if (segment.kind === 'post' || segment.kind === 'pre' || segment.kind === 'repair') {
             open[segment.kind] += length(segment);
             if (segment.end === null) open.unfinished = true;
         }
-        // practice_prep and practice: part of the visit, never of its time.
+        // practice_prep, practice, and aside: part of the visit, never of its time.
     }
     // The robot is sitting Ready right now: that turnaround is done.
     if (open) close(open, null);

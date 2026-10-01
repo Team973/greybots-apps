@@ -7,7 +7,9 @@ import { formatTime } from '@/lib/schedule/dates';
 // own segment, all on one time scale so long ones stand out. The legend names
 // the stages, the total is written at the end of each bar, hovering a segment
 // shows its time, and the same numbers are available as a table.
-const props = defineProps<{ turnarounds: Turnaround[] }>();
+// Admins can remove a turnaround that shouldn't count (`canDelete`).
+const props = defineProps<{ turnarounds: Turnaround[]; canDelete?: boolean }>();
+const emit = defineEmits<{ delete: [turnaround: Turnaround] }>();
 
 const stages = [
   { key: 'post', label: 'Post-match' },
@@ -54,6 +56,7 @@ const showTable = ref(false);
               </template>
             </span>
             <span class="total">{{ formatDuration(t.total) }}</span>
+            <button v-if="canDelete" class="icon-small remove" :aria-label="`Remove the turnaround ${name(t).toLowerCase()} from the stats`" title="Remove from the stats" @click="emit('delete', t)">✕</button>
           </span>
         </li>
       </ol>
@@ -216,6 +219,17 @@ figcaption {
   font-size: 0.8rem;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.remove {
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.remove:hover {
+  opacity: 1;
 }
 
 .total {

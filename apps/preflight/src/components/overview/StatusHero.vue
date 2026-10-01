@@ -10,7 +10,8 @@ import type { ScheduleItem } from '@/lib/schedule/types';
 import { robotStatusColors, type EffectiveStatus } from '@/lib/robot-status/robot-status';
 
 // The big, glanceable state banner for Inbound / Robot Ready / Away / At
-// practice field, with the one action that moves the pit to the next state.
+// practice field / On break / Day ended, with the one action that moves the
+// pit to the next state.
 const props = defineProps<{
   effective: EffectiveStatus;
   elapsedMs: number | null;
@@ -23,8 +24,23 @@ const props = defineProps<{
   busy: boolean;
   // Offer the practice field side trip (when Ready).
   canPractice: boolean;
+  // Offer "End the day".
+  canEndDay: boolean;
 }>();
-const emit = defineEmits<{ arrived: []; departed: []; matchOver: []; practice: []; practiceReturn: []; history: [] }>();
+const emit = defineEmits<{
+  arrived: [];
+  departed: [];
+  matchOver: [];
+  practice: [];
+  practiceReturn: [];
+  endDay: [];
+  startDay: [];
+  resume: [];
+  history: [];
+}>();
+
+// The day is over: nothing is being timed and there's no match to chase.
+const dayEnded = computed(() => props.effective.status === 'day_ended');
 
 const colors = computed(() => robotStatusColors[props.effective.status]);
 const elapsed = computed(() => (props.elapsedMs === null ? null : formatClock(props.elapsedMs)));
@@ -34,6 +50,8 @@ const title = computed(() => {
   if (status === 'away') return match ? `Away · ${match.title}` : 'Away';
   if (status === 'ready') return 'Robot Ready';
   if (status === 'practice') return 'At practice field';
+  if (status === 'break') return 'On break';
+  if (status === 'day_ended') return 'Day ended';
   return 'Inbound';
 });
 
@@ -45,6 +63,12 @@ const subtitle = computed(() => {
   }
   if (status === 'ready') return elapsed.value ? `Ready for ${elapsed.value}` : 'Ready';
   if (status === 'practice') return elapsed.value ? `Left ${elapsed.value} ago · pre-match when it's back` : 'Pre-match when it returns';
+  if (status === 'break') {
+    const from = props.effective.entry?.pending_label;
+    return [from ? `Paused ${from}` : 'Paused', elapsed.value].filter(Boolean).join(' · ');
+  }
+  // No timer: the point of ending the day is that nothing runs overnight.
+  if (status === 'day_ended') return 'The pit is closed. Start the day to run the start of day checklist.';
   return elapsed.value ? `Left ${elapsed.value} ago` : 'On the field';
 });
 </script>
@@ -55,9 +79,9 @@ const subtitle = computed(() => {
       <h2>{{ title }}</h2>
       <p>{{ subtitle }}</p>
       <!-- While the robot is away, the match it left for is the one in play. -->
-      <NextMatchLine v-if="effective.status !== 'away'" class="next" :match="nextMatch" :prep="prep" :now="now" />
+      <NextMatchLine v-if="effective.status !== 'away' && !dayEnded" class="next" :match="nextMatch" :prep="prep" :now="now" />
     </div>
-    <div class="chips">
+    <div v-if="!dayEnded" class="chips">
       <InstalledBatteryChip />
       <ActiveRepairChip :repairs="repairs" />
     </div>
@@ -69,6 +93,9 @@ const subtitle = computed(() => {
       </div>
       <button v-else-if="effective.status === 'practice'" class="hero-action" :disabled="busy" @click="emit('practiceReturn')">Back from practice field</button>
       <button v-else-if="effective.status === 'away'" class="hero-action secondary" :disabled="busy" @click="emit('matchOver')">Match over</button>
+      <button v-else-if="effective.status === 'break'" class="hero-action" :disabled="busy" @click="emit('resume')">Back to work</button>
+      <button v-else-if="dayEnded" class="hero-action" :disabled="busy" @click="emit('startDay')">Start day</button>
+      <button v-if="canEndDay" class="corner-link end-day" :disabled="busy" @click="emit('endDay')">End the day</button>
     </template>
     <button class="history-link" @click="emit('history')">Status history</button>
   </section>
@@ -160,6 +187,24 @@ const subtitle = computed(() => {
 .hero-action.secondary {
   padding: 14px 24px;
   font-size: 1.2rem;
+}
+
+.corner-link {
+  position: absolute;
+  bottom: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.8;
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.end-day {
+  left: 14px;
 }
 
 .history-link {

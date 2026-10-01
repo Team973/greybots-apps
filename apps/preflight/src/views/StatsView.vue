@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import DurationHistogram from '@/components/stats/DurationHistogram.vue';
 import StatTile from '@/components/stats/StatTile.vue';
@@ -10,7 +10,10 @@ import { useLiveQuery } from '@/lib/live-query';
 import { listStatusHistory, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
 import type { ActiveEvent, ScheduleItem } from '@/lib/schedule/types';
-import { buildPitStats, formatDuration, mean, median } from '@/lib/stats/pit-stats';
+import { formatTime } from '@/lib/schedule/dates';
+import { clearBefore, countBefore, deleteTurnaround } from '@/lib/stats/cleanup';
+import { buildPitStats, formatDuration, mean, median, type Turnaround } from '@/lib/stats/pit-stats';
+import { useSessionStore } from '@/stores/session-store';
 
 // Stats: how long the pit takes, and where the time goes. Headline numbers
 // first, then what stands out, then the detail (every turnaround as a stacked
@@ -38,6 +41,53 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 // The few steps that take longest on average, with enough runs to mean something.
 const slowSteps = computed(() => stats.value.steps.filter((s) => mean(s.samples) > 0).slice(0, 8));
 const slowestStep = computed(() => Math.max(1, ...slowSteps.value.map((s) => mean(s.samples))));
+
+// --- Cleaning up (admins) ---
+// For times that shouldn't count: a turnaround left running overnight, or
+// everything recorded before a given match.
+const session = useSessionStore();
+const isAdmin = computed(() => session.hasRole('admin'));
+const matches = computed(() =>
+  items.value.filter((i) => i.kind === 'match').sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at))
+);
+const clearMatchKey = ref('');
+const cleanupMessage = ref<string | null>(null);
+const cleanupError = ref<string | null>(null);
+
+async function cleanup(action: () => Promise<string | null>) {
+  cleanupError.value = null;
+  cleanupMessage.value = null;
+  try {
+    cleanupMessage.value = await action();
+  } catch (e) {
+    cleanupError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+const removeTurnaround = (t: Turnaround) =>
+  cleanup(async () => {
+    const what = t.matchTitle ? `before ${t.matchTitle}` : `that started at ${formatTime(t.startedAt)}`;
+    if (!confirm(`Remove the turnaround ${what} (${formatDuration(t.total)}) from the stats? Its status history and checked steps are deleted.`)) return null;
+    await deleteTurnaround(eventKey.value, t);
+    return 'Turnaround removed.';
+  });
+
+const clearBeforeMatch = () =>
+  cleanup(async () => {
+    const match = matches.value.find((m) => m.match_key === clearMatchKey.value);
+    if (!match) return null;
+    // The stored start (what TBA says), not one moved by a manual estimate.
+    const cutoff = match.times?.actualStart ?? match.start_at;
+    const counts = await countBefore(eventKey.value, cutoff);
+    const total = counts.statusEntries + counts.checks + counts.checklistRuns;
+    if (!total) return `Nothing was recorded before ${match.title}.`;
+    const summary = `${plural(counts.statusEntries, 'status change')}, ${plural(counts.checks, 'checked step')}, and ${plural(counts.checklistRuns, 'checklist run')}`;
+    if (!confirm(`Delete everything timed before ${match.title} (${formatTime(cutoff)})? That's ${summary}. Repairs, tasks, notes, and batteries are kept. This can't be undone.`)) {
+      return null;
+    }
+    await clearBefore(eventKey.value, cutoff);
+    return `Cleared ${summary} from before ${match.title}.`;
+  });
 
 // --- What stands out ---
 const insights = computed(() => {
@@ -140,7 +190,7 @@ const insights = computed(() => {
         </ul>
       </section>
 
-      <TurnaroundBars :turnarounds="turnarounds" />
+      <TurnaroundBars :turnarounds="turnarounds" :can-delete="isAdmin" @delete="removeTurnaround" />
 
       <section class="charts" aria-label="How the times are spread">
         <DurationHistogram title="Turnaround, with repairs" :values="totals" unit="turnaround" />
@@ -170,6 +220,26 @@ const insights = computed(() => {
         </ol>
       </section>
     </template>
+
+    <section v-if="isAdmin" class="panel cleanup">
+      <h2>Clean up</h2>
+      <p class="hint">
+        For times that shouldn't count, like a turnaround left running overnight. Remove a single turnaround with the ✕ beside its bar, or
+        clear everything timed before a match. Repairs, tasks, notes, and batteries are never touched.
+      </p>
+      <div class="cleanup-row">
+        <label class="field">
+          <span>Clear timing data from before</span>
+          <select v-model="clearMatchKey">
+            <option value="" disabled>Choose a match</option>
+            <option v-for="m in matches" :key="m.id" :value="m.match_key ?? ''">{{ m.title }} · {{ formatTime(m.start_at) }}</option>
+          </select>
+        </label>
+        <button class="danger" :disabled="!clearMatchKey" @click="clearBeforeMatch">Clear…</button>
+      </div>
+      <p v-if="cleanupMessage" class="hint">{{ cleanupMessage }}</p>
+      <p v-if="cleanupError" class="error-text">{{ cleanupError }}</p>
+    </section>
   </div>
 </template>
 
@@ -270,6 +340,33 @@ const insights = computed(() => {
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.cleanup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.cleanup-row .field {
+  flex: 0 1 320px;
+}
+
+.danger {
+  padding: 8px 16px;
+  border: 1px solid #c62828;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.danger:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 @media (max-width: 700px) {

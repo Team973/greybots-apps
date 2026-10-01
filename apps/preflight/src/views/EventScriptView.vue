@@ -8,8 +8,10 @@ import { useBatteries } from '@/lib/batteries/use-batteries';
 import {
   getAdhocChecklists,
   getChecklistSequence,
+  getEndOfDayChecklist,
   getPitRoles,
   getPracticeChecklist,
+  getStartOfDayChecklist,
   type ChecklistDef,
   type ChecklistSequence,
   type PitRole
@@ -36,6 +38,8 @@ const eventKey = computed(() => activeEvent.value?.event_key ?? '');
 const items = useLiveQuery<ScheduleItem[]>(() => (eventKey.value ? listScheduleItems(eventKey.value) : []), [], eventKey);
 const sequence = useLiveQuery<ChecklistSequence>(getChecklistSequence, { checklists: [] });
 const practice = useLiveQuery<ChecklistDef | null>(getPracticeChecklist, null);
+const startOfDay = useLiveQuery<ChecklistDef | null>(getStartOfDayChecklist, null);
+const endOfDay = useLiveQuery<ChecklistDef | null>(getEndOfDayChecklist, null);
 const adhoc = useLiveQuery<ChecklistDef[]>(getAdhocChecklists, []);
 const roles = useLiveQuery<PitRole[]>(getPitRoles, []);
 const prep = useLiveQuery<MatchPrep>(getMatchPrep, defaultMatchPrep);
@@ -57,7 +61,9 @@ const matchScripts = computed(() =>
     uses: uses.value
   })
 );
-const generic = computed(() => buildGenericChecklists(sequence.value, practice.value, adhoc.value, roles.value));
+const generic = computed(() =>
+  buildGenericChecklists(sequence.value, { startOfDay: startOfDay.value, practice: practice.value, endOfDay: endOfDay.value }, adhoc.value, roles.value)
+);
 const hasChecklists = computed(() => sequence.value.checklists.length > 0);
 const nothingToPrint = computed(() => !(includeMatches.value && matchScripts.value.length) && !(includeGeneric.value && generic.value.length));
 
