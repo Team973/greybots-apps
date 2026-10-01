@@ -382,7 +382,9 @@ view of the whole event, built on FullCalendar's time grid.
   entries (matched on the event key and match number) and keeps the earliest
   submission time per match locally. TBA's result time wins when both exist.
   An Away robot goes back to Inbound as soon as its match is complete by
-  either source, or its block on the calendar ends.
+  either source, or its block on the calendar ends. A completion time only
+  counts once the app clock has reached it, so replaying a past event in
+  testing mode isn't cut short by data from that event's future.
 - **Prep timing** (the `match_prep` setting): how long before a match to
   start prep and to leave for the queue. `matchDeadlines()` turns that into
   deadlines. The Overview (`NextMatchLine`) and the pit display show one

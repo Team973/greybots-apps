@@ -111,7 +111,11 @@ export function effectiveStatus(entry: RobotStatusEntry | null, matches: Schedul
     const match = entry.match_key ? matches.find((m) => m.match_key === entry.match_key) ?? null : null;
     if (entry.status === 'away' && match) {
         const blockOver = now >= Date.parse(match.end_at);
-        const completed = match.times?.completed ?? null;
+        // A completion time only counts once the app clock has reached it. In
+        // testing mode the clock can be set before a match that has long since
+        // been played and scouted; that match isn't over yet on that clock.
+        const recorded = match.times?.completed ?? null;
+        const completed = recorded && Date.parse(recorded) <= now ? recorded : null;
         if (blockOver || completed) {
             // Whichever said so first.
             const since = completed && (!blockOver || Date.parse(completed) < Date.parse(match.end_at)) ? completed : match.end_at;
