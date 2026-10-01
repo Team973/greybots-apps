@@ -392,6 +392,11 @@ status, which only says the pit flow is paused.
   ("Log as repair" in its dialog). `source`, `task_id`, and `run_id` record
   where it came from; repairs found in the pit default to the match just
   played (`match_key`).
+- **Common repairs** (`src/lib/repairs/presets.ts`, the `repair_presets`
+  setting): one-tap options shown when logging a repair, in the dialog and
+  under the Repair screen's quick-add row. Each fills in what's being
+  repaired and its subsystem. Leads/admins edit the list on Pit setup; a
+  suggested list is used until one is saved.
 - **Surfaced:** repairs in progress show as a chip next to the robot status
   on the Overview in every state. In the Repair state, the repair log takes
   the main panel, with tasks beside it.

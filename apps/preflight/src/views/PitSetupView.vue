@@ -5,6 +5,7 @@ import '@material/web/button/outlined-button';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import ChecklistEditor from '@/components/checklists/ChecklistEditor.vue';
 import PersonPicker from '@/components/PersonPicker.vue';
+import RepairPresetEditor from '@/components/repairs/RepairPresetEditor.vue';
 import DisplayLayoutEditor from '@/components/display/DisplayLayoutEditor.vue';
 import { useAutosave } from '@/lib/autosave';
 import {
@@ -210,6 +211,7 @@ const sequenceAutoLink = (index: number) =>
           <button v-for="name in missingRoles" :key="name" class="add-link" @click="addRole(name)">+ {{ name }}</button>
         </div>
       </section>
+      <RepairPresetEditor :can-edit="canEdit" />
       <DisplayLayoutEditor :can-edit="canEdit" />
       </div>
 
