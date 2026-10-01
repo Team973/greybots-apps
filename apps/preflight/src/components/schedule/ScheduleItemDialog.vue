@@ -9,25 +9,38 @@ import { clockNow } from '@greybots/common/lib/now';
 import { useAutosave } from '@/lib/autosave';
 import { formatTime, toLocalInput } from '@/lib/schedule/dates';
 import { deleteScheduleItem, saveCustomEvent, saveMatchNotes, validateCustomEvent } from '@/lib/schedule/schedule-repo';
-import { categoryLabels, customCategories, type ScheduleCategory, type ScheduleItem } from '@/lib/schedule/types';
+import {
+  categoryLabels,
+  customCategories,
+  milestonePhases,
+  phaseLabels,
+  scheduleCategories,
+  type MilestonePhase,
+  type ScheduleCategory,
+  type ScheduleItem
+} from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
 
 // Opened either for an existing item (pass the live copy, so autosave never
-// writes back stale fields) or for a new custom event with a pre-selected
-// time range (from drag-selecting on the calendar). Edits to an existing item
-// save automatically; a new event is created with the Create button.
+// writes back stale fields) or for a new custom event or milestone (`kind`)
+// with a pre-selected time range (e.g. from drag-selecting on the calendar).
+// Edits to an existing item save automatically; a new one is created with
+// the Create button.
 const props = defineProps<{
   open: boolean;
   eventKey: string;
   item: ScheduleItem | null;
   draft: { start: string; end: string } | null;
   canEdit: boolean;
+  // What a new item is; an existing item keeps its own kind.
+  kind?: 'custom' | 'milestone';
 }>();
 const emit = defineEmits<{ close: [] }>();
 const session = useSessionStore();
 
 const title = ref('');
 const category = ref<ScheduleCategory>('event');
+const phase = ref<MilestonePhase | ''>('');
 const start = ref('');
 const end = ref('');
 const notes = ref('');
@@ -36,19 +49,31 @@ const busy = ref(false);
 
 const isMatch = computed(() => props.item?.kind === 'match');
 const isNew = computed(() => !props.item);
+const isMilestone = computed(() => (props.item ? props.item.kind === 'milestone' : props.kind === 'milestone'));
+// Milestones can also be about matches (e.g. "Qualification matches").
+const categoryOptions = computed(() => (isMilestone.value ? scheduleCategories : customCategories));
 const readOnly = computed(() => !props.canEdit);
-const dialogTitle = computed(() => (isNew.value ? 'New event' : props.item?.title ?? ''));
+const dialogTitle = computed(() => (isNew.value ? (isMilestone.value ? 'New milestone' : 'New event') : props.item?.title ?? ''));
 const match = computed(() => props.item?.match_info ?? null);
 const editor = () => session.user?.name ?? null;
 
-const form = () => ({ title: title.value, category: category.value, start: start.value, end: end.value, notes: notes.value });
+const form = () => ({
+  title: title.value,
+  category: category.value,
+  phase: phase.value,
+  start: start.value,
+  end: end.value,
+  notes: notes.value
+});
 const toInput = (f: ReturnType<typeof form>) => ({
   id: props.item?.id,
   title: f.title,
   category: f.category,
   notes: f.notes,
   start_at: f.start,
-  end_at: f.end
+  end_at: f.end,
+  kind: isMilestone.value ? ('milestone' as const) : ('custom' as const),
+  phase: f.phase || null
 });
 
 const autosave = useAutosave(
@@ -71,6 +96,7 @@ watch(
     const source = props.item;
     title.value = source?.title ?? '';
     category.value = source?.category ?? 'event';
+    phase.value = source?.phase ?? '';
     start.value = toLocalInput(source?.start_at ?? props.draft?.start ?? new Date(clockNow()).toISOString());
     end.value = toLocalInput(source?.end_at ?? props.draft?.end ?? new Date(clockNow() + 3_600_000).toISOString());
     notes.value = source?.notes ?? '';
@@ -125,7 +151,14 @@ const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id))
         <label class="field">
           <span>Type</span>
           <select v-model="category" :disabled="readOnly">
-            <option v-for="c in customCategories" :key="c" :value="c">{{ categoryLabels[c] }}</option>
+            <option v-for="c in categoryOptions" :key="c" :value="c">{{ categoryLabels[c] }}</option>
+          </select>
+        </label>
+        <label v-if="isMilestone" class="field">
+          <span>Phase</span>
+          <select v-model="phase" :disabled="readOnly">
+            <option value="">None</option>
+            <option v-for="p in milestonePhases" :key="p" :value="p">{{ phaseLabels[p] }}</option>
           </select>
         </label>
       </div>

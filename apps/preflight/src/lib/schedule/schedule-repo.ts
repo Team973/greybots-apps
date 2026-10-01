@@ -1,7 +1,7 @@
 import { db } from '@/lib/db';
 import { getSetting, saveSetting } from '@/lib/settings';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
-import type { ActiveEvent, ScheduleCategory, ScheduleItem } from './types';
+import type { ActiveEvent, MilestonePhase, ScheduleCategory, ScheduleItem } from './types';
 
 export const scheduleTable = 'scheduleItems';
 const activeEventKey = 'active_event';
@@ -34,6 +34,9 @@ export interface CustomEventInput {
     notes: string | null;
     start_at: string;
     end_at: string;
+    // Defaults to a one-off custom event.
+    kind?: 'custom' | 'milestone';
+    phase?: MilestonePhase | null;
 }
 
 export function validateCustomEvent(input: CustomEventInput): string | null {
@@ -51,7 +54,7 @@ export async function saveCustomEvent(eventKey: string, input: CustomEventInput,
     return saveRecord<ScheduleItem>(scheduleTable, {
         id: input.id,
         event_key: eventKey,
-        kind: 'custom',
+        kind: input.kind ?? 'custom',
         category: input.category,
         title: input.title.trim(),
         notes: input.notes?.trim() || null,
@@ -59,6 +62,7 @@ export async function saveCustomEvent(eventKey: string, input: CustomEventInput,
         end_at: new Date(input.end_at).toISOString(),
         match_key: null,
         match_info: null,
+        phase: input.kind === 'milestone' ? input.phase ?? null : null,
         updated_by_name: editorName
     });
 }
