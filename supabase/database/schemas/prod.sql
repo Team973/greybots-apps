@@ -619,6 +619,68 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightRepair" (
 ALTER TABLE "public"."PreflightRepair" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."PreflightBattery" (
+    "id" "uuid" NOT NULL,
+    "number" integer NOT NULL,
+    "label" "text",
+    "purchase_date" "date",
+    "status" "text" DEFAULT 'active'::"text" NOT NULL,
+    "notes" "text",
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text",
+    CONSTRAINT "PreflightBattery_status_check" CHECK (("status" = ANY (ARRAY['active'::"text", 'suspect'::"text", 'retired'::"text"])))
+);
+
+
+ALTER TABLE "public"."PreflightBattery" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."PreflightBatteryMeasurement" (
+    "id" "uuid" NOT NULL,
+    "battery_id" "uuid" NOT NULL,
+    "measured_at" timestamp with time zone NOT NULL,
+    "resting_voltage" numeric,
+    "internal_resistance_mohm" numeric,
+    "state_of_charge" numeric,
+    "capacity_wh" numeric,
+    "observations" "text",
+    "source" "text" DEFAULT 'manual'::"text" NOT NULL,
+    "measured_by_name" "text",
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text"
+);
+
+
+ALTER TABLE "public"."PreflightBatteryMeasurement" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."PreflightBatteryUse" (
+    "id" "uuid" NOT NULL,
+    "battery_id" "uuid" NOT NULL,
+    "event_key" "text",
+    "kind" "text" DEFAULT 'match'::"text" NOT NULL,
+    "match_key" "text",
+    "label" "text",
+    "run_id" "uuid",
+    "installed_at" timestamp with time zone NOT NULL,
+    "installed_by_name" "text",
+    "removed_at" timestamp with time zone,
+    "removed_by_name" "text",
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text",
+    CONSTRAINT "PreflightBatteryUse_kind_check" CHECK (("kind" = ANY (ARRAY['match'::"text", 'test'::"text", 'other'::"text"])))
+);
+
+
+ALTER TABLE "public"."PreflightBatteryUse" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."StrategyBoard" (
     "id" bigint NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
@@ -695,6 +757,18 @@ CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "publi
 
 
 CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightRepair" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightBattery" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightBatteryMeasurement" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightBatteryUse" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
 
 
 ALTER TABLE ONLY "public"."Event"
@@ -812,6 +886,21 @@ ALTER TABLE ONLY "public"."PreflightRepair"
 
 
 
+ALTER TABLE ONLY "public"."PreflightBattery"
+    ADD CONSTRAINT "PreflightBattery_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."PreflightBatteryMeasurement"
+    ADD CONSTRAINT "PreflightBatteryMeasurement_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."PreflightBatteryUse"
+    ADD CONSTRAINT "PreflightBatteryUse_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."RobotPhoto"
     ADD CONSTRAINT "RobotPhoto_pkey" PRIMARY KEY ("team_number");
 
@@ -885,6 +974,18 @@ CREATE INDEX "preflight_note_synced_at_idx" ON "public"."PreflightNote" USING "b
 
 
 CREATE INDEX "preflight_repair_synced_at_idx" ON "public"."PreflightRepair" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_battery_synced_at_idx" ON "public"."PreflightBattery" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_battery_measurement_synced_at_idx" ON "public"."PreflightBatteryMeasurement" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_battery_use_synced_at_idx" ON "public"."PreflightBatteryUse" USING "btree" ("synced_at");
 
 
 
@@ -1225,6 +1326,42 @@ CREATE POLICY "Enable insert for members" ON "public"."PreflightRepair" FOR INSE
 CREATE POLICY "Enable update for members" ON "public"."PreflightRepair" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
 
 
+
+CREATE POLICY "Enable read access for members" ON "public"."PreflightBattery" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for members" ON "public"."PreflightBattery" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for members" ON "public"."PreflightBattery" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable read access for members" ON "public"."PreflightBatteryMeasurement" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for members" ON "public"."PreflightBatteryMeasurement" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for members" ON "public"."PreflightBatteryMeasurement" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable read access for members" ON "public"."PreflightBatteryUse" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for members" ON "public"."PreflightBatteryUse" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for members" ON "public"."PreflightBatteryUse" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
 ALTER TABLE "public"."Event" ENABLE ROW LEVEL SECURITY;
 
 
@@ -1297,6 +1434,15 @@ ALTER TABLE "public"."PreflightNote" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."PreflightRepair" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightBattery" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightBatteryMeasurement" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightBatteryUse" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -1661,6 +1807,24 @@ GRANT ALL ON TABLE "public"."PreflightNote" TO "service_role";
 GRANT ALL ON TABLE "public"."PreflightRepair" TO "anon";
 GRANT ALL ON TABLE "public"."PreflightRepair" TO "authenticated";
 GRANT ALL ON TABLE "public"."PreflightRepair" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightBattery" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightBattery" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightBattery" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightBatteryMeasurement" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightBatteryMeasurement" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightBatteryMeasurement" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightBatteryUse" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightBatteryUse" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightBatteryUse" TO "service_role";
 
 
 

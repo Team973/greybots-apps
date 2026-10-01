@@ -2,6 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router';
 import type { Role } from '@/lib/roles';
 import { useDeviceStore } from '@/stores/device-store';
 import { useSessionStore } from '@/stores/session-store';
+import BatteriesView from '@/views/BatteriesView.vue';
+import BatteryDetailView from '@/views/BatteryDetailView.vue';
+import BatteryLabelsView from '@/views/BatteryLabelsView.vue';
 import LoginView from '@/views/LoginView.vue';
 import NotesView from '@/views/NotesView.vue';
 import OverviewView from '@/views/OverviewView.vue';
@@ -27,6 +30,9 @@ const router = createRouter({
     { path: '/setup', name: 'setup', component: SetupView, meta: { title: 'Setup', requiresAuth: false } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', requiresAuth: false } },
     { path: '/schedule', name: 'schedule', component: ScheduleView, meta: { title: 'Schedule', minRole: 'member' } },
+    { path: '/batteries', name: 'batteries', component: BatteriesView, meta: { title: 'Batteries', minRole: 'member' } },
+    { path: '/batteries/labels', name: 'battery-labels', component: BatteryLabelsView, meta: { title: 'Battery labels', minRole: 'member' } },
+    { path: '/batteries/:number', name: 'battery', component: BatteryDetailView, meta: { title: 'Battery', minRole: 'member' } },
     { path: '/repairs', name: 'repairs', component: RepairsView, meta: { title: 'Repairs', minRole: 'member' } },
     { path: '/notes', name: 'notes', component: NotesView, meta: { title: 'Notes', minRole: 'member' } },
     { path: '/pit-setup', name: 'pit-setup', component: PitSetupView, meta: { title: 'Pit setup', minRole: 'member' } },

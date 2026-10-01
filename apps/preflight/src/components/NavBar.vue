@@ -26,6 +26,7 @@ async function signOut() {
     <RouterLink to="/" class="nav-button" exact-active-class="router-link-active" active-class="">Overview</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/schedule" class="nav-button">Schedule</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/repairs" class="nav-button">Repairs</RouterLink>
+    <RouterLink v-if="session.hasRole('member')" to="/batteries" class="nav-button">Batteries</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/notes" class="nav-button">Notes</RouterLink>
     <RouterLink v-if="session.hasRole('lead')" to="/pit-setup" class="nav-button">Pit setup</RouterLink>
     <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
@@ -89,6 +90,12 @@ async function signOut() {
 
 .nav-button:hover {
   background-color: var(--header-hover-color);
+}
+
+@media print {
+  .nav {
+    display: none;
+  }
 }
 
 @media (max-width: 600px) {

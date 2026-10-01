@@ -23,12 +23,15 @@
     "@fullcalendar/vue3": "^6.1.21",
     "@greybots/common": "*",
     "dexie": "^4.0.10",
+    "jsqr": "^1.4.0",
     "pinia": "^2.1.7",
+    "qrcode": "^1.5.4",
     "vue": "^3.4.29",
     "vue-router": "^4.3.3",
     "vuedraggable": "^4.1.0"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "vite-plugin-pwa": "^0.21.2",
     "workbox-window": "^7.3.0"
   }
