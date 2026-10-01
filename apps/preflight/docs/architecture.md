@@ -352,7 +352,9 @@ view of the whole event, built on FullCalendar's time grid.
   either source, or its block on the calendar ends.
 - **Prep timing** (the `match_prep` setting): how long before a match to
   start prep and to leave for the queue. `matchDeadlines()` turns that into
-  deadlines, shown with the countdown on the Overview (`NextMatchLine`).
+  deadlines. The Overview (`NextMatchLine`) and the pit display show one
+  labeled countdown (`matchCountdown()`): "Time to queue:" until queue time,
+  then "Time to match:" until the match's estimated start.
 - **Custom events** (lead/admin): drag across empty time to create, drag to
   move, drag the bottom edge to resize, and tap to edit or delete. Each one
   has a type (Event / Practice / Pit / Programming / Admin), which drives its color and the filter
