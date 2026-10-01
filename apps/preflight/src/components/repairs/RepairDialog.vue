@@ -7,7 +7,8 @@ import AppDialog from '@/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { useAutosave } from '@/lib/autosave';
 import { useLiveQuery } from '@/lib/live-query';
-import { getRepairPresets, type RepairPreset } from '@/lib/repairs/presets';
+import { getPitRoles, type PitRole } from '@/lib/checklists/config';
+import { getRepairPresets, presetAssignee, presetRole, type RepairPreset } from '@/lib/repairs/presets';
 import PersonPicker from '@/components/PersonPicker.vue';
 import {
   createRepair,
@@ -55,10 +56,14 @@ const busy = ref(false);
 const isNew = computed(() => !props.repair);
 
 // One-tap options for common repairs (configured on Pit setup).
+// A common repair goes to whoever holds its subteam's pit role.
 const presets = useLiveQuery<RepairPreset[]>(getRepairPresets, []);
+const roles = useLiveQuery<PitRole[]>(getPitRoles, []);
 function applyPreset(preset: RepairPreset) {
   title.value = preset.title;
   subsystem.value = preset.subsystem;
+  const who = presetAssignee(preset, roles.value);
+  if (who) assignee.value = who;
 }
 const editor = () => session.user?.name ?? null;
 const input = (): RepairInput => ({
@@ -139,7 +144,15 @@ const create = (start: boolean) =>
   <AppDialog :open="open" :title="isNew ? 'Log a repair' : repair?.title || 'Repair'" @close="close">
     <label class="field"><span>What's being repaired</span><input v-model="title" :readonly="!canEdit" placeholder="e.g. Replace bent intake shaft" /></label>
     <div v-if="isNew && canEdit && presets.length" class="preset-chips" aria-label="Common repairs">
-      <button v-for="preset in presets" :key="preset.id" type="button" class="preset-chip" :class="{ on: title === preset.title }" @click="applyPreset(preset)">
+      <button
+        v-for="preset in presets"
+        :key="preset.id"
+        type="button"
+        class="preset-chip"
+        :class="{ on: title === preset.title }"
+        :title="presetRole(preset, roles)?.name"
+        @click="applyPreset(preset)"
+      >
         {{ preset.title }}
       </button>
     </div>
