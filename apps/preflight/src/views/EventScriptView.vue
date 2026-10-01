@@ -359,15 +359,16 @@ const print = () => window.print();
     max-width: none;
   }
 
-  /* The page margins come from @page, and each sheet starts a new page. */
+  /* The page margins come from @page. */
   .sheet {
     padding: 0;
     box-shadow: none;
-    break-after: page;
   }
 
-  .sheet:last-of-type {
-    break-after: auto;
+  /* Every sheet after the first starts a new page: one checklist per page. */
+  .sheet + .sheet {
+    break-before: page;
+    page-break-before: always;
   }
 }
 </style>
