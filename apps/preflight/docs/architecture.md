@@ -155,6 +155,32 @@ Both modes use the same `admin > lead > member > observer` ladder
    (`src/lib/sync/local-repo.ts`). They set the bookkeeping fields and
    schedule a push.
 
+## Overview
+
+The landing page (`/`, members and above) is the pit's mission-control view,
+following the Overview mockup. On a pit laptop it's a four-column grid that
+fills the screen; narrower screens get two columns, then one.
+
+- **Schedule strip:** today's schedule with a now line, read-only. Tapping an
+  item opens it; editing happens on the Schedule page.
+- **Checklists:** a placeholder until #82.
+- **Tasks** (`PreflightTask`, `src/lib/tasks/`): members and above can add
+  tasks (with quick-add presets), reorder them by drag handle, start them,
+  and check them off. Start and completion record who and when, and a task
+  can link to one of our matches. `sort_order` is a float, so a reorder
+  only rewrites the moved task (the midpoint between its neighbors).
+  Finished tasks appear on the Schedule calendar under the "Tasks" filter,
+  for post-event review.
+- **Robot status** (`PreflightRobotStatusLog`, `src/lib/robot-status/`): In
+  Pit / Pending [what] / Robot Ready / Away. It's an append-only log, and the
+  newest entry is the current status, so devices never overwrite each other
+  and the history is kept. Leads and admins set it by hand; members see the
+  history. Deriving it from checklists (#82) and match timing (#80) comes
+  later.
+- **Timer:** a per-device countdown (kept in localStorage) with +/− per digit
+  of MM:SS, Start/Pause, Reset, and "Next match" to count down to our next
+  scheduled match.
+
 ## Schedule
 
 The Schedule page (`/schedule`, members and above) is a Google Calendar-style

@@ -30,6 +30,14 @@ export const categoryColors: Record<ScheduleCategory, string> = {
     admin: '#52606d'
 };
 
+// Schedule page filters: the item categories plus completed tasks, which the
+// calendar shows as a read-only layer for post-event review (issue #81).
+export type ScheduleFilter = ScheduleCategory | 'task';
+export const scheduleFilters: ScheduleFilter[] = [...scheduleCategories, 'task'];
+export const taskColor = '#00897b';
+export const filterLabels: Record<ScheduleFilter, string> = { ...categoryLabels, task: 'Tasks' };
+export const filterColors: Record<ScheduleFilter, string> = { ...categoryColors, task: taskColor };
+
 export function matchColor(alliance: 'red' | 'blue' | null | undefined): string {
     return alliance === 'red' ? '#c62828' : alliance === 'blue' ? '#1565c0' : '#616161';
 }

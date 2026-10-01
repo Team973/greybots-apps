@@ -5,5 +5,7 @@ import type { SyncedTableDef } from './types';
 // lib/db.ts whenever this list (or an entry's indexes) changes.
 export const syncedTables: SyncedTableDef[] = [
     { table: 'settings', remote: 'PreflightSetting', indexes: ['key'] },
-    { table: 'scheduleItems', remote: 'PreflightScheduleItem', indexes: ['event_key'] }
+    { table: 'scheduleItems', remote: 'PreflightScheduleItem', indexes: ['event_key'] },
+    { table: 'tasks', remote: 'PreflightTask', indexes: ['event_key'] },
+    { table: 'robotStatus', remote: 'PreflightRobotStatusLog', indexes: ['event_key'] }
 ];

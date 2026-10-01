@@ -6,16 +6,20 @@ import interactionPlugin from '@fullcalendar/interaction';
 import type { CalendarOptions, DateSelectArg, EventApi, EventClickArg, EventInput } from '@fullcalendar/core';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 import { addDays, toDateString } from '@/lib/schedule/dates';
-import { scheduleItemColor, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
+import { scheduleItemColor, taskColor, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
+import type { Task } from '@/lib/tasks/tasks';
 
 const props = defineProps<{
   event: ActiveEvent;
   items: ScheduleItem[];
+  // Completed tasks are drawn as a read-only layer.
+  tasks?: Task[];
   canEdit: boolean;
 }>();
 const emit = defineEmits<{
   select: [range: { start: string; end: string }];
   open: [item: ScheduleItem];
+  openTask: [task: Task];
   reschedule: [item: ScheduleItem, start: Date, end: Date, revert: () => void];
 }>();
 
@@ -36,8 +40,12 @@ function scrollTime() {
   return `${String(Math.max(now.getHours() - 1, 0)).padStart(2, '0')}:00:00`;
 }
 
-const events = computed<EventInput[]>(() =>
-  props.items.map((item) => ({
+// A completed task spans from when it was started to when it was done; one
+// that was never started shows as a short block ending at completion.
+const unstartedTaskMs = 5 * 60_000;
+
+const events = computed<EventInput[]>(() => [
+  ...props.items.map((item) => ({
     id: item.id,
     title: item.title,
     start: item.start_at,
@@ -47,8 +55,23 @@ const events = computed<EventInput[]>(() =>
     extendedProps: { item },
     backgroundColor: scheduleItemColor(item),
     classNames: item.kind === 'match' ? ['sched-match'] : []
-  }))
-);
+  })),
+  ...(props.tasks ?? [])
+    .filter((task) => task.completed_at)
+    .map((task) => {
+      const end = Date.parse(task.completed_at!);
+      const start = task.started_at ? Math.min(Date.parse(task.started_at), end - 60_000) : end - unstartedTaskMs;
+      return {
+        id: `task:${task.id}`,
+        title: `✓ ${task.title}`,
+        start: new Date(start).toISOString(),
+        end: new Date(end).toISOString(),
+        editable: false,
+        extendedProps: { task },
+        backgroundColor: taskColor
+      };
+    })
+]);
 
 function itemOf(event: EventApi): ScheduleItem {
   return event.extendedProps.item as ScheduleItem;
@@ -87,7 +110,11 @@ const options = computed<CalendarOptions>(() => ({
     emit('select', { start: info.start.toISOString(), end: info.end.toISOString() });
     info.view.calendar.unselect();
   },
-  eventClick: (info: EventClickArg) => emit('open', itemOf(info.event)),
+  eventClick: (info: EventClickArg) => {
+    const task = info.event.extendedProps.task as Task | undefined;
+    if (task) emit('openTask', task);
+    else emit('open', itemOf(info.event));
+  },
   eventDrop: (info) => emit('reschedule', itemOf(info.event), info.event.start!, info.event.end!, info.revert),
   eventResize: (info) => emit('reschedule', itemOf(info.event), info.event.start!, info.event.end!, info.revert)
 }));
@@ -109,6 +136,7 @@ watch(
 .schedule-calendar {
   height: 100%;
   min-height: 480px;
+  color-scheme: light dark;
 
   --fc-border-color: rgba(128, 128, 128, 0.35);
   --fc-page-bg-color: var(--tile-background-color);
