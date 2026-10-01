@@ -12,17 +12,20 @@ export interface AccountProfile {
     role: Role;
 }
 
-// Look up the display name/role for a signed-in greybots-apps account.
-// Accounts without a profile row yet are treated as observers — GreyScout
-// owns provisioning that row, so Preflight doesn't create it.
+// Look up the display name and Preflight role for a signed-in greybots-apps
+// account. Roles are per app: `preflight_role` is this app's, and `role` is
+// the scouting one (used only as a fallback against a database that doesn't
+// have the Preflight column yet). Accounts without a profile row yet are
+// treated as observers — GreyScout owns provisioning that row, so Preflight
+// doesn't create it.
 export async function fetchAccountProfile(userId: string, email: string | null): Promise<AccountProfile> {
-    const { data, error } = await supabase.from(userTable).select('name, role').eq('user_id', userId).maybeSingle();
+    const { data, error } = await supabase.from(userTable).select('*').eq('user_id', userId).maybeSingle();
     if (error) throw new Error(error.message);
     return {
         id: userId,
         email,
         name: data?.name || email || 'Unknown user',
-        role: (data?.role as Role) ?? 'observer'
+        role: ((data?.preflight_role ?? data?.role) as Role) ?? 'observer'
     };
 }
 
