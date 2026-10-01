@@ -11,7 +11,7 @@ import { getSetting, saveSetting } from '@/lib/settings';
 export interface PitRole {
     id: string;
     name: string;
-    // Free text, so it works for kiosk crew and web accounts alike.
+    // A name picked from lib/people.ts (account holders and kiosk crew).
     assignee: string;
 }
 

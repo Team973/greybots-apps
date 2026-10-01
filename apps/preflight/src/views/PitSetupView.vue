@@ -4,6 +4,7 @@ import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import ChecklistEditor from '@/components/checklists/ChecklistEditor.vue';
+import PersonPicker from '@/components/PersonPicker.vue';
 import DisplayLayoutEditor from '@/components/display/DisplayLayoutEditor.vue';
 import { useAutosave } from '@/lib/autosave';
 import {
@@ -191,7 +192,7 @@ const sequenceAutoLink = (index: number) =>
         <ul class="role-list">
           <li v-for="(role, i) in roles" :key="role.id" class="role-row">
             <label class="field"><span>Role</span><input v-model="role.name" :readonly="!canEdit" placeholder="e.g. Battery" /></label>
-            <label class="field"><span>Assigned to</span><input v-model="role.assignee" :readonly="!canEdit" placeholder="Name" /></label>
+            <div class="field"><span>Assigned to</span><PersonPicker v-model="role.assignee" :disabled="!canEdit" /></div>
             <button v-if="canEdit" class="icon-small" :aria-label="`Remove ${role.name || 'role'}`" @click="removeRole(i)">✕</button>
           </li>
         </ul>

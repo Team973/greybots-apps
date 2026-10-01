@@ -5,7 +5,7 @@ import TaskDialog from './TaskDialog.vue';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatElapsed, useNow } from '@greybots/common/lib/now';
 import type { ScheduleItem } from '@/lib/schedule/types';
-import { usePitMembers } from '@/lib/checklists/pit-members';
+import PersonPicker from '@/components/PersonPicker.vue';
 import { completeTask, createTask, listTasks, reopenTask, reorderTask, type Task } from '@/lib/tasks/tasks';
 import { useSessionStore } from '@/stores/session-store';
 
@@ -42,7 +42,6 @@ function meta(task: Task): string {
 }
 
 // --- Inline quick add ---
-const members = usePitMembers();
 const quickTitle = ref('');
 const quickAssignee = ref('');
 const quickError = ref<string | null>(null);
@@ -80,10 +79,7 @@ const dialogTask = computed(() => (dialog.value?.taskId ? tasks.value.find((t) =
 
     <form v-if="quickAdd && canEdit" class="quick-add" @submit.prevent="addQuick">
       <input v-model="quickTitle" class="quick-title" placeholder="What needs fixing?" aria-label="New task" />
-      <input v-model="quickAssignee" class="quick-assignee" list="quick-assignees" placeholder="Assign to" aria-label="Assign to" />
-      <datalist id="quick-assignees">
-        <option v-for="name in members" :key="name" :value="name" />
-      </datalist>
+      <PersonPicker v-model="quickAssignee" class="quick-assignee" empty-label="Assign to" roomy />
       <button type="submit" class="quick-submit">Add</button>
     </form>
     <p v-if="quickError" class="error-text">{{ quickError }}</p>

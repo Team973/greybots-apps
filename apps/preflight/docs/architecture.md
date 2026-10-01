@@ -218,13 +218,29 @@ How it's stored:
   override (and everyone sees the history) under "Status history".
 - **Tasks** (`PreflightTask`): members and above add, reorder, start, and
   check off tasks; finished tasks appear on the Schedule calendar under the
-  "Tasks" filter. Each task has an owner (`assignee`, free text), shown in
-  every task list ("Unassigned" when nobody has it). Names are suggested from
-  the pit roles roster and the kiosk crew, and anyone can claim a task with
+  "Tasks" filter. Each task has an owner (`assignee`), shown in every task
+  list ("Unassigned" when nobody has it), and anyone can claim a task with
   "Assign to me" in its dialog.
 - **Status log order:** entries are ordered by when they were written
   (`updated_at`), not by `set_at`, the time shown to people. Testing mode or
   a drifting device clock can make a newer entry's `set_at` look older.
+
+### People
+
+Anywhere work is assigned (task and repair owners, pit roles), the person is
+chosen with `PersonPicker`, a searchable dropdown. Names can't be typed in
+freely. The list (`src/lib/people.ts`) is:
+
+- everyone with a greybots-apps account (the shared `User` table). After a
+  sync, a device with a server session saves the names locally (refreshed at
+  most every 10 minutes, and at once when a kiosk is linked), so the list
+  keeps working offline. A kiosk needs its linked account for this: `User`
+  is only readable when signed in.
+- plus this device's kiosk crew, the people actually in the pit. A kiosk that
+  has never been online, or was never linked, offers only them.
+
+The stored value is the person's name. A name saved earlier that's no longer
+in the list stays selectable on that record.
 
 ### Checklists
 

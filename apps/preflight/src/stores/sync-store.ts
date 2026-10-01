@@ -4,6 +4,7 @@ import { getMeta, setMeta, deleteMeta } from '@/lib/db';
 import { localChangeSyncDelayMs, syncIntervalMs } from '@/lib/constants';
 import { countPendingChanges, syncAll } from '@/lib/sync/engine';
 import { isServerReachable, signInAccount, signOutAccount, type AccountProfile } from '@/lib/greybots-account';
+import { refreshAccountDirectory } from '@/lib/people';
 import { hasRole } from '@/lib/roles';
 import { getActiveEvent } from '@/lib/schedule/schedule-repo';
 import { refreshScoutingCompletion } from '@/lib/schedule/scouting';
@@ -85,6 +86,9 @@ export const useSyncStore = defineStore('sync', {
                 this.reachable = await isServerReachable();
                 if (!this.reachable) return;
                 await syncAll();
+                // Who has an account, for the person pickers. Kept on the
+                // device so the list still works offline.
+                await refreshAccountDirectory().catch((e) => console.warn(e));
                 // Which of our matches GreyScout has scouting data for. Not
                 // worth failing the sync over.
                 const event = await getActiveEvent();
@@ -111,6 +115,8 @@ export const useSyncStore = defineStore('sync', {
             await setMeta(linkedAccountKey, profile);
             this.linkedAccount = profile;
             this.hasServerSession = true;
+            // A newly linked kiosk picks up the account directory right away.
+            refreshAccountDirectory(true).catch((e) => console.warn(e));
             this.syncNow();
         },
 

@@ -6,7 +6,7 @@ import '@material/web/button/text-button';
 import AppDialog from '@/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { useAutosave } from '@/lib/autosave';
-import { usePitMembers } from '@/lib/checklists/pit-members';
+import PersonPicker from '@/components/PersonPicker.vue';
 import { useLiveQuery } from '@/lib/live-query';
 import { createRepair, repairForTask, type Repair } from '@/lib/repairs/repairs';
 import { formatTime } from '@/lib/schedule/dates';
@@ -39,7 +39,6 @@ const title = ref('');
 const notes = ref('');
 const matchKey = ref('');
 const assignee = ref('');
-const members = usePitMembers();
 const error = ref<string | null>(null);
 const busy = ref(false);
 
@@ -138,16 +137,14 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
       </button>
     </div>
     <div class="form-row">
-      <label class="field">
+      <!-- Not a <label>: a click on a dropdown option would re-focus the input. -->
+      <div class="field">
         <span>Assigned to</span>
         <span class="assignee-row">
-          <input v-model="assignee" list="task-assignees" :readonly="!canEdit" placeholder="Unassigned" />
+          <PersonPicker v-model="assignee" class="assignee-picker" :disabled="!canEdit" />
           <button v-if="canEdit && me && !isMine" type="button" class="assign-me" @click="assignToMe">Assign to me</button>
         </span>
-        <datalist id="task-assignees">
-          <option v-for="name in members" :key="name" :value="name" />
-        </datalist>
-      </label>
+      </div>
       <label class="field">
         <span>Match (optional)</span>
         <select v-model="matchKey" :disabled="!canEdit">
@@ -213,9 +210,10 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
 .assignee-row {
   display: flex;
   gap: 6px;
+  opacity: 1;
 }
 
-.assignee-row input {
+.assignee-picker {
   flex: 1;
   min-width: 0;
 }
