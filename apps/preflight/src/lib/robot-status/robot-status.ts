@@ -97,12 +97,19 @@ export interface EffectiveStatus {
 
 // The status to show right now. With no history the robot is waiting to come
 // in (Inbound). An Away robot becomes Inbound on its own once the match it
-// left for has ended, so no device needs to write that transition.
+// left for has ended (its block is over, or it's known to be complete from
+// TBA or scouting data), so no device needs to write that transition.
 export function effectiveStatus(entry: RobotStatusEntry | null, matches: ScheduleItem[], now: number): EffectiveStatus {
     if (!entry) return { status: 'inbound', since: null, entry: null, autoInbound: false, match: null };
     const match = entry.match_key ? matches.find((m) => m.match_key === entry.match_key) ?? null : null;
-    if (entry.status === 'away' && match && now >= Date.parse(match.end_at)) {
-        return { status: 'inbound', since: match.end_at, entry, autoInbound: true, match };
+    if (entry.status === 'away' && match) {
+        const blockOver = now >= Date.parse(match.end_at);
+        const completed = match.times?.completed ?? null;
+        if (blockOver || completed) {
+            // Whichever said so first.
+            const since = completed && (!blockOver || Date.parse(completed) < Date.parse(match.end_at)) ? completed : match.end_at;
+            return { status: 'inbound', since, entry, autoInbound: true, match };
+        }
     }
     return { status: entry.status, since: entry.set_at, entry, autoInbound: false, match };
 }

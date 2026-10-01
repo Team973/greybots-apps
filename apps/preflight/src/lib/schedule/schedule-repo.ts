@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getSetting, saveSetting } from '@/lib/settings';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
+import { getScoutingCompletion } from './scouting';
 import { applyTiming, getMatchTiming } from './timing';
 import type { ActiveEvent, MilestonePhase, ScheduleCategory, ScheduleItem } from './types';
 
@@ -29,7 +30,7 @@ export async function listScheduleItems(eventKey: string): Promise<ScheduleItem[
         .equals(eventKey)
         .filter((item) => !item.deleted)
         .toArray();
-    return applyTiming(items, await getMatchTiming(eventKey));
+    return applyTiming(items, await getMatchTiming(eventKey), await getScoutingCompletion(eventKey));
 }
 
 export interface CustomEventInput {
