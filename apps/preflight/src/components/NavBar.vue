@@ -25,6 +25,7 @@ async function signOut() {
     </span>
     <RouterLink to="/" class="nav-button" exact-active-class="router-link-active" active-class="">Overview</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/schedule" class="nav-button">Schedule</RouterLink>
+    <RouterLink v-if="session.hasRole('lead')" to="/pit-setup" class="nav-button">Pit setup</RouterLink>
     <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
     <button class="nav-button" @click="signOut">{{ device.isKiosk ? 'Lock' : 'Sign out' }}</button>
   </header>

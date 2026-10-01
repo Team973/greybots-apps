@@ -4,14 +4,17 @@ import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import '@material/web/button/text-button';
 import AppDialog from '@/components/AppDialog.vue';
+import AutosaveStatus from '@/components/AutosaveStatus.vue';
+import { useAutosave } from '@/lib/autosave';
 import { formatTime, toLocalInput } from '@/lib/schedule/dates';
-import { deleteScheduleItem, saveCustomEvent, scheduleTable } from '@/lib/schedule/schedule-repo';
-import { saveRecord } from '@/lib/sync/local-repo';
+import { deleteScheduleItem, saveCustomEvent, saveMatchNotes, validateCustomEvent } from '@/lib/schedule/schedule-repo';
 import { categoryLabels, customCategories, type ScheduleCategory, type ScheduleItem } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
 
-// Opened either for an existing item, or for a new custom event with a
-// pre-selected time range (from drag-selecting on the calendar).
+// Opened either for an existing item (pass the live copy, so autosave never
+// writes back stale fields) or for a new custom event with a pre-selected
+// time range (from drag-selecting on the calendar). Edits to an existing item
+// save automatically; a new event is created with the Create button.
 const props = defineProps<{
   open: boolean;
   eventKey: string;
@@ -35,6 +38,30 @@ const isNew = computed(() => !props.item);
 const readOnly = computed(() => !props.canEdit);
 const dialogTitle = computed(() => (isNew.value ? 'New event' : props.item?.title ?? ''));
 const match = computed(() => props.item?.match_info ?? null);
+const editor = () => session.user?.name ?? null;
+
+const form = () => ({ title: title.value, category: category.value, start: start.value, end: end.value, notes: notes.value });
+const toInput = (f: ReturnType<typeof form>) => ({
+  id: props.item?.id,
+  title: f.title,
+  category: f.category,
+  notes: f.notes,
+  start_at: f.start,
+  end_at: f.end
+});
+
+const autosave = useAutosave(
+  form,
+  (f) =>
+    isMatch.value && props.item
+      ? // Match times come from TBA; only the notes are editable.
+        saveMatchNotes(props.item, f.notes, editor())
+      : saveCustomEvent(props.eventKey, toInput(f), editor()),
+  {
+    enabled: () => props.open && props.canEdit && !!props.item,
+    validate: (f) => (isMatch.value ? null : validateCustomEvent(toInput(f)))
+  }
+);
 
 watch(
   () => props.open,
@@ -47,9 +74,15 @@ watch(
     end.value = toLocalInput(source?.end_at ?? props.draft?.end ?? new Date(Date.now() + 3_600_000).toISOString());
     notes.value = source?.notes ?? '';
     error.value = null;
+    autosave.reset();
   },
   { immediate: true }
 );
+
+async function close() {
+  await autosave.flush();
+  emit('close');
+}
 
 async function run(action: () => Promise<unknown>) {
   error.value = null;
@@ -64,59 +97,37 @@ async function run(action: () => Promise<unknown>) {
   }
 }
 
-function save() {
-  const editor = session.user?.name ?? null;
-  if (isMatch.value && props.item) {
-    // Match times come from TBA; only the notes are editable.
-    return run(() => saveRecord<ScheduleItem>(scheduleTable, { ...props.item!, notes: notes.value.trim() || null, updated_by_name: editor }));
-  }
-  return run(() =>
-    saveCustomEvent(
-      props.eventKey,
-      { id: props.item?.id, title: title.value, category: category.value, notes: notes.value, start_at: start.value, end_at: end.value },
-      editor
-    )
-  );
-}
-
-function remove() {
-  if (!props.item) return;
-  return run(() => deleteScheduleItem(props.item!.id));
-}
+const create = () => run(() => saveCustomEvent(props.eventKey, toInput(form()), editor()));
+const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id));
 </script>
 
 <template>
-  <AppDialog :open="open" :title="dialogTitle" @close="emit('close')">
+  <AppDialog :open="open" :title="dialogTitle" @close="close">
     <template v-if="isMatch && match">
-      <dl class="detail-list">
-        <dt>Time</dt>
-        <dd>{{ formatTime(item!.start_at) }}</dd>
-        <dt>Published</dt>
-        <dd>{{ match.scheduled_time ? formatTime(match.scheduled_time) : '—' }}</dd>
-        <template v-if="match.predicted_time">
-          <dt>Predicted</dt>
-          <dd>{{ formatTime(match.predicted_time) }}</dd>
-        </template>
-        <template v-if="match.actual_time">
-          <dt>Actual start</dt>
-          <dd>{{ formatTime(match.actual_time) }}</dd>
-        </template>
-        <dt>Red</dt>
-        <dd :class="{ ours: match.alliance === 'red' }">{{ match.red.join(', ') || '—' }}</dd>
-        <dt>Blue</dt>
-        <dd :class="{ ours: match.alliance === 'blue' }">{{ match.blue.join(', ') || '—' }}</dd>
-      </dl>
-      <p class="hint">Match times are imported from The Blue Alliance.</p>
+      <p class="match-line">
+        <strong>{{ formatTime(item!.start_at) }}</strong>
+        <span class="hint-inline">
+          published {{ match.scheduled_time ? formatTime(match.scheduled_time) : '—' }}
+          <template v-if="match.predicted_time"> · predicted {{ formatTime(match.predicted_time) }}</template>
+          <template v-if="match.actual_time"> · started {{ formatTime(match.actual_time) }}</template>
+        </span>
+      </p>
+      <p class="match-line">
+        <span class="red" :class="{ ours: match.alliance === 'red' }">Red {{ match.red.join(', ') || '—' }}</span>
+        <span class="blue" :class="{ ours: match.alliance === 'blue' }">Blue {{ match.blue.join(', ') || '—' }}</span>
+      </p>
     </template>
 
     <template v-else>
-      <label class="field"><span>Title</span><input v-model="title" :readonly="readOnly" /></label>
-      <label class="field">
-        <span>Type</span>
-        <select v-model="category" :disabled="readOnly">
-          <option v-for="c in customCategories" :key="c" :value="c">{{ categoryLabels[c] }}</option>
-        </select>
-      </label>
+      <div class="form-row">
+        <label class="field title-field"><span>Title</span><input v-model="title" :readonly="readOnly" /></label>
+        <label class="field">
+          <span>Type</span>
+          <select v-model="category" :disabled="readOnly">
+            <option v-for="c in customCategories" :key="c" :value="c">{{ categoryLabels[c] }}</option>
+          </select>
+        </label>
+      </div>
       <div class="form-row">
         <label class="field"><span>Start</span><input v-model="start" type="datetime-local" step="300" :readonly="readOnly" /></label>
         <label class="field"><span>End</span><input v-model="end" type="datetime-local" step="300" :readonly="readOnly" /></label>
@@ -125,26 +136,54 @@ function remove() {
 
     <label v-if="canEdit || notes" class="field">
       <span>Notes</span>
-      <textarea v-model="notes" :readonly="readOnly"></textarea>
+      <textarea v-model="notes" rows="2" :readonly="readOnly"></textarea>
     </label>
-    <p v-if="item?.updated_by_name" class="hint">Last edited by {{ item.updated_by_name }}</p>
     <p v-if="error" class="error-text">{{ error }}</p>
 
     <template #actions>
-      <md-outlined-button v-if="canEdit && item && !isMatch" class="delete" :disabled="busy" @click="remove">Delete</md-outlined-button>
-      <span class="spacer"></span>
-      <md-text-button @click="emit('close')">{{ canEdit ? 'Cancel' : 'Close' }}</md-text-button>
-      <md-filled-button v-if="canEdit" :disabled="busy" @click="save">Save</md-filled-button>
+      <md-outlined-button v-if="canEdit && item && !isMatch" :disabled="busy" @click="remove">Delete</md-outlined-button>
+      <AutosaveStatus v-if="canEdit && item" class="status" :state="autosave.state.value" :error="autosave.error.value" />
+      <span class="actions-spacer"></span>
+      <template v-if="isNew && canEdit">
+        <md-text-button @click="close">Cancel</md-text-button>
+        <md-filled-button :disabled="busy" @click="create">Create</md-filled-button>
+      </template>
+      <md-text-button v-else @click="close">Done</md-text-button>
     </template>
   </AppDialog>
 </template>
 
 <style scoped>
+.title-field {
+  flex-grow: 2;
+}
+
+.match-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.hint-inline {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.red {
+  color: #ef5350;
+}
+
+.blue {
+  color: #64b5f6;
+}
+
 .ours {
   font-weight: 700;
 }
 
-.spacer {
-  flex: 1;
+.status {
+  margin-left: 4px;
 }
 </style>

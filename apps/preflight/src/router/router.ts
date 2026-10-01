@@ -4,6 +4,7 @@ import { useDeviceStore } from '@/stores/device-store';
 import { useSessionStore } from '@/stores/session-store';
 import LoginView from '@/views/LoginView.vue';
 import OverviewView from '@/views/OverviewView.vue';
+import PitSetupView from '@/views/PitSetupView.vue';
 import SetupView from '@/views/SetupView.vue';
 import ScheduleView from '@/views/ScheduleView.vue';
 import SettingsView from '@/views/SettingsView.vue';
@@ -24,6 +25,7 @@ const router = createRouter({
     { path: '/setup', name: 'setup', component: SetupView, meta: { title: 'Setup', requiresAuth: false } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', requiresAuth: false } },
     { path: '/schedule', name: 'schedule', component: ScheduleView, meta: { title: 'Schedule', minRole: 'member' } },
+    { path: '/pit-setup', name: 'pit-setup', component: PitSetupView, meta: { title: 'Pit setup', minRole: 'member' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]

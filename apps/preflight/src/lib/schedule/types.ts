@@ -73,12 +73,6 @@ export interface ScheduleItem extends SyncedRecord {
     updated_by_name: string | null;
 }
 
-export interface Setting<T = unknown> extends SyncedRecord {
-    key: string;
-    value: T;
-    updated_by_name: string | null;
-}
-
 // The event the schedule is built around. Shared by every device.
 export interface ActiveEvent {
     event_key: string;

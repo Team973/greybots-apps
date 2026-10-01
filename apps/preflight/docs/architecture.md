@@ -155,31 +155,54 @@ Both modes use the same `admin > lead > member > observer` ladder
    (`src/lib/sync/local-repo.ts`). They set the bookkeeping fields and
    schedule a push.
 
-## Overview
+## Overview and the pit flow
 
-The landing page (`/`, members and above) is the pit's mission-control view,
-following the Overview mockup. On a pit laptop it's a four-column grid that
-fills the screen; narrower screens get two columns, then one.
+The landing page (`/`, members and above) changes layout with the robot's
+status, which moves through a fixed cycle:
 
-- **Schedule strip:** today's schedule with a now line, read-only. Tapping an
-  item opens it; editing happens on the Schedule page.
-- **Checklists:** a placeholder until #82.
-- **Tasks** (`PreflightTask`, `src/lib/tasks/`): members and above can add
-  tasks (with quick-add presets), reorder them by drag handle, start them,
-  and check them off. Start and completion record who and when, and a task
-  can link to one of our matches. `sort_order` is a float, so a reorder
-  only rewrites the moved task (the midpoint between its neighbors).
-  Finished tasks appear on the Schedule calendar under the "Tasks" filter,
-  for post-event review.
-- **Robot status** (`PreflightRobotStatusLog`, `src/lib/robot-status/`): In
-  Pit / Pending [what] / Robot Ready / Away. It's an append-only log, and the
-  newest entry is the current status, so devices never overwrite each other
-  and the history is kept. Leads and admins set it by hand; members see the
-  history. Deriving it from checklists (#82) and match timing (#80) comes
-  later.
-- **Timer:** a per-device countdown (kept in localStorage) with +/− per digit
-  of MM:SS, Start/Pause, Reset, and "Next match" to count down to our next
-  scheduled match.
+```
+Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
+   ^                                                            |
+   +--(Match over, or automatic when the match ends)-- Away <--(Robot departed)
+```
+
+- **Inbound:** a big "Robot arrived" button, with tasks and the schedule.
+- **Pending:** the active checklist with its steps, and a separate panel for
+  the active step: its instructions and who holds each role. Steps are done
+  strictly in order (one Done button for the active step; Undo for the last
+  one). Finishing a checklist loads the next, and the count-up timer resets.
+  After the last checklist, the robot is Ready. Tasks stay available.
+- **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
+  over"), the countdown timer, the schedule strip, and tasks.
+
+How it's stored:
+
+- **Status** (`PreflightRobotStatusLog`, `src/lib/robot-status/`): an
+  append-only log; the newest entry is the current status, so devices never
+  overwrite each other. Arriving starts a *run* (`run_id`). Each checklist
+  is its own Pending entry (`checklist_index`), which is what resets the
+  timer. Departing records the match the robot left for (`match_key`).
+- **Automatic Inbound:** `effectiveStatus()` shows Away as Inbound once that
+  match has ended. This is computed, not written, so no device writes
+  transitions in the background. The only transitions written automatically
+  are the ones the person checking the last step causes, and
+  `advanceChecklist` skips if another device already advanced.
+- **Checklist steps** (`PreflightChecklistCheck`, `src/lib/checklists/checks.ts`):
+  one row per checked step per run (who and when). Its id is derived from
+  run + checklist + step, so devices converge.
+- **Configuration** (`src/lib/checklists/config.ts`, edited on **Pit setup**,
+  `/pit-setup`, leads/admins): the pit roles roster (role → assignee) and one
+  standard checklist sequence (checklists → steps with instructions and
+  roles), stored as the `pit_roles` and `checklist_sequence` settings. Steps
+  reference roles, so reassigning a role updates every checklist. "Load
+  suggested checklists" seeds both from the requirements doc.
+- Anyone member and above drives the flow; leads/admins also get a manual
+  override (and everyone sees the history) under "Status history".
+- **Tasks** (`PreflightTask`): members and above add, reorder, start, and
+  check off tasks; finished tasks appear on the Schedule calendar under the
+  "Tasks" filter.
+- **Timer:** the shared `CountdownTimer` from `@greybots/common`, counting
+  down to the next match.
 
 ## Schedule
 
@@ -207,6 +230,22 @@ view of the whole event, built on FullCalendar's time grid.
   toggles. Matches can't be dragged; they're colored by our alliance.
 - Times are shown in the device's timezone. A notice appears when that
   differs from the event's TBA timezone.
+
+## Dialog conventions
+
+- Dialogs use `AppDialog` and stay compact enough to fit a short screen
+  (about 650 px) without scrolling: related fields share a row, notes are two
+  lines, and long option lists scroll horizontally.
+- **Creating** something uses an explicit Create/Save button. **Editing**
+  something that already exists saves automatically with `useAutosave`
+  (`src/lib/autosave.ts`): it saves about 600 ms after typing stops (or on
+  blur, for fields where saving mid-typing is wrong, like the event key),
+  only when values actually changed, blocks invalid values with an inline
+  error, and flushes on close. `AutosaveStatus` shows Saving…/Saved.
+- Give an editing dialog the **live** record (look it up by id from a live
+  query), and write partial changes with `patchRecord`, which reads the
+  stored row first. A copy captured when the dialog opened can be stale, and
+  writing it back would undo other changes.
 
 ## Deployment
 

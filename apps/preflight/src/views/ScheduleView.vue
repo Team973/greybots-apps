@@ -116,20 +116,27 @@ watch(() => [activeEvent.value?.event_key, canImport.value], autoImport);
 
 // --- Dialogs ---
 const settingsOpen = ref(false);
-const itemDialog = ref<{ item: ScheduleItem | null; draft: { start: string; end: string } | null } | null>(null);
+// The dialog gets the live copy of an existing item (looked up by id), so its
+// autosave never writes back stale fields.
+const itemDialog = ref<{ itemId: string | null; draft: { start: string; end: string } | null } | null>(null);
+const dialogItem = computed(() => (itemDialog.value?.itemId ? items.value.find((i) => i.id === itemDialog.value!.itemId) ?? null : null));
+// Close the dialog if its item is deleted (e.g. from another device).
+watch(dialogItem, (item) => {
+  if (!item && itemDialog.value?.itemId) itemDialog.value = null;
+});
 
 function onEventSaved(_event: ActiveEvent, changed: boolean) {
   if (changed && canImport.value) runImport();
 }
 
 function onSelect(range: { start: string; end: string }) {
-  itemDialog.value = { item: null, draft: range };
+  itemDialog.value = { itemId: null, draft: range };
 }
 
 function newEvent() {
   const start = new Date();
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
-  itemDialog.value = { item: null, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
+  itemDialog.value = { itemId: null, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
 }
 
 async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: () => void) {
@@ -196,7 +203,7 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
           :tasks="visibleTasks"
           :can-edit="canEdit"
           @select="onSelect"
-          @open="(item) => (itemDialog = { item, draft: null })"
+          @open="(item) => (itemDialog = { itemId: item.id, draft: null })"
           @reschedule="onReschedule"
           @open-task="(task) => (taskDialogId = task.id)"
         />
@@ -208,7 +215,7 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
       v-if="activeEvent"
       :open="!!itemDialog"
       :event-key="activeEvent.event_key"
-      :item="itemDialog?.item ?? null"
+      :item="dialogItem"
       :draft="itemDialog?.draft ?? null"
       :can-edit="canEdit"
       @close="itemDialog = null"

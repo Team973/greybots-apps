@@ -1,26 +1,19 @@
 import { db } from '@/lib/db';
-import { deleteRecord, saveRecord } from '@/lib/sync/local-repo';
-import { uuidFromName } from '@/lib/uuid';
-import type { ActiveEvent, ScheduleCategory, ScheduleItem, Setting } from './types';
+import { getSetting, saveSetting } from '@/lib/settings';
+import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
+import type { ActiveEvent, ScheduleCategory, ScheduleItem } from './types';
 
-export const settingsTable = 'settings';
 export const scheduleTable = 'scheduleItems';
 const activeEventKey = 'active_event';
 
 // --- Active event ---------------------------------------------------------
 
-export async function getActiveEvent(): Promise<ActiveEvent | null> {
-    const row = await db.syncedTable<Setting<ActiveEvent>>(settingsTable).where('key').equals(activeEventKey).first();
-    return row && !row.deleted ? row.value : null;
+export function getActiveEvent(): Promise<ActiveEvent | null> {
+    return getSetting<ActiveEvent>(activeEventKey);
 }
 
-export async function saveActiveEvent(value: ActiveEvent, editorName: string | null): Promise<void> {
-    await saveRecord<Setting<ActiveEvent>>(settingsTable, {
-        id: await uuidFromName(`setting:${activeEventKey}`),
-        key: activeEventKey,
-        value,
-        updated_by_name: editorName
-    });
+export function saveActiveEvent(value: ActiveEvent, editorName: string | null): Promise<void> {
+    return saveSetting(activeEventKey, value, editorName);
 }
 
 // --- Schedule items -------------------------------------------------------
@@ -72,12 +65,16 @@ export async function saveCustomEvent(eventKey: string, input: CustomEventInput,
 
 // Move or resize an existing item (from calendar drag/resize).
 export async function rescheduleItem(item: ScheduleItem, start: Date, end: Date, editorName: string | null) {
-    return saveRecord<ScheduleItem>(scheduleTable, {
-        ...item,
+    return patchRecord<ScheduleItem>(scheduleTable, item.id, {
         start_at: start.toISOString(),
         end_at: end.toISOString(),
         updated_by_name: editorName
     });
+}
+
+// Notes are the one editable field on an imported match.
+export function saveMatchNotes(item: ScheduleItem, notes: string, editorName: string | null) {
+    return patchRecord<ScheduleItem>(scheduleTable, item.id, { notes: notes.trim() || null, updated_by_name: editorName });
 }
 
 export function deleteScheduleItem(id: string) {

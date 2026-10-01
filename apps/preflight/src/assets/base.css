@@ -79,9 +79,10 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  flex: 1 1 180px;
-  font-size: 0.85rem;
+  gap: 2px;
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: 0.8rem;
 }
 
 .field > span {
@@ -91,19 +92,36 @@
 .field input,
 .field select,
 .field textarea {
-  padding: 10px;
+  padding: 7px 8px;
   border-radius: 6px;
   border: 1px solid var(--accent-color);
   background: var(--background-color);
   color: var(--primary-text-color);
   font: inherit;
-  font-size: 1rem;
+  font-size: 0.95rem;
   color-scheme: light dark;
 }
 
 .field textarea {
   resize: vertical;
-  min-height: 64px;
+  min-height: 44px;
+}
+
+/* Tighter rows inside dialogs. */
+dialog .form-row {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 420px) {
+  dialog .form-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* Spacer that pushes trailing dialog actions to the right. */
+.actions-spacer {
+  flex: 1;
 }
 
 /* Overview panels. */

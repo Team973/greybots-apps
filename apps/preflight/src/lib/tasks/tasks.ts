@@ -1,5 +1,5 @@
 import { db } from '@/lib/db';
-import { deleteRecord, saveRecord } from '@/lib/sync/local-repo';
+import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
 import type { SyncedRecord } from '@/lib/sync/types';
 
 export const tasksTable = 'tasks';
@@ -67,8 +67,10 @@ export async function createTask(eventKey: string, input: TaskInput, editor: str
     });
 }
 
+// Patches only the changed fields onto the stored task, so a slightly stale
+// copy from the UI can't undo another just-saved edit.
 function update(task: Task, changes: Partial<Task>, editor: string | null) {
-    return saveRecord<Task>(tasksTable, { ...task, ...changes, updated_by_name: editor });
+    return patchRecord<Task>(tasksTable, task.id, { ...changes, updated_by_name: editor });
 }
 
 export function updateTaskDetails(task: Task, input: TaskInput, editor: string | null) {

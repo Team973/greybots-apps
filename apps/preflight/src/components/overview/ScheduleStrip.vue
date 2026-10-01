@@ -29,7 +29,10 @@ function scrollTime() {
   return `${String(hour).padStart(2, '0')}:00:00`;
 }
 
-const selected = ref<ScheduleItem | null>(null);
+// Live copy of the opened item, so the dialog's autosave never writes back
+// stale fields.
+const selectedId = ref<string | null>(null);
+const selected = computed(() => props.items.find((i) => i.id === selectedId.value) ?? null);
 
 const options = computed<CalendarOptions>(() => ({
   plugins: [timeGridPlugin],
@@ -46,7 +49,7 @@ const options = computed<CalendarOptions>(() => ({
   editable: false,
   selectable: false,
   events: events.value,
-  eventClick: (info: EventClickArg) => (selected.value = info.event.extendedProps.item as ScheduleItem)
+  eventClick: (info: EventClickArg) => (selectedId.value = (info.event.extendedProps.item as ScheduleItem).id)
 }));
 </script>
 
@@ -66,7 +69,7 @@ const options = computed<CalendarOptions>(() => ({
       :item="selected"
       :draft="null"
       :can-edit="session.hasRole('lead')"
-      @close="selected = null"
+      @close="selectedId = null"
     />
   </section>
 </template>

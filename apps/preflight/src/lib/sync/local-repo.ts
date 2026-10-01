@@ -22,6 +22,23 @@ export async function saveRecord<T extends SyncedRecord>(table: string, record: 
     return row;
 }
 
+// Update only the given fields of an existing row, reading the current row
+// from the database first. Prefer this over saveRecord({ ...row, ...changes })
+// when `row` came from the UI, since that copy may be stale (e.g. a change
+// saved a moment ago that the live query hasn't delivered yet).
+export async function patchRecord<T extends SyncedRecord>(
+    table: string,
+    id: string,
+    changes: Partial<Omit<T, 'id' | 'updated_at' | 'deleted' | 'synced_at' | '_dirty'>>
+): Promise<T> {
+    const current = await db.syncedTable<T>(table).get(id);
+    if (!current || current.deleted) throw new Error('This item no longer exists');
+    const row = { ...current, ...changes, updated_at: new Date().toISOString(), _dirty: 1 } as T;
+    await db.syncedTable<T>(table).put(row);
+    useSyncStore().notifyLocalChange();
+    return row;
+}
+
 export async function deleteRecord(table: string, id: string): Promise<void> {
     const updated = await db.syncedTable(table).update(id, {
         deleted: true,

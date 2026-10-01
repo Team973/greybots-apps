@@ -1,43 +1,49 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { formatClock } from '@greybots/common/lib/now';
 import RobotStatusDialog from './RobotStatusDialog.vue';
-import { useLiveQuery } from '@/lib/live-query';
-import { formatElapsed, useNow } from '@greybots/common/lib/now';
-import { listStatusHistory, robotStatusColors, statusText, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
+import { robotStatusColors, robotStatusLabels, statusText } from '@/lib/robot-status/robot-status';
+import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
+import type { ScheduleItem } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
 
-// Big, color-coded robot readiness indicator. Reusable on the pit display.
-const props = defineProps<{ eventKey: string }>();
+// Compact, color-coded robot status for glanceable screens (e.g. the pit
+// display, #90). The Overview uses the full-size StatusHero/ChecklistRun.
+const props = defineProps<{ eventKey: string; matches: ScheduleItem[] }>();
 const session = useSessionStore();
-const canEdit = computed(() => session.hasRole('lead'));
-const now = useNow(30_000);
 
 const eventKey = computed(() => props.eventKey);
-// Null until the first load, so the card doesn't flash the "In Pit" default
-// before the real status arrives.
-const history = useLiveQuery<RobotStatusEntry[] | null>(() => listStatusHistory(eventKey.value), null, eventKey);
-const loaded = computed(() => history.value !== null);
-const current = computed(() => history.value?.[0] ?? null);
-const colors = computed(() => (loaded.value ? robotStatusColors[current.value?.status ?? 'in_pit'] : { bg: 'var(--accent-color)', fg: 'inherit' }));
+const matches = computed(() => props.matches);
+const flow = useRobotFlow(eventKey, matches);
+
+const text = computed(() => {
+  const { status, entry } = flow.effective.value;
+  return status === 'pending' ? statusText(entry) : robotStatusLabels[status];
+});
+const colors = computed(() =>
+  flow.loaded.value ? robotStatusColors[flow.effective.value.status] : { bg: 'var(--accent-color)', fg: 'inherit' }
+);
+const departingFor = computed(() => props.matches.find((m) => Date.parse(m.end_at) > flow.now.value) ?? null);
 const dialogOpen = ref(false);
 </script>
 
 <template>
   <section class="panel status-panel">
     <header class="panel-header"><h2>Robot Status</h2></header>
-    <button
-      class="status-card"
-      :style="{ background: colors.bg, color: colors.fg }"
-      :aria-label="`Robot status: ${statusText(current)}. ${canEdit ? 'Change status' : 'Show history'}`"
-      @click="dialogOpen = true"
-    >
-      <span class="status-text">{{ loaded ? statusText(current) : '…' }}</span>
-      <span v-if="current" class="since">
-        {{ formatElapsed(now - Date.parse(current.set_at)) }} ago<template v-if="current.set_by_name"> · {{ current.set_by_name }}</template>
-      </span>
-      <span v-if="current?.note" class="since">{{ current.note }}</span>
+    <button class="status-card" :style="{ background: colors.bg, color: colors.fg }" @click="dialogOpen = true">
+      <span class="status-text">{{ flow.loaded.value ? text : '…' }}</span>
+      <span v-if="flow.elapsedMs.value !== null" class="since">{{ formatClock(flow.elapsedMs.value) }}</span>
     </button>
-    <RobotStatusDialog :open="dialogOpen" :event-key="eventKey" :history="history ?? []" :can-edit="canEdit" @close="dialogOpen = false" />
+    <RobotStatusDialog
+      :open="dialogOpen"
+      :event-key="eventKey"
+      :history="flow.history.value ?? []"
+      :current="flow.effective.value.status"
+      :can-override="session.hasRole('lead')"
+      :sequence="flow.sequence.value"
+      :next-match-key="departingFor?.match_key ?? null"
+      @close="dialogOpen = false"
+    />
   </section>
 </template>
 
@@ -65,7 +71,8 @@ const dialogOpen = ref(false);
 }
 
 .since {
-  font-size: 0.9rem;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
 </style>
