@@ -559,11 +559,35 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightChecklistCheck" (
     "updated_at" timestamp with time zone NOT NULL,
     "deleted" boolean DEFAULT false NOT NULL,
     "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
-    "updated_by_name" "text"
+    "updated_by_name" "text",
+    "value" "text",
+    "match_key" "text"
 );
 
 
 ALTER TABLE "public"."PreflightChecklistCheck" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."PreflightChecklistRun" (
+    "id" "uuid" NOT NULL,
+    "event_key" "text" NOT NULL,
+    "checklist_id" "text" NOT NULL,
+    "checklist_name" "text" NOT NULL,
+    "snapshot" "jsonb" NOT NULL,
+    "label" "text",
+    "match_key" "text",
+    "started_at" timestamp with time zone NOT NULL,
+    "started_by_name" "text",
+    "completed_at" timestamp with time zone,
+    "completed_by_name" "text",
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text"
+);
+
+
+ALTER TABLE "public"."PreflightChecklistRun" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."PreflightNote" (
@@ -752,6 +776,10 @@ CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "publi
 
 
 
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightChecklistRun" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
 CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightNote" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
 
 
@@ -876,6 +904,11 @@ ALTER TABLE ONLY "public"."PreflightChecklistCheck"
 
 
 
+ALTER TABLE ONLY "public"."PreflightChecklistRun"
+    ADD CONSTRAINT "PreflightChecklistRun_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."PreflightNote"
     ADD CONSTRAINT "PreflightNote_pkey" PRIMARY KEY ("id");
 
@@ -966,6 +999,10 @@ CREATE INDEX "preflight_robot_status_log_synced_at_idx" ON "public"."PreflightRo
 
 
 CREATE INDEX "preflight_checklist_check_synced_at_idx" ON "public"."PreflightChecklistCheck" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_checklist_run_synced_at_idx" ON "public"."PreflightChecklistRun" USING "btree" ("synced_at");
 
 
 
@@ -1303,6 +1340,18 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightChecklistCheck" 
 
 
 
+CREATE POLICY "Enable read access for members" ON "public"."PreflightChecklistRun" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for members" ON "public"."PreflightChecklistRun" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for members" ON "public"."PreflightChecklistRun" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
 CREATE POLICY "Enable read access for members" ON "public"."PreflightNote" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
 
 
@@ -1428,6 +1477,9 @@ ALTER TABLE "public"."PreflightRobotStatusLog" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."PreflightChecklistCheck" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightChecklistRun" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."PreflightNote" ENABLE ROW LEVEL SECURITY;
@@ -1795,6 +1847,12 @@ GRANT ALL ON TABLE "public"."PreflightRobotStatusLog" TO "service_role";
 GRANT ALL ON TABLE "public"."PreflightChecklistCheck" TO "anon";
 GRANT ALL ON TABLE "public"."PreflightChecklistCheck" TO "authenticated";
 GRANT ALL ON TABLE "public"."PreflightChecklistCheck" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightChecklistRun" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightChecklistRun" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightChecklistRun" TO "service_role";
 
 
 

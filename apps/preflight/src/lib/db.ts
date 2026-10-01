@@ -6,7 +6,7 @@ import type { SyncedRecord } from './sync/types';
 
 // Bump whenever the store definitions below or the synced table registry
 // change. Dexie runs the upgrade automatically on next launch.
-const schemaVersion = 7;
+const schemaVersion = 8;
 
 export interface MetaRow {
     key: string;
