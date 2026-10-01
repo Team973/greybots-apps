@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { formatClock } from '@greybots/common/lib/now';
 import NextMatchLine from './NextMatchLine.vue';
+import InstalledBatteryChip from '@/components/batteries/InstalledBatteryChip.vue';
 import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
 import type { Repair } from '@/lib/repairs/repairs';
 import type { MatchPrep } from '@/lib/schedule/timing';
@@ -52,7 +53,10 @@ const subtitle = computed(() => {
       <!-- While the robot is away, the match it left for is the one in play. -->
       <NextMatchLine v-if="effective.status !== 'away'" class="next" :match="nextMatch" :prep="prep" :now="now" />
     </div>
-    <ActiveRepairChip :repairs="repairs" />
+    <div class="chips">
+      <InstalledBatteryChip />
+      <ActiveRepairChip :repairs="repairs" />
+    </div>
     <template v-if="canAct">
       <button v-if="effective.status === 'inbound'" class="hero-action" :disabled="busy" @click="emit('arrived')">Robot arrived</button>
       <button v-else-if="effective.status === 'ready'" class="hero-action" :disabled="busy" @click="emit('departed')">Robot departed</button>
@@ -92,6 +96,14 @@ const subtitle = computed(() => {
 .hero-text .next {
   margin-top: 10px;
   font-size: clamp(0.95rem, 1.5vw, 1.15rem);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
 }
 
 .hero-action {

@@ -154,6 +154,25 @@ dialog .form-row {
   font-size: 0.9rem;
 }
 
+/* Printing (e.g. battery labels): the app normally scrolls inside a fixed
+   #app, which would print only what's on screen. Let the page flow, and drop
+   the chrome. */
+@media print {
+  #app {
+    position: static;
+    overflow: visible;
+  }
+
+  .main-content {
+    margin-top: 0;
+    padding: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
+
 /* Small square button for row actions (move, delete). */
 .icon-small {
   flex: none;

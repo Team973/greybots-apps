@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { formatClock } from '@greybots/common/lib/now';
 import NextMatchLine from './NextMatchLine.vue';
+import InstalledBatteryChip from '@/components/batteries/InstalledBatteryChip.vue';
 import { prematchIndex, type ChecklistSequence } from '@/lib/checklists/config';
 import type { MatchPrep } from '@/lib/schedule/timing';
 import type { ScheduleItem } from '@/lib/schedule/types';
@@ -43,6 +44,7 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
         <template v-if="entry.note"> · {{ entry.note }}</template>
       </p>
       <NextMatchLine class="next" :match="nextMatch" :prep="prep" :now="now" />
+      <InstalledBatteryChip class="battery" />
     </div>
     <p class="elapsed" title="Time in repair">{{ elapsedMs === null ? '--:--' : formatClock(elapsedMs) }}</p>
     <div v-if="canAct" class="actions">
@@ -85,6 +87,10 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
 .next {
   justify-content: flex-start;
   margin-top: 6px;
+}
+
+.battery {
+  margin-top: 8px;
 }
 
 .elapsed {

@@ -314,6 +314,34 @@ status, which only says the pit flow is paused.
   no link to test runs until the diagnostics integration (#103); "what was
   repaired between two tests" is answered by the timestamps for now.
 
+## Batteries
+
+`src/lib/batteries/batteries.ts`; members and above. Batteries belong to the
+team, not to one event, so these tables aren't filtered by event.
+
+- **Registry** (`PreflightBattery`): number, label, purchase date, and
+  lifecycle status (active / suspect / retired). The id is derived from the
+  number, so two devices registering battery 7 converge. The number can't be
+  changed afterwards.
+- **Measurements** (`PreflightBatteryMeasurement`): manual readings of
+  resting voltage, internal resistance (mΩ), state of charge, capacity (Wh),
+  and observations. Every value is optional; cards show the latest value of
+  each. `source` is `manual` today, leaving room for charger telemetry.
+- **Use** (`PreflightBatteryUse`): a battery going into the robot for a
+  match or a test. The newest use with no `removed_at` is the installed
+  battery, and installing one takes the previous one out. The installed
+  battery shows as a chip next to the robot status on the Overview.
+- **Pages:** `/batteries` is the grid of cards from the mockup;
+  `/batteries/:number` has details, assignment, measurements, and history;
+  `/batteries/labels` prints QR labels (`?only=<number>` for one).
+- **QR:** labels encode `preflight:battery:<number>`, generated on the device
+  (`qrcode`). "Scan label" decodes camera frames on the device (`jsQR`), so
+  both work offline; typing the number is the fallback. The camera needs a
+  secure context, like the rest of the app.
+- **Printing:** the app scrolls inside a fixed `#app`, which would print only
+  what's on screen. `base.css` has print rules that let the page flow and
+  hide anything marked `.no-print`.
+
 ## Notes
 
 The Notes page (`/notes`, members and above; `PreflightNote`,

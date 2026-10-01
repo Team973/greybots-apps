@@ -6,6 +6,7 @@ import NextMatchLine from '@/components/overview/NextMatchLine.vue';
 import RepairPanel from '@/components/overview/RepairPanel.vue';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
 import StatusHero from '@/components/overview/StatusHero.vue';
+import InstalledBatteryChip from '@/components/batteries/InstalledBatteryChip.vue';
 import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
 import RepairList from '@/components/repairs/RepairList.vue';
 import RobotStatusDialog from '@/components/robot-status/RobotStatusDialog.vue';
@@ -98,6 +99,7 @@ const historyOpen = ref(false);
       <div class="pending-bar area-bar">
         <strong>Robot in the pit</strong>
         <span>{{ flow.sequence.value.checklists.length ? 'Working through checklists' : 'No checklists configured' }}</span>
+        <InstalledBatteryChip />
         <ActiveRepairChip :repairs="repairsInProgress" />
         <span class="bar-spacer"></span>
         <NextMatchLine :match="departingFor" :prep="prep" :now="flow.now.value" />
