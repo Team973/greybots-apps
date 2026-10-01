@@ -27,6 +27,7 @@ const pages: { to: string; label: string; minRole?: Role }[] = [
   { to: '/batteries', label: 'Batteries', minRole: 'member' },
   { to: '/notes', label: 'Notes', minRole: 'member' },
   { to: '/display', label: 'Display' },
+  { to: '/script', label: 'Script', minRole: 'lead' },
   { to: '/pit-setup', label: 'Pit setup', minRole: 'lead' },
   { to: '/settings', label: 'Settings', minRole: 'member' }
 ];
