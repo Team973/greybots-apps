@@ -9,6 +9,7 @@ import ChecklistsView from '@/views/ChecklistsView.vue';
 import LoginView from '@/views/LoginView.vue';
 import NotesView from '@/views/NotesView.vue';
 import OverviewView from '@/views/OverviewView.vue';
+import PitDisplayView from '@/views/PitDisplayView.vue';
 import PitSetupView from '@/views/PitSetupView.vue';
 import RepairsView from '@/views/RepairsView.vue';
 import SetupView from '@/views/SetupView.vue';
@@ -21,6 +22,10 @@ declare module 'vue-router' {
     // Routes are signed-in only unless this is explicitly false.
     requiresAuth?: boolean;
     minRole?: Role;
+    // Full-screen page: no nav bar, and a kiosk never auto-locks on it.
+    bare?: boolean;
+    // On a kiosk (a shared pit device), reachable without signing in.
+    kioskPublic?: boolean;
   }
 }
 
@@ -37,6 +42,9 @@ const router = createRouter({
     { path: '/batteries/:number', name: 'battery', component: BatteryDetailView, meta: { title: 'Battery', minRole: 'member' } },
     { path: '/repairs', name: 'repairs', component: RepairsView, meta: { title: 'Repairs', minRole: 'member' } },
     { path: '/notes', name: 'notes', component: NotesView, meta: { title: 'Notes', minRole: 'member' } },
+    // The pit display runs unattended on a TV: read-only, and on a kiosk it
+    // stays up while the device is locked.
+    { path: '/display', name: 'display', component: PitDisplayView, meta: { title: 'Pit display', minRole: 'member', bare: true, kioskPublic: true } },
     { path: '/pit-setup', name: 'pit-setup', component: PitSetupView, meta: { title: 'Pit setup', minRole: 'member' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
@@ -51,6 +59,7 @@ router.beforeEach((to) => {
   if (!device.isConfigured) return to.name === 'setup' ? true : { name: 'setup' };
   if (to.name === 'setup') return { name: 'home' };
 
+  if (to.meta.kioskPublic && device.isKiosk) return true;
   if (to.name === 'login' && session.isSignedIn) return { name: 'home' };
   if (to.meta.requiresAuth !== false && !session.isSignedIn) {
     return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };

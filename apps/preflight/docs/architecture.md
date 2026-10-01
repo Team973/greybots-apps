@@ -177,8 +177,8 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   After the last checklist, the robot is Ready. Tasks stay available.
 - **Repair in progress** (red): from any checklist, "Repairs" stops the flow
   immediately, with no prompt. The repair screen is a compact red strip
-  (time in repair, plus the ways out) above a "Repair tasks" list with an
-  inline add-and-assign row, so repair work is handed out as tasks. Afterwards
+  (time in repair, plus the ways out) above the repair log, whose inline row
+  logs a repair and starts it at once, with tasks beside it. Afterwards
   the pit goes back to the interrupted checklist (same run, so its checked
   steps are kept) or straight to the pre-match checklist (the one flagged
   pre-match on Pit setup, else the last checklist).
@@ -325,6 +325,32 @@ view of the whole event, built on FullCalendar's time grid.
   anything else inside it (e.g. `uuidFromName`, which hashes) makes Dexie
   lose track of what the query read, and it stops updating. Compute such
   values outside the query.
+
+## Pit display
+
+`/display` (`src/views/PitDisplayView.vue`) is a full-screen, read-only
+summary for a TV in the pit. (The requirements call this "kiosk mode"; here
+"kiosk" already means the shared-device sign-in mode, so it's the *pit
+display*.)
+
+- The robot status fills the top third. Below it are widgets: next match,
+  countdown, readiness (prep and queue deadlines, open repairs), current
+  match, active checklist with progress, active repair, battery installed,
+  pit responsibilities, and event phase. Sizes follow the viewport, and the
+  type scales down as more rows of widgets are shown, so nothing scrolls.
+- **Layouts per phase** (`src/lib/display/display.ts`, the `pit_display`
+  setting): leads/admins choose and order the widgets for each event phase on
+  Pit setup. The display follows the phase from the event timeline
+  (`currentPhase()`), uses the default layout when there are no milestones,
+  and can be pinned to one phase's layout.
+- **Stays up:** it reads only the local database, so reloads and network
+  drops don't affect it. The route is marked `bare` (no nav bar, and the kiosk
+  idle lock is off while it's showing) and `kioskPublic` (on a kiosk it's
+  reachable while the device is locked; on a personal device it needs a
+  signed-in member). It asks the browser for a screen wake lock where
+  that's supported.
+- Diagnostic warnings and automated test results aren't shown yet: they come
+  from the diagnostics integration (#103).
 
 ## Repair and maintenance log
 
