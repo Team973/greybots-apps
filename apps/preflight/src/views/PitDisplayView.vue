@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 import { formatClock, formatElapsed } from '@greybots/common/lib/now';
 import { formatReading } from '@/lib/batteries/batteries';
 import { useBatteries } from '@/lib/batteries/use-batteries';
@@ -19,6 +19,7 @@ import { currentPhase, milestoneState, sortMilestones } from '@/lib/schedule/mil
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
 import { defaultMatchPrep, getMatchPrep, matchCountdown, matchDeadlines, type MatchPrep } from '@/lib/schedule/timing';
 import { matchColor, phaseLabels, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
+import { useSessionStore } from '@/stores/session-store';
 import { useSyncStore } from '@/stores/sync-store';
 
 // The pit display (issue #90): a full-screen, read-only summary meant to be
@@ -27,6 +28,14 @@ import { useSyncStore } from '@/stores/sync-store';
 // Everything comes from the local database, so it keeps running through
 // reloads and network drops, and it never auto-locks (see App.vue).
 const sync = useSyncStore();
+const session = useSessionStore();
+const router = useRouter();
+// An observer has nowhere else to go, so they get Sign out instead of Exit.
+const observerOnly = computed(() => session.isSignedIn && !session.hasRole('member'));
+async function signOut() {
+  await session.signOut();
+  router.push({ name: 'login' });
+}
 
 const activeEvent = useLiveQuery<ActiveEvent | null>(getActiveEvent, null);
 const eventKey = computed(() => activeEvent.value?.event_key ?? '');
@@ -167,7 +176,7 @@ onBeforeUnmount(() => {
   <div class="display">
     <div v-if="!activeEvent" class="blank">
       <h1>Pit display</h1>
-      <p>No event is set up yet. Set one up on the Schedule page.</p>
+      <p>{{ observerOnly ? 'Nothing to show yet.' : 'No event is set up yet. Set one up on the Schedule page.' }}</p>
     </div>
 
     <template v-else>
@@ -295,7 +304,8 @@ onBeforeUnmount(() => {
       <span v-if="sync.status === 'offline'" class="offline">Offline</span>
       <span class="spacer"></span>
       <button class="footer-button" @click="toggleFullscreen">{{ isFullscreen ? 'Exit full screen' : 'Full screen' }}</button>
-      <RouterLink to="/" class="footer-button">Exit display</RouterLink>
+      <button v-if="observerOnly" class="footer-button" @click="signOut">Sign out</button>
+      <RouterLink v-else to="/" class="footer-button">Exit display</RouterLink>
       <span class="clock">{{ clock }}</span>
     </footer>
   </div>
