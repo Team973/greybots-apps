@@ -4,6 +4,7 @@ import RepairDialog from './RepairDialog.vue';
 import { formatElapsed, useNow } from '@greybots/common/lib/now';
 import PersonPicker from '@/components/PersonPicker.vue';
 import { useLiveQuery } from '@/lib/live-query';
+import { getRepairPresets, type RepairPreset } from '@/lib/repairs/presets';
 import { createRepair, finishRepair, listRepairs, reopenRepair, startRepairWork, type Repair, type RepairOrigin } from '@/lib/repairs/repairs';
 import { formatTime } from '@/lib/schedule/dates';
 import type { ScheduleItem } from '@/lib/schedule/types';
@@ -72,6 +73,14 @@ async function act(action: () => Promise<unknown>) {
   }
 }
 
+// One-tap options for common repairs (configured on Pit setup) fill the row;
+// "Start" then logs it, so the person can still be picked first.
+const presets = useLiveQuery<RepairPreset[]>(getRepairPresets, []);
+function applyPreset(preset: RepairPreset) {
+  quickTitle.value = preset.title;
+  quickSubsystem.value = preset.subsystem;
+}
+
 function addQuick() {
   if (!quickTitle.value.trim()) return (error.value = "What's being repaired?");
   return act(async () => {
@@ -108,6 +117,11 @@ const dialogRepair = computed(() => (dialog.value?.repairId ? repairs.value.find
       <PersonPicker v-model="quickAssignee" class="quick-small" empty-label="Who's on it" roomy />
       <button type="submit" class="quick-submit">Start</button>
     </form>
+    <div v-if="quickAdd && canEdit && presets.length" class="preset-chips" aria-label="Common repairs">
+      <button v-for="preset in presets" :key="preset.id" type="button" class="preset-chip" :class="{ on: quickTitle === preset.title }" @click="applyPreset(preset)">
+        {{ preset.title }}
+      </button>
+    </div>
     <p v-if="error" class="error-text">{{ error }}</p>
 
     <ul class="repair-list">
