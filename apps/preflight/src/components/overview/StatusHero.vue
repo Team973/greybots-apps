@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { formatClock } from '@greybots/common/lib/now';
-import { formatTime } from '@/lib/schedule/dates';
+import NextMatchLine from './NextMatchLine.vue';
+import type { MatchPrep } from '@/lib/schedule/timing';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import { robotStatusColors, type EffectiveStatus } from '@/lib/robot-status/robot-status';
 
@@ -11,6 +12,7 @@ const props = defineProps<{
   effective: EffectiveStatus;
   elapsedMs: number | null;
   nextMatch: ScheduleItem | null;
+  prep: MatchPrep;
   now: number;
   canAct: boolean;
   busy: boolean;
@@ -19,7 +21,6 @@ const emit = defineEmits<{ arrived: []; departed: []; matchOver: []; history: []
 
 const colors = computed(() => robotStatusColors[props.effective.status]);
 const elapsed = computed(() => (props.elapsedMs === null ? null : formatClock(props.elapsedMs)));
-const minutesUntil = (item: ScheduleItem) => Math.max(0, Math.round((Date.parse(item.start_at) - props.now) / 60_000));
 
 const title = computed(() => {
   const { status, match } = props.effective;
@@ -34,10 +35,7 @@ const subtitle = computed(() => {
     if (autoInbound && match) return `${match.title} ended · ${elapsed.value} ago`;
     return elapsed.value ? `Waiting for the robot · ${elapsed.value}` : 'Waiting for the robot';
   }
-  if (status === 'ready') {
-    const next = props.nextMatch;
-    return next ? `Next: ${next.title} at ${formatTime(next.start_at)} (in ${minutesUntil(next)}m)` : `Ready for ${elapsed.value}`;
-  }
+  if (status === 'ready') return elapsed.value ? `Ready for ${elapsed.value}` : 'Ready';
   return elapsed.value ? `Left ${elapsed.value} ago` : 'On the field';
 });
 </script>
@@ -47,6 +45,8 @@ const subtitle = computed(() => {
     <div class="hero-text">
       <h2>{{ title }}</h2>
       <p>{{ subtitle }}</p>
+      <!-- While the robot is away, the match it left for is the one in play. -->
+      <NextMatchLine v-if="effective.status !== 'away'" class="next" :match="nextMatch" :prep="prep" :now="now" />
     </div>
     <template v-if="canAct">
       <button v-if="effective.status === 'inbound'" class="hero-action" :disabled="busy" @click="emit('arrived')">Robot arrived</button>
@@ -82,6 +82,11 @@ const subtitle = computed(() => {
   margin: 6px 0 0;
   font-size: clamp(1rem, 1.8vw, 1.3rem);
   opacity: 0.9;
+}
+
+.hero-text .next {
+  margin-top: 10px;
+  font-size: clamp(0.95rem, 1.5vw, 1.15rem);
 }
 
 .hero-action {

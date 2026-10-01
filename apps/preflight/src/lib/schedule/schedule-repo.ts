@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { getSetting, saveSetting } from '@/lib/settings';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
+import { applyTiming, getMatchTiming } from './timing';
 import type { ActiveEvent, MilestonePhase, ScheduleCategory, ScheduleItem } from './types';
 
 export const scheduleTable = 'scheduleItems';
@@ -18,13 +19,17 @@ export function saveActiveEvent(value: ActiveEvent, editorName: string | null): 
 
 // --- Schedule items -------------------------------------------------------
 
-export function listScheduleItems(eventKey: string): Promise<ScheduleItem[]> {
-    return db
+// The event's items, with each match moved to its estimated time (see
+// lib/schedule/timing.ts). Everything that shows or reasons about the
+// schedule reads it through here, so a timing override reaches all of it.
+export async function listScheduleItems(eventKey: string): Promise<ScheduleItem[]> {
+    const items = await db
         .syncedTable<ScheduleItem>(scheduleTable)
         .where('event_key')
         .equals(eventKey)
         .filter((item) => !item.deleted)
         .toArray();
+    return applyTiming(items, await getMatchTiming(eventKey));
 }
 
 export interface CustomEventInput {

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import EventSettingsDialog from '@/components/schedule/EventSettingsDialog.vue';
+import MatchTimingDialog from '@/components/schedule/MatchTimingDialog.vue';
 import MilestoneTimeline from '@/components/schedule/MilestoneTimeline.vue';
 import ScheduleCalendar from '@/components/schedule/ScheduleCalendar.vue';
 import ScheduleItemDialog from '@/components/schedule/ScheduleItemDialog.vue';
@@ -12,6 +13,7 @@ import { useLiveQuery } from '@/lib/live-query';
 import { formatDateRange, isDifferentTimezone } from '@/lib/schedule/dates';
 import { getActiveEvent, listScheduleItems, rescheduleItem } from '@/lib/schedule/schedule-repo';
 import { getLastImportAt, importTbaSchedule } from '@/lib/schedule/tba-import';
+import { emptyTiming, getMatchTiming, type MatchTiming } from '@/lib/schedule/timing';
 import {
   filterColors,
   filterLabels,
@@ -135,6 +137,22 @@ watch(mode, (value) => {
   }
 });
 
+// Manual match timing (issue #80).
+const timing = useLiveQuery<MatchTiming>(
+  () => getMatchTiming(activeEventKey.value ?? ''),
+  emptyTiming(''),
+  activeEventKey
+);
+const timingOpen = ref(false);
+const timingNotice = computed(() => {
+  const parts: string[] = [];
+  const delay = timing.value.delay_minutes;
+  if (delay) parts.push(`matches are estimated ${Math.abs(delay)} min ${delay > 0 ? 'behind' : 'ahead of'} the published schedule`);
+  const overrides = Object.keys(timing.value.overrides).length;
+  if (overrides) parts.push(`${overrides} match${overrides === 1 ? ' has its' : 'es have their'} own estimate`);
+  return parts.length ? `Manual timing: ${parts.join('; ')}.` : null;
+});
+
 // --- Dialogs ---
 const settingsOpen = ref(false);
 // The dialog gets the live copy of an existing item (looked up by id), so its
@@ -203,12 +221,15 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
             {{ filterLabels[c] }}
           </label>
         </div>
-        <div v-if="canEdit" class="actions">
-          <md-filled-button v-if="mode === 'calendar'" @click="newItem('custom')">New event</md-filled-button>
-          <md-outlined-button :disabled="!canImport || importing" @click="runImport()">
-            {{ importing ? 'Importing…' : 'Import from TBA' }}
-          </md-outlined-button>
-          <md-outlined-button @click="settingsOpen = true">Event settings</md-outlined-button>
+        <div class="actions">
+          <md-filled-button v-if="canEdit && mode === 'calendar'" @click="newItem('custom')">New event</md-filled-button>
+          <md-outlined-button @click="timingOpen = true">Match timing</md-outlined-button>
+          <template v-if="canEdit">
+            <md-outlined-button :disabled="!canImport || importing" @click="runImport()">
+              {{ importing ? 'Importing…' : 'Import from TBA' }}
+            </md-outlined-button>
+            <md-outlined-button @click="settingsOpen = true">Event settings</md-outlined-button>
+          </template>
         </div>
       </header>
 
@@ -217,6 +238,9 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
       </p>
       <p v-if="canEdit && !canImport" class="hint notice">
         {{ !sync.online ? "Offline: TBA import resumes when you're back online." : 'Link a server account (Settings → Sync) to import from TBA.' }}
+      </p>
+      <p v-if="timingNotice" class="hint notice">
+        {{ timingNotice }} <button class="notice-link" @click="timingOpen = true">Change</button>
       </p>
       <p v-if="importMessage" class="hint notice">{{ importMessage }}</p>
       <p v-if="importError" class="error-text notice">{{ importError }}</p>
@@ -255,6 +279,7 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
       :can-edit="canEdit"
       @close="itemDialog = null"
     />
+    <MatchTimingDialog v-if="activeEvent" :open="timingOpen" :event-key="activeEvent.event_key" :can-edit="canEdit" @close="timingOpen = false" />
     <TaskDialog
       v-if="activeEvent"
       :open="!!taskDialogTask"
@@ -346,6 +371,16 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
 
 .notice {
   margin: 0;
+}
+
+.notice-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--header-hover-color);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .calendar-wrap {

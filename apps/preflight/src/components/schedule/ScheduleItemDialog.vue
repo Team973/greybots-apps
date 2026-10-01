@@ -9,6 +9,7 @@ import { clockNow } from '@greybots/common/lib/now';
 import { useAutosave } from '@/lib/autosave';
 import { formatTime, toLocalInput } from '@/lib/schedule/dates';
 import { deleteScheduleItem, saveCustomEvent, saveMatchNotes, validateCustomEvent } from '@/lib/schedule/schedule-repo';
+import { estimateSourceLabels, setMatchOverride } from '@/lib/schedule/timing';
 import {
   categoryLabels,
   customCategories,
@@ -55,6 +56,10 @@ const categoryOptions = computed(() => (isMilestone.value ? scheduleCategories :
 const readOnly = computed(() => !props.canEdit);
 const dialogTitle = computed(() => (isNew.value ? (isMilestone.value ? 'New milestone' : 'New event') : props.item?.title ?? ''));
 const match = computed(() => props.item?.match_info ?? null);
+const times = computed(() => props.item?.times ?? null);
+// Leads/admins can set a match's estimated start by hand until it's played.
+const canOverride = computed(() => props.canEdit && !!times.value && !times.value.actualStart && !!props.item?.match_key);
+const override = ref('');
 const editor = () => session.user?.name ?? null;
 
 const form = () => ({
@@ -100,6 +105,7 @@ watch(
     start.value = toLocalInput(source?.start_at ?? props.draft?.start ?? new Date(clockNow()).toISOString());
     end.value = toLocalInput(source?.end_at ?? props.draft?.end ?? new Date(clockNow() + 3_600_000).toISOString());
     notes.value = source?.notes ?? '';
+    override.value = source?.times?.source === 'override' ? toLocalInput(source.times.estimated) : '';
     error.value = null;
     autosave.reset();
   },
@@ -124,6 +130,19 @@ async function run(action: () => Promise<unknown>) {
   }
 }
 
+// Saved when the field is committed, not on every keystroke.
+async function saveOverride(value: string | null) {
+  if (!props.item?.match_key) return;
+  error.value = null;
+  try {
+    if (value !== null && Number.isNaN(Date.parse(value))) throw new Error('Enter a valid time');
+    await setMatchOverride(props.eventKey, props.item.match_key, value, editor());
+    if (value === null) override.value = '';
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 const create = () => run(() => saveCustomEvent(props.eventKey, toInput(form()), editor()));
 const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id));
 </script>
@@ -131,14 +150,23 @@ const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id))
 <template>
   <AppDialog :open="open" :title="dialogTitle" @close="close">
     <template v-if="isMatch && match">
-      <p class="match-line">
-        <strong>{{ formatTime(item!.start_at) }}</strong>
-        <span class="hint-inline">
-          published {{ match.scheduled_time ? formatTime(match.scheduled_time) : '—' }}
-          <template v-if="match.predicted_time"> · predicted {{ formatTime(match.predicted_time) }}</template>
-          <template v-if="match.actual_time"> · started {{ formatTime(match.actual_time) }}</template>
+      <dl v-if="times" class="times">
+        <div><dt>Published</dt><dd>{{ times.published ? formatTime(times.published) : '—' }}</dd></div>
+        <div :class="{ primary: !times.actualStart }">
+          <dt>Estimated</dt>
+          <dd>{{ formatTime(times.estimated) }}</dd>
+          <dd class="source">{{ estimateSourceLabels[times.source] }}</dd>
+        </div>
+        <div :class="{ primary: !!times.actualStart }"><dt>Started</dt><dd>{{ times.actualStart ? formatTime(times.actualStart) : '—' }}</dd></div>
+        <div><dt>Completed</dt><dd>{{ times.completed ? formatTime(times.completed) : '—' }}</dd></div>
+      </dl>
+      <label v-if="canOverride" class="field">
+        <span>Set the estimated start by hand (overrides TBA and the field delay)</span>
+        <span class="override-row">
+          <input v-model="override" type="datetime-local" step="60" @change="saveOverride(override || null)" />
+          <button v-if="times?.source === 'override'" type="button" class="clear" @click="saveOverride(null)">Clear</button>
         </span>
-      </p>
+      </label>
       <p class="match-line">
         <span class="red" :class="{ ours: match.alliance === 'red' }">Red {{ match.red.join(', ') || '—' }}</span>
         <span class="blue" :class="{ ours: match.alliance === 'blue' }">Blue {{ match.blue.join(', ') || '—' }}</span>
@@ -200,9 +228,61 @@ const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id))
   margin: 0;
 }
 
-.hint-inline {
-  font-size: 0.85rem;
+.times {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.times div {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--background-color);
+}
+
+.times div.primary {
+  box-shadow: 0 0 0 1px #ff8a1f;
+}
+
+.times dt {
+  font-size: 0.7rem;
   opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.times dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.times dd.source {
+  font-size: 0.7rem;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.override-row {
+  display: flex;
+  gap: 6px;
+  opacity: 1;
+}
+
+.override-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.clear {
+  flex: none;
+  padding: 0 12px;
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  cursor: pointer;
 }
 
 .red {

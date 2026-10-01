@@ -28,6 +28,7 @@ interface TbaMatch {
     time: number | null;
     predicted_time: number | null;
     actual_time: number | null;
+    post_result_time?: number | null;
 }
 
 export interface TeamSchedule {
@@ -95,7 +96,8 @@ function toMatchInfo(match: TbaMatch, teamNumber: number): MatchInfo {
         blue,
         scheduled_time: unixToIso(match.time),
         predicted_time: unixToIso(match.predicted_time),
-        actual_time: unixToIso(match.actual_time)
+        actual_time: unixToIso(match.actual_time),
+        result_time: unixToIso(match.post_result_time ?? null)
     };
 }
 

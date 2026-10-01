@@ -58,6 +58,21 @@ export interface MatchInfo {
     scheduled_time: string | null;
     predicted_time: string | null;
     actual_time: string | null;
+    // When TBA posted the result, i.e. the match is over. Absent on rows
+    // imported before this was tracked.
+    result_time?: string | null;
+}
+
+export type EstimateSource = 'actual' | 'override' | 'delay' | 'predicted' | 'published';
+
+// Every time a match has (issue #80). See lib/schedule/timing.ts.
+export interface MatchTimes {
+    published: string | null;
+    // Best current guess at the start; equals the actual start once known.
+    estimated: string;
+    source: EstimateSource;
+    actualStart: string | null;
+    completed: string | null;
 }
 
 // Timeline groups for milestones (requirements §2.1.1). Adding a phase also
@@ -88,6 +103,9 @@ export interface ScheduleItem extends SyncedRecord {
     // Timeline group (milestones only).
     phase?: MilestonePhase | null;
     updated_by_name: string | null;
+    // Not stored: filled in by listScheduleItems() for matches, whose
+    // start_at/end_at are moved to the estimated time.
+    times?: MatchTimes;
 }
 
 // The event the schedule is built around. Shared by every device.
