@@ -92,6 +92,15 @@ Both modes use the same `admin > lead > member > observer` ladder
 (`src/lib/roles.ts`). Use `session.hasRole('lead')` in components and
 `meta.minRole` on routes.
 
+### Navigation
+
+The nav bar (`src/components/NavBar.vue`) shows the page links as a strip.
+When the strip can't show every link (a phone, a narrow window, or a role
+with many pages), it collapses to a hamburger menu that drops down below the
+bar. This is measured, not tied to a screen width: the strip stays in the
+layout, invisible, so the bar knows the moment the links fit again. The sync
+status and Lock / Sign out are always on the bar itself.
+
 ## Sync engine
 
 `src/lib/sync/engine.ts`, driven by `useSyncStore`.
