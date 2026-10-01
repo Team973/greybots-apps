@@ -108,7 +108,7 @@ const historyOpen = ref(false);
         @resume="onResume"
         @history="historyOpen = true"
       />
-      <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
+      <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" heading="Repair tasks" quick-add />
       <ScheduleStrip class="area-schedule" :event-key="eventKey" :items="items" />
     </template>
 
@@ -164,8 +164,17 @@ const historyOpen = ref(false);
 .overview :deep(.area-step) { grid-area: step; }
 
 /* Pit laptop / big screen. Empty "notice" rows collapse to nothing. */
-.state-inbound,
+/* Repairs: compact red strip on top, the repair task list front and center. */
 .state-repair {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'notice notice'
+    'hero hero'
+    'tasks schedule';
+}
+
+.state-inbound {
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-areas:
@@ -252,6 +261,11 @@ const historyOpen = ref(false);
 
   .area-hero {
     min-height: 260px;
+  }
+
+  /* The repair strip stays compact so the repair tasks get the space. */
+  .state-repair .area-hero {
+    min-height: 0;
   }
 
   .area-schedule {

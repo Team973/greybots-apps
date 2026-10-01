@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import '@material/web/button/filled-button';
-import '@material/web/button/text-button';
 import { formatClock } from '@greybots/common/lib/now';
-import AppDialog from '@/components/AppDialog.vue';
 import { checkStep, listChecks, uncheckStep, type ChecklistCheck } from '@/lib/checklists/checks';
 import type { ChecklistSequence, PitRole } from '@/lib/checklists/config';
 import { activeStepIndex, evaluateStep, stepState, type StepContext } from '@/lib/checklists/smart';
@@ -18,7 +15,8 @@ import { useSessionStore } from '@/stores/session-store';
 // in its own panel, the active step's instructions and who holds each role.
 // Smart steps that don't apply (e.g. no bumper swap needed) show as skipped.
 // Finishing the last step loads the next checklist, or Robot Ready after the
-// last one. "Repairs" switches to Repair in progress from any checklist.
+// last one. "Repairs" switches straight to Repair in progress (no prompt:
+// repair tasks get added and assigned from the repair screen).
 // Renders two panels (.area-checklist and .area-step) for the Overview grid.
 const props = defineProps<{
   eventKey: string;
@@ -108,18 +106,7 @@ function undoLast() {
 // from the sequence mid-run, or one whose remaining steps were all skipped.
 const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry, props.sequence, editor()));
 
-// --- Repairs ---
-const repairOpen = ref(false);
-const repairNote = ref('');
-function openRepair() {
-  repairNote.value = '';
-  repairOpen.value = true;
-}
-const confirmRepair = () =>
-  act(async () => {
-    await startRepair(props.eventKey, props.entry, editor(), repairNote.value);
-    repairOpen.value = false;
-  });
+const startRepairs = () => act(() => startRepair(props.eventKey, props.entry, editor()));
 </script>
 
 <template>
@@ -165,7 +152,7 @@ const confirmRepair = () =>
       <button v-if="canAct" class="primary-action small" :disabled="busy" @click="continueOn">Continue</button>
     </div>
     <div v-if="canAct" class="repair-row">
-      <button class="repair-button" :disabled="busy" @click="openRepair">Repairs</button>
+      <button class="repair-button" :disabled="busy" @click="startRepairs">Repairs</button>
     </div>
     <p v-if="error" class="error-text">{{ error }}</p>
   </section>
@@ -192,15 +179,6 @@ const confirmRepair = () =>
     <RouterLink v-if="canEditSetup" to="/pit-setup" class="panel-link setup-link">Edit checklists and roles</RouterLink>
   </section>
 
-  <AppDialog :open="repairOpen" title="Start repairs" @close="repairOpen = false">
-    <p class="hint">The robot goes to Repair in progress. Afterwards you can resume {{ checklist?.name ?? 'this checklist' }} or go straight to pre-match.</p>
-    <label class="field"><span>What needs repair? (optional)</span><input v-model="repairNote" placeholder="e.g. intake belt snapped" /></label>
-    <template #actions>
-      <span class="actions-spacer"></span>
-      <md-text-button @click="repairOpen = false">Cancel</md-text-button>
-      <md-filled-button :disabled="busy" @click="confirmRepair">Start repairs</md-filled-button>
-    </template>
-  </AppDialog>
 </template>
 
 <style scoped>
@@ -376,22 +354,24 @@ const confirmRepair = () =>
   gap: 8px;
 }
 
+/* Full width of the panel, so it's easy to hit in a hurry. */
 .repair-row {
-  display: flex;
-  justify-content: flex-end;
   margin-top: auto;
   padding-top: 4px;
 }
 
 .repair-button {
-  padding: 10px 18px;
+  width: 100%;
+  padding: 16px 20px;
   border: 2px solid #c62828;
-  border-radius: 10px;
+  border-radius: 12px;
   background: transparent;
   color: #ef5350;
   font: inherit;
+  font-size: 1.2rem;
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .repair-button:hover {

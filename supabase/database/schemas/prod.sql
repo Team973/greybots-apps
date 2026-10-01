@@ -507,6 +507,7 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightTask" (
     "notes" "text",
     "sort_order" double precision DEFAULT 0 NOT NULL,
     "match_key" "text",
+    "assignee" "text",
     "started_at" timestamp with time zone,
     "started_by_name" "text",
     "completed_at" timestamp with time zone,

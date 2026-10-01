@@ -5,10 +5,16 @@ import TaskDialog from './TaskDialog.vue';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatElapsed, useNow } from '@greybots/common/lib/now';
 import type { ScheduleItem } from '@/lib/schedule/types';
-import { completeTask, listTasks, reopenTask, reorderTask, type Task } from '@/lib/tasks/tasks';
+import { usePitMembers } from '@/lib/checklists/pit-members';
+import { completeTask, createTask, listTasks, reopenTask, reorderTask, type Task } from '@/lib/tasks/tasks';
 import { useSessionStore } from '@/stores/session-store';
 
-const props = defineProps<{ eventKey: string; matches: ScheduleItem[] }>();
+// `quickAdd` shows an inline "add and assign" row (used during repairs, where
+// speed matters more than presets and notes).
+const props = withDefaults(defineProps<{ eventKey: string; matches: ScheduleItem[]; heading?: string; quickAdd?: boolean }>(), {
+  heading: 'Tasks',
+  quickAdd: false
+});
 const session = useSessionStore();
 const canEdit = computed(() => session.hasRole('member'));
 const editor = () => session.user?.name ?? null;
@@ -35,6 +41,23 @@ function meta(task: Task): string {
   return parts.join(' · ');
 }
 
+// --- Inline quick add ---
+const members = usePitMembers();
+const quickTitle = ref('');
+const quickAssignee = ref('');
+const quickError = ref<string | null>(null);
+watch(quickTitle, () => (quickError.value = null));
+async function addQuick() {
+  quickError.value = null;
+  if (!quickTitle.value.trim()) return (quickError.value = 'What needs doing?');
+  try {
+    await createTask(props.eventKey, { title: quickTitle.value, notes: null, match_key: null, assignee: quickAssignee.value || null }, editor());
+    quickTitle.value = '';
+  } catch (e) {
+    quickError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 function toggle(task: Task) {
   return task.completed_at ? reopenTask(task, editor()) : completeTask(task, editor());
 }
@@ -51,9 +74,19 @@ const dialogTask = computed(() => (dialog.value?.taskId ? tasks.value.find((t) =
 <template>
   <section class="panel tasks">
     <header class="panel-header">
-      <h2>Tasks</h2>
+      <h2>{{ heading }}</h2>
       <button v-if="canEdit" class="icon-button" aria-label="Add task" @click="dialog = { taskId: null }">+</button>
     </header>
+
+    <form v-if="quickAdd && canEdit" class="quick-add" @submit.prevent="addQuick">
+      <input v-model="quickTitle" class="quick-title" placeholder="What needs fixing?" aria-label="New task" />
+      <input v-model="quickAssignee" class="quick-assignee" list="quick-assignees" placeholder="Assign to" aria-label="Assign to" />
+      <datalist id="quick-assignees">
+        <option v-for="name in members" :key="name" :value="name" />
+      </datalist>
+      <button type="submit" class="quick-submit">Add</button>
+    </form>
+    <p v-if="quickError" class="error-text">{{ quickError }}</p>
 
     <draggable
       v-model="active"
@@ -72,6 +105,7 @@ const dialogTask = computed(() => (dialog.value?.taskId ? tasks.value.find((t) =
             <span class="title">{{ element.title }}</span>
             <span v-if="meta(element)" class="meta">{{ meta(element) }}</span>
           </button>
+          <span class="assignee-pill" :class="{ unassigned: !element.assignee }">{{ element.assignee || 'Unassigned' }}</span>
           <input type="checkbox" class="check" :checked="false" :disabled="!canEdit" :aria-label="`Complete ${element.title}`" @change="toggle(element)" />
         </li>
       </template>
@@ -87,6 +121,7 @@ const dialogTask = computed(() => (dialog.value?.taskId ? tasks.value.find((t) =
           <span class="title">{{ task.title }}</span>
           <span class="meta">{{ meta(task) }}</span>
         </button>
+        <span class="assignee-pill" :class="{ unassigned: !task.assignee }">{{ task.assignee || 'Unassigned' }}</span>
         <input type="checkbox" class="check" checked :disabled="!canEdit" :aria-label="`Reopen ${task.title}`" @change="toggle(task)" />
       </li>
     </ul>
@@ -103,6 +138,62 @@ const dialogTask = computed(() => (dialog.value?.taskId ? tasks.value.find((t) =
 </template>
 
 <style scoped>
+.quick-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-add input {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-color);
+  background: var(--background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+}
+
+.quick-title {
+  flex: 2 1 200px;
+}
+
+.quick-assignee {
+  flex: 1 1 120px;
+}
+
+.quick-submit {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #2e7d32;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assignee-pill {
+  flex: none;
+  max-width: 40%;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-color);
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignee-pill.unassigned {
+  background: transparent;
+  border: 1px dashed var(--accent-color);
+  font-weight: 400;
+  font-style: italic;
+  opacity: 0.7;
+}
+
 .task-list {
   list-style: none;
   margin: 0;

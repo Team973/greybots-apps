@@ -4,9 +4,10 @@ import { formatClock } from '@greybots/common/lib/now';
 import { prematchIndex, type ChecklistSequence } from '@/lib/checklists/config';
 import { robotStatusColors, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
 
-// Repair in progress: a red banner with how long repairs have taken, and the
-// two ways out: back to the checklist repairs interrupted (its checked steps
-// are kept) or straight to the pre-match checklist.
+// Repair in progress: a compact red strip with how long repairs have taken,
+// and the two ways out: back to the checklist repairs interrupted (its
+// checked steps are kept) or straight to the pre-match checklist. The repair
+// work itself is handed out as tasks below it.
 const props = defineProps<{
   entry: RobotStatusEntry;
   sequence: ChecklistSequence;
@@ -31,10 +32,12 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
   <section class="hero repair" :style="{ background: colors.bg, color: colors.fg }">
     <div class="hero-text">
       <h2>Repair in progress</h2>
-      <p class="elapsed">{{ elapsedMs === null ? '--:--' : formatClock(elapsedMs) }}</p>
-      <p v-if="entry.note" class="note">{{ entry.note }}</p>
-      <p v-if="fromChecklist" class="from">Interrupted {{ fromChecklist.name }}</p>
+      <p v-if="fromChecklist || entry.note" class="from">
+        <template v-if="fromChecklist">Interrupted {{ fromChecklist.name }}</template>
+        <template v-if="entry.note"> · {{ entry.note }}</template>
+      </p>
     </div>
+    <p class="elapsed" title="Time in repair">{{ elapsedMs === null ? '--:--' : formatClock(elapsedMs) }}</p>
     <div v-if="canAct" class="actions">
       <button v-if="fromChecklist" class="hero-action" :disabled="busy" @click="emit('resume', fromIndex!)">Back to {{ fromChecklist.name }}</button>
       <button v-if="showPrematch" class="hero-action" :class="{ secondary: !!fromChecklist }" :disabled="busy" @click="emit('resume', prematch!.index)">
@@ -49,52 +52,46 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
 .hero {
   position: relative;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 18px;
-  min-height: 0;
-  padding: 24px 20px 40px;
+  gap: 12px 24px;
+  padding: 16px 20px 28px;
   border-radius: 16px;
-  text-align: center;
   box-sizing: border-box;
+}
+
+.hero-text {
+  flex: 1 1 220px;
 }
 
 .hero-text h2 {
   margin: 0;
-  font-size: clamp(2rem, 4.5vw, 3.2rem);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
   line-height: 1.1;
 }
 
+.from {
+  margin: 4px 0 0;
+  opacity: 0.9;
+}
+
 .elapsed {
-  margin: 6px 0 0;
-  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
-.note {
-  margin: 10px 0 0;
-  font-size: 1.2rem;
-  font-weight: 600;
-}
-
-.from {
-  margin: 6px 0 0;
-  opacity: 0.85;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .hero-action {
-  min-width: 220px;
-  padding: 18px 24px;
+  min-width: 180px;
+  padding: 14px 20px;
   border: none;
   border-radius: 14px;
   background: #ffffff;

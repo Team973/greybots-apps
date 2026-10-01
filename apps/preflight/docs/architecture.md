@@ -175,11 +175,13 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   strictly in order (one Done button for the active step; Undo for the last
   one). Finishing a checklist loads the next, and the count-up timer resets.
   After the last checklist, the robot is Ready. Tasks stay available.
-- **Repair in progress** (red): from any checklist, "Repairs" (with an
-  optional note) stops the flow. Afterwards the pit goes back to the
-  interrupted checklist (same run, so its checked steps are kept) or straight
-  to the pre-match checklist (the one flagged pre-match on Pit setup, else the
-  last checklist).
+- **Repair in progress** (red): from any checklist, "Repairs" stops the flow
+  immediately, with no prompt. The repair screen is a compact red strip
+  (time in repair, plus the ways out) above a "Repair tasks" list with an
+  inline add-and-assign row, so repair work is handed out as tasks. Afterwards
+  the pit goes back to the interrupted checklist (same run, so its checked
+  steps are kept) or straight to the pre-match checklist (the one flagged
+  pre-match on Pit setup, else the last checklist).
 - **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
   over"), the schedule strip, and tasks. (The `CountdownTimer` component is
   in `@greybots/common` but not shown for now.)
@@ -216,7 +218,10 @@ How it's stored:
   override (and everyone sees the history) under "Status history".
 - **Tasks** (`PreflightTask`): members and above add, reorder, start, and
   check off tasks; finished tasks appear on the Schedule calendar under the
-  "Tasks" filter.
+  "Tasks" filter. Each task has an owner (`assignee`, free text), shown in
+  every task list ("Unassigned" when nobody has it). Names are suggested from
+  the pit roles roster and the kiosk crew, and anyone can claim a task with
+  "Assign to me" in its dialog.
 - **Status log order:** entries are ordered by when they were written
   (`updated_at`), not by `set_at`, the time shown to people. Testing mode or
   a drifting device clock can make a newer entry's `set_at` look older.

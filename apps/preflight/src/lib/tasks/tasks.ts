@@ -13,6 +13,8 @@ export interface Task extends SyncedRecord {
     sort_order: number;
     // Optional link to one of our matches (TBA match key).
     match_key: string | null;
+    // Pit member the task is assigned to (free text).
+    assignee: string | null;
     started_at: string | null;
     started_by_name: string | null;
     completed_at: string | null;
@@ -47,6 +49,7 @@ export interface TaskInput {
     title: string;
     notes: string | null;
     match_key: string | null;
+    assignee?: string | null;
 }
 
 export async function createTask(eventKey: string, input: TaskInput, editor: string | null): Promise<Task> {
@@ -60,6 +63,7 @@ export async function createTask(eventKey: string, input: TaskInput, editor: str
         notes: input.notes?.trim() || null,
         sort_order: last ? last.sort_order + 1 : 0,
         match_key: input.match_key,
+        assignee: input.assignee?.trim() || null,
         started_at: null,
         started_by_name: null,
         completed_at: null,
@@ -77,7 +81,7 @@ function update(task: Task, changes: Partial<Task>, editor: string | null) {
 export function updateTaskDetails(task: Task, input: TaskInput, editor: string | null) {
     const title = input.title.trim();
     if (!title) throw new Error('Title is required');
-    return update(task, { title, notes: input.notes?.trim() || null, match_key: input.match_key }, editor);
+    return update(task, { title, notes: input.notes?.trim() || null, match_key: input.match_key, assignee: input.assignee?.trim() || null }, editor);
 }
 
 export function startTask(task: Task, editor: string | null) {

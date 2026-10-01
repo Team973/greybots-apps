@@ -6,6 +6,7 @@ import '@material/web/button/text-button';
 import AppDialog from '@/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { useAutosave } from '@/lib/autosave';
+import { usePitMembers } from '@/lib/checklists/pit-members';
 import { formatTime } from '@/lib/schedule/dates';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import {
@@ -35,12 +36,14 @@ const session = useSessionStore();
 const title = ref('');
 const notes = ref('');
 const matchKey = ref('');
+const assignee = ref('');
+const members = usePitMembers();
 const error = ref<string | null>(null);
 const busy = ref(false);
 
 const isNew = computed(() => !props.task);
 const editor = () => session.user?.name ?? null;
-const input = () => ({ title: title.value, notes: notes.value, match_key: matchKey.value || null });
+const input = () => ({ title: title.value, notes: notes.value, match_key: matchKey.value || null, assignee: assignee.value || null });
 
 const autosave = useAutosave(input, (value) => updateTaskDetails(props.task!, value, editor()), {
   enabled: () => props.open && props.canEdit && !!props.task,
@@ -54,6 +57,7 @@ watch(
     title.value = props.task?.title ?? '';
     notes.value = props.task?.notes ?? '';
     matchKey.value = props.task?.match_key ?? '';
+    assignee.value = props.task?.assignee ?? '';
     error.value = null;
     autosave.reset();
   },
@@ -73,6 +77,15 @@ const progress = computed(() => {
   if (t.completed_at) parts.push(`Done ${stamp(t.completed_at, t.completed_by_name)}`);
   return parts.length ? parts.join(' · ') : 'Not started';
 });
+
+// Anyone can claim a task for themselves; saves right away.
+const me = computed(() => session.user?.name ?? null);
+const isMine = computed(() => !!me.value && assignee.value.trim() === me.value);
+async function assignToMe() {
+  if (!me.value) return;
+  assignee.value = me.value;
+  if (props.task) await autosave.flush();
+}
 
 async function close() {
   await autosave.flush();
@@ -104,6 +117,16 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
       </button>
     </div>
     <div class="form-row">
+      <label class="field">
+        <span>Assigned to</span>
+        <span class="assignee-row">
+          <input v-model="assignee" list="task-assignees" :readonly="!canEdit" placeholder="Unassigned" />
+          <button v-if="canEdit && me && !isMine" type="button" class="assign-me" @click="assignToMe">Assign to me</button>
+        </span>
+        <datalist id="task-assignees">
+          <option v-for="name in members" :key="name" :value="name" />
+        </datalist>
+      </label>
       <label class="field">
         <span>Match (optional)</span>
         <select v-model="matchKey" :disabled="!canEdit">
@@ -161,6 +184,30 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
 
 .preset:hover {
   border-color: var(--header-color);
+}
+
+.assignee-row {
+  display: flex;
+  gap: 6px;
+}
+
+.assignee-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.assign-me {
+  flex: none;
+  padding: 0 10px;
+  border: 1px solid #2e7d32;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .progress {
