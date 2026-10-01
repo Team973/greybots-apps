@@ -21,10 +21,11 @@ import { defaultMatchPrep, getMatchPrep, type MatchPrep } from '@/lib/schedule/t
 import type { ActiveEvent, ScheduleItem } from '@/lib/schedule/types';
 import { buildGenericChecklists, buildMatchScripts, type ScriptMatch } from '@/lib/script/event-script';
 
-// Event script (leads and admins): the rest of the event on paper. For each
-// upcoming match, a sheet for getting ready (its times, alliance, and
-// pre-match checklists worked out for that match) and a sheet for what
-// follows it (post-match), then a blank copy of every checklist. "Print" opens the
+// Event script (leads and admins): the rest of the event on paper, one
+// checklist per sheet so each can be handed to whoever is doing it. For each
+// upcoming match, a sheet per pre-match checklist (with the match's times
+// and alliance, worked out for that match) and a sheet per post-match
+// checklist, then a blank copy of every checklist. "Print" opens the
 // browser's print dialog, which prints it or saves it as a PDF; only the
 // script itself prints. Built entirely from what's on the device, so it
 // works offline.
@@ -74,6 +75,10 @@ function bumperLine(match: ScriptMatch): string {
   return `${to.toUpperCase()} (check what's on the robot)`;
 }
 
+// The sheets printed before a match: one per pre-match checklist, or a single
+// sheet with just the match's facts when there are none.
+const beforeSheets = (match: ScriptMatch) => (match.before.length ? match.before : [null]);
+
 const print = () => window.print();
 </script>
 
@@ -105,10 +110,11 @@ const print = () => window.print();
     <!-- Everything below is the paper. Always black on white. -->
     <div class="paper">
       <template v-if="includeMatches">
-        <!-- Two sheets per match, so it prints as the front and back of one
-             page: getting ready for the match, then what follows it. -->
+        <!-- One checklist per sheet. A match's pre-match checklists come first,
+             each with the match's times and alliance, then its post-match
+             ones. (A match with no pre-match checklist still gets its facts.) -->
         <template v-for="match in matchScripts" :key="match.key">
-        <article class="sheet">
+        <article v-for="(checklist, i) in beforeSheets(match)" :key="`b${i}`" class="sheet">
           <header class="sheet-head">
             <div>
               <p class="kicker">{{ activeEvent?.name }} · Team {{ activeEvent?.team_number }} · before the match</p>
@@ -128,13 +134,13 @@ const print = () => window.print();
             <strong>With:</strong> {{ match.partners.join(', ') || '—' }} &nbsp; <strong>Against:</strong> {{ match.opponents.join(', ') || '—' }}
           </p>
 
-          <ScriptChecklistBlock v-for="(checklist, i) in match.before" :key="`b${i}`" :checklist="checklist" :show-instructions="includeInstructions" />
+          <ScriptChecklistBlock v-if="checklist" :checklist="checklist" :show-instructions="includeInstructions" />
 
           <footer class="sheet-foot">
             Times are as of {{ printedAt }} and move with the field. Notes: <span class="foot-line"></span>
           </footer>
         </article>
-        <article v-if="match.after.length" class="sheet">
+        <article v-for="(checklist, i) in match.after" :key="`a${i}`" class="sheet">
           <header class="sheet-head">
             <div>
               <p class="kicker">{{ activeEvent?.name }} · Team {{ activeEvent?.team_number }} · after the match</p>
@@ -143,7 +149,7 @@ const print = () => window.print();
             <div class="alliance" :class="match.alliance ?? 'unknown'">{{ match.alliance ? match.alliance.toUpperCase() : 'TBD' }}</div>
           </header>
           <p class="fill-in">Robot back in the pit at: <span class="fill short"></span> Result: <span class="fill"></span></p>
-          <ScriptChecklistBlock v-for="(checklist, i) in match.after" :key="`a${i}`" :checklist="checklist" :show-instructions="includeInstructions" />
+          <ScriptChecklistBlock :checklist="checklist" :show-instructions="includeInstructions" />
           <footer class="sheet-foot">Notes: <span class="foot-line"></span></footer>
         </article>
         </template>

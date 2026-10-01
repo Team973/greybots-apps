@@ -416,14 +416,16 @@ view of the whole event, built on FullCalendar's time grid.
 `/script` (leads and admins; `src/lib/script/event-script.ts`) puts the
 rest of the event on paper, for people who'd rather work from a printout.
 
+- **One checklist per sheet**, so each can be handed to whoever is doing it.
 - **Match pages:** for each match of ours that hasn't started yet (on the app
-  clock), a sheet for before the match and a sheet for after it, so one match
-  prints as the front and back of a page. The first has the match time, when to start prep and when to queue,
+  clock), a sheet per pre-match checklist and a sheet per post-match one.
+  With one of each, a match prints as the front and back of a page. The
+  pre-match sheets have the match time, when to start prep and when to queue,
   our alliance, partners and opponents, and the pit checklists for that match
   with the smart parts already worked out: whether to swap bumpers and from
-  which color to which, and which battery is next in the rotation. Pre-match
-  checklists go on the first sheet and post-match ones on the second, by the
-  same rule the Overview uses to tie a checklist to a match.
+  which color to which, and which battery is next in the rotation. Which
+  checklists are pre-match and which are post-match follows the same rule the
+  Overview uses to tie a checklist to a match.
 - **Blank checklists:** one page per checklist (the pit sequence, the practice
   field checklist, and the ad-hoc ones) with nothing filled in and the
   conditions spelled out, for playoffs and anything else that can't be known
