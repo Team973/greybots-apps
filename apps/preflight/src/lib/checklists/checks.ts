@@ -1,4 +1,5 @@
 import { db } from '@/lib/db';
+import { clockNow } from '@greybots/common/lib/now';
 import { patchRecord, saveRecord } from '@/lib/sync/local-repo';
 import type { SyncedRecord } from '@/lib/sync/types';
 import { uuidFromName } from '@/lib/uuid';
@@ -55,7 +56,7 @@ export async function checkStep(
         checklist_name: checklist.name,
         step_id: step.id,
         step_title: step.title,
-        completed_at: new Date().toISOString(),
+        completed_at: new Date(clockNow()).toISOString(),
         completed_by_name: editor,
         updated_by_name: editor
     });

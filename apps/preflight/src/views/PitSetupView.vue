@@ -12,6 +12,8 @@ import {
   newStep,
   saveChecklistSequence,
   savePitRoles,
+  stepConditionLabels,
+  type StepCondition,
   type ChecklistDef,
   type ChecklistSequence,
   type PitRole
@@ -111,6 +113,13 @@ function removeChecklist(index: number) {
   sequence.value.checklists.splice(index, 1);
 }
 
+// Only one checklist can be the pre-match checklist.
+function setPrematch(index: number, on: boolean) {
+  sequence.value.checklists.forEach((c, i) => (c.prematch = on && i === index));
+}
+
+const conditions = Object.entries(stepConditionLabels) as [StepCondition, string][];
+
 function toggleRole(checklist: ChecklistDef, stepIndex: number, roleId: string) {
   const step = checklist.steps[stepIndex];
   step.role_ids = step.role_ids.includes(roleId) ? step.role_ids.filter((id) => id !== roleId) : [...step.role_ids, roleId];
@@ -173,6 +182,10 @@ function toggleRole(checklist: ChecklistDef, stepIndex: number, roleId: string) 
               <button class="icon-small" aria-label="Delete checklist" @click="removeChecklist(ci)">✕</button>
             </template>
           </div>
+          <label class="prematch-flag" :title="'After repairs, the pit can jump straight to this checklist'">
+            <input type="checkbox" :checked="!!checklist.prematch" :disabled="!canEdit" @change="setPrematch(ci, ($event.target as HTMLInputElement).checked)" />
+            Pre-match checklist (repairs can jump here)
+          </label>
 
           <ol class="steps">
             <li v-for="(step, si) in checklist.steps" :key="step.id" class="step">
@@ -186,6 +199,13 @@ function toggleRole(checklist: ChecklistDef, stepIndex: number, roleId: string) 
                 </template>
               </div>
               <textarea v-model="step.instructions" rows="2" :readonly="!canEdit" placeholder="Instructions" aria-label="Instructions"></textarea>
+              <label class="condition">
+                <span>When</span>
+                <select v-model="step.condition" :disabled="!canEdit">
+                  <option :value="null">Always</option>
+                  <option v-for="[value, label] in conditions" :key="value" :value="value">{{ label }}</option>
+                </select>
+              </label>
               <div v-if="roles.length" class="role-chips" role="group" aria-label="Roles for this step">
                 <button
                   v-for="role in roles"
@@ -326,6 +346,36 @@ input.checklist-name {
   width: 100%;
   resize: vertical;
   font-size: 0.9rem;
+}
+
+.prematch-flag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.condition {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
+.condition span {
+  opacity: 0.7;
+}
+
+.condition select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-color);
+  background: var(--tile-background-color);
+  color: var(--primary-text-color);
+  font: inherit;
 }
 
 .role-chips {

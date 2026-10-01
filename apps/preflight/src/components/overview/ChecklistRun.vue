@@ -1,24 +1,32 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import '@material/web/button/filled-button';
+import '@material/web/button/text-button';
 import { formatClock } from '@greybots/common/lib/now';
-import { checkStep, isStepDone, listChecks, nextStepIndex, uncheckStep, type ChecklistCheck } from '@/lib/checklists/checks';
+import AppDialog from '@/components/AppDialog.vue';
+import { checkStep, listChecks, uncheckStep, type ChecklistCheck } from '@/lib/checklists/checks';
 import type { ChecklistSequence, PitRole } from '@/lib/checklists/config';
+import { activeStepIndex, evaluateStep, stepState, type StepContext } from '@/lib/checklists/smart';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatTime } from '@/lib/schedule/dates';
-import { advanceChecklist, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
+import type { ScheduleItem } from '@/lib/schedule/types';
+import { advanceChecklist, startRepair, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
 import { useSessionStore } from '@/stores/session-store';
 
 // The Pending state: the active checklist (steps done strictly in order) and,
 // in its own panel, the active step's instructions and who holds each role.
+// Smart steps that don't apply (e.g. no bumper swap needed) show as skipped.
 // Finishing the last step loads the next checklist, or Robot Ready after the
-// last one. Renders two panels (.area-checklist and .area-step) for the
-// Overview grid to place.
+// last one. "Repairs" switches to Repair in progress from any checklist.
+// Renders two panels (.area-checklist and .area-step) for the Overview grid.
 const props = defineProps<{
   eventKey: string;
   entry: RobotStatusEntry;
   sequence: ChecklistSequence;
   roles: PitRole[];
+  matches: ScheduleItem[];
+  now: number;
   elapsedMs: number | null;
 }>();
 const session = useSessionStore();
@@ -28,12 +36,28 @@ const editor = () => session.user?.name ?? null;
 
 const runId = computed(() => props.entry.run_id ?? '');
 const checks = useLiveQuery<ChecklistCheck[]>(() => listChecks(props.eventKey, runId.value), [], runId);
+const ctx = computed<StepContext>(() => ({ matches: props.matches, now: props.now }));
 
 const index = computed(() => props.entry.checklist_index ?? 0);
 const checklist = computed(() => props.sequence.checklists[index.value] ?? null);
-const nextIndex = computed(() => (checklist.value ? nextStepIndex(checks.value, checklist.value) : 0));
+const states = computed(() => (checklist.value ? checklist.value.steps.map((s) => stepState(checks.value, checklist.value!, s, ctx.value)) : []));
+const nextIndex = computed(() => (checklist.value ? activeStepIndex(checks.value, checklist.value, ctx.value) : 0));
 const activeStep = computed(() => checklist.value?.steps[nextIndex.value] ?? null);
+const activeNote = computed(() => (activeStep.value ? evaluateStep(activeStep.value, ctx.value).note : null));
 const total = computed(() => props.sequence.checklists.length);
+const isComplete = computed(() => !!checklist.value && checklist.value.steps.length > 0 && nextIndex.value >= checklist.value.steps.length);
+// The last step that was actually done (not skipped), for Undo.
+const undoIndex = computed(() => {
+  for (let i = nextIndex.value - 1; i >= 0; i--) if (states.value[i] === 'done') return i;
+  return -1;
+});
+
+// What happens after the active step: counts only steps still to do.
+const doneLabel = computed(() => {
+  const remaining = states.value.slice(nextIndex.value + 1).filter((st) => st === 'todo').length;
+  if (remaining > 0) return 'Done · next step';
+  return index.value + 1 < total.value ? 'Done · next checklist' : 'Done · robot ready';
+});
 
 const rolesById = computed(() => new Map(props.roles.map((r) => [r.id, r])));
 const activeRoles = computed(() =>
@@ -59,7 +83,7 @@ async function act(action: () => Promise<unknown>) {
   }
 }
 
-// Complete the active step; after the checklist's last step, move on.
+// Complete the active step; once nothing is left to do, move on.
 function completeActive() {
   const list = checklist.value;
   const step = activeStep.value;
@@ -67,23 +91,35 @@ function completeActive() {
   return act(async () => {
     await checkStep(props.eventKey, runId.value, list, step, editor());
     const fresh = await listChecks(props.eventKey, runId.value);
-    if (nextStepIndex(fresh, list) >= list.steps.length) {
+    if (activeStepIndex(fresh, list, ctx.value) >= list.steps.length) {
       await advanceChecklist(props.eventKey, props.entry, props.sequence, editor());
     }
   });
 }
 
-// Undo the most recently completed step (steps stay in order).
 function undoLast() {
   const list = checklist.value;
-  const step = list?.steps[nextIndex.value - 1];
+  const step = list?.steps[undoIndex.value];
   if (!list || !step) return;
   return act(() => uncheckStep(runId.value, list, step, editor()));
 }
 
-// A checklist with no steps (or removed from the sequence mid-run) just
-// needs a nudge onward.
+// Moves on when nothing is left to click: an empty checklist, one removed
+// from the sequence mid-run, or one whose remaining steps were all skipped.
 const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry, props.sequence, editor()));
+
+// --- Repairs ---
+const repairOpen = ref(false);
+const repairNote = ref('');
+function openRepair() {
+  repairNote.value = '';
+  repairOpen.value = true;
+}
+const confirmRepair = () =>
+  act(async () => {
+    await startRepair(props.eventKey, props.entry, editor(), repairNote.value);
+    repairOpen.value = false;
+  });
 </script>
 
 <template>
@@ -96,7 +132,7 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
         <p v-if="checklist" class="eyebrow">Checklist {{ index + 1 }} of {{ total }}</p>
         <h2>{{ checklist?.name ?? entry.pending_label ?? 'Checklist' }}</h2>
       </div>
-      <div class="elapsed" :title="'Time in this checklist'">
+      <div class="elapsed" title="Time in this checklist">
         <span class="elapsed-value">{{ elapsedMs === null ? '--:--' : formatClock(elapsedMs) }}</span>
         <span class="elapsed-label">in this checklist</span>
       </div>
@@ -108,22 +144,28 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
           v-for="(step, i) in checklist.steps"
           :key="step.id"
           class="step"
-          :class="{ done: isStepDone(checks, checklist.id, step.id), active: i === nextIndex, upcoming: i > nextIndex }"
+          :class="[states[i], { active: i === nextIndex, upcoming: i > nextIndex && states[i] === 'todo' }]"
         >
-          <span class="marker" aria-hidden="true">{{ isStepDone(checks, checklist.id, step.id) ? '✓' : i + 1 }}</span>
+          <span class="marker" aria-hidden="true">{{ states[i] === 'done' ? '✓' : states[i] === 'skipped' ? '–' : i + 1 }}</span>
           <span class="step-text">
-            <span class="step-title">{{ step.title }}</span>
-            <span v-if="checkFor(step.id)" class="step-meta">
+            <span class="step-title">{{ step.title }}<span v-if="step.condition" class="smart-badge">Smart</span></span>
+            <span v-if="states[i] === 'done' && checkFor(step.id)" class="step-meta">
               {{ formatTime(checkFor(step.id)!.completed_at!) }}<template v-if="checkFor(step.id)!.completed_by_name"> · {{ checkFor(step.id)!.completed_by_name }}</template>
             </span>
+            <span v-else-if="states[i] === 'skipped'" class="step-meta">Skipped · {{ evaluateStep(step, ctx).note }}</span>
           </span>
-          <button v-if="canAct && i === nextIndex - 1" class="undo" :disabled="busy" @click="undoLast">Undo</button>
+          <button v-if="canAct && i === undoIndex" class="undo" :disabled="busy" @click="undoLast">Undo</button>
         </li>
       </ol>
     </template>
-    <div v-else class="empty">
-      <p class="hint">{{ checklist ? 'This checklist has no steps.' : "This checklist isn't in the sequence anymore." }}</p>
-      <button v-if="canAct" class="primary-action" :disabled="busy" @click="continueOn">Continue</button>
+    <div v-if="!checklist || !checklist.steps.length || isComplete" class="empty">
+      <p class="hint">
+        {{ !checklist ? "This checklist isn't in the sequence anymore." : !checklist.steps.length ? 'This checklist has no steps.' : 'Everything here is done.' }}
+      </p>
+      <button v-if="canAct" class="primary-action small" :disabled="busy" @click="continueOn">Continue</button>
+    </div>
+    <div v-if="canAct" class="repair-row">
+      <button class="repair-button" :disabled="busy" @click="openRepair">Repairs</button>
     </div>
     <p v-if="error" class="error-text">{{ error }}</p>
   </section>
@@ -132,6 +174,7 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
     <template v-if="activeStep">
       <p class="eyebrow">Step {{ nextIndex + 1 }} of {{ checklist!.steps.length }}</p>
       <h2 class="active-title">{{ activeStep.title }}</h2>
+      <p v-if="activeNote" class="smart-note">{{ activeNote }}</p>
       <p v-if="activeStep.instructions" class="instructions">{{ activeStep.instructions }}</p>
       <div v-if="activeRoles.length" class="roles">
         <h3>Who</h3>
@@ -143,13 +186,21 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
         </ul>
       </div>
       <span class="grow"></span>
-      <button v-if="canAct" class="primary-action" :disabled="busy" @click="completeActive">
-        {{ nextIndex === checklist!.steps.length - 1 ? (index + 1 < total ? 'Done · next checklist' : 'Done · robot ready') : 'Done · next step' }}
-      </button>
+      <button v-if="canAct" class="primary-action" :disabled="busy" @click="completeActive">{{ doneLabel }}</button>
     </template>
-    <p v-else class="hint">Waiting for the next checklist…</p>
+    <p v-else class="hint">Nothing left in this checklist.</p>
     <RouterLink v-if="canEditSetup" to="/pit-setup" class="panel-link setup-link">Edit checklists and roles</RouterLink>
   </section>
+
+  <AppDialog :open="repairOpen" title="Start repairs" @close="repairOpen = false">
+    <p class="hint">The robot goes to Repair in progress. Afterwards you can resume {{ checklist?.name ?? 'this checklist' }} or go straight to pre-match.</p>
+    <label class="field"><span>What needs repair? (optional)</span><input v-model="repairNote" placeholder="e.g. intake belt snapped" /></label>
+    <template #actions>
+      <span class="actions-spacer"></span>
+      <md-text-button @click="repairOpen = false">Cancel</md-text-button>
+      <md-filled-button :disabled="busy" @click="confirmRepair">Start repairs</md-filled-button>
+    </template>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -250,6 +301,16 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
   opacity: 0.5;
 }
 
+/* Smart step that doesn't apply: checked off automatically, grayed out. */
+.step.skipped {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.step.skipped .step-title {
+  text-decoration: line-through;
+}
+
 .marker {
   display: inline-flex;
   align-items: center;
@@ -280,6 +341,18 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
   opacity: 0.7;
 }
 
+.smart-badge {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  opacity: 0.75;
+}
+
 .step-meta {
   font-size: 0.75rem;
   opacity: 0.65;
@@ -303,6 +376,28 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
   gap: 8px;
 }
 
+.repair-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.repair-button {
+  padding: 10px 18px;
+  border: 2px solid #c62828;
+  border-radius: 10px;
+  background: transparent;
+  color: #ef5350;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.repair-button:hover {
+  background: rgba(198, 40, 40, 0.12);
+}
+
 .area-step {
   gap: 12px;
 }
@@ -311,6 +406,15 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
   margin: 0;
   font-size: clamp(1.5rem, 2.6vw, 2.2rem);
   line-height: 1.15;
+}
+
+.smart-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 4px solid #ffc107;
+  background: var(--background-color);
+  font-weight: 600;
 }
 
 .instructions {
@@ -375,6 +479,11 @@ const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry,
   font-weight: 700;
   cursor: pointer;
   touch-action: manipulation;
+}
+
+.primary-action.small {
+  padding: 10px 18px;
+  font-size: 1rem;
 }
 
 .primary-action:disabled {

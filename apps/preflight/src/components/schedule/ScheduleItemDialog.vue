@@ -5,6 +5,7 @@ import '@material/web/button/outlined-button';
 import '@material/web/button/text-button';
 import AppDialog from '@/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
+import { clockNow } from '@greybots/common/lib/now';
 import { useAutosave } from '@/lib/autosave';
 import { formatTime, toLocalInput } from '@/lib/schedule/dates';
 import { deleteScheduleItem, saveCustomEvent, saveMatchNotes, validateCustomEvent } from '@/lib/schedule/schedule-repo';
@@ -70,8 +71,8 @@ watch(
     const source = props.item;
     title.value = source?.title ?? '';
     category.value = source?.category ?? 'event';
-    start.value = toLocalInput(source?.start_at ?? props.draft?.start ?? new Date().toISOString());
-    end.value = toLocalInput(source?.end_at ?? props.draft?.end ?? new Date(Date.now() + 3_600_000).toISOString());
+    start.value = toLocalInput(source?.start_at ?? props.draft?.start ?? new Date(clockNow()).toISOString());
+    end.value = toLocalInput(source?.end_at ?? props.draft?.end ?? new Date(clockNow() + 3_600_000).toISOString());
     notes.value = source?.notes ?? '';
     error.value = null;
     autosave.reset();

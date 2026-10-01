@@ -5,6 +5,7 @@ import '@material/web/button/outlined-button';
 import EventSettingsDialog from '@/components/schedule/EventSettingsDialog.vue';
 import ScheduleCalendar from '@/components/schedule/ScheduleCalendar.vue';
 import ScheduleItemDialog from '@/components/schedule/ScheduleItemDialog.vue';
+import { clockNow } from '@greybots/common/lib/now';
 import { tbaAutoImportMs } from '@/lib/constants';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatDateRange, isDifferentTimezone } from '@/lib/schedule/dates';
@@ -134,7 +135,7 @@ function onSelect(range: { start: string; end: string }) {
 }
 
 function newEvent() {
-  const start = new Date();
+  const start = new Date(clockNow());
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
   itemDialog.value = { itemId: null, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
 }

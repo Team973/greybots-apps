@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router';
 import FullCalendar from '@fullcalendar/vue3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { CalendarOptions, EventClickArg, EventInput } from '@fullcalendar/core';
+import { clockNow } from '@greybots/common/lib/now';
 import ScheduleItemDialog from '@/components/schedule/ScheduleItemDialog.vue';
 import { scheduleItemColor, type ScheduleItem } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
@@ -25,7 +26,7 @@ const events = computed<EventInput[]>(() =>
 );
 
 function scrollTime() {
-  const hour = Math.max(new Date().getHours() - 1, 0);
+  const hour = Math.max(new Date(clockNow()).getHours() - 1, 0);
   return `${String(hour).padStart(2, '0')}:00:00`;
 }
 
@@ -41,6 +42,8 @@ const options = computed<CalendarOptions>(() => ({
   dayHeaders: false,
   allDaySlot: false,
   nowIndicator: true,
+  // Follows the app clock (which testing mode can shift).
+  now: () => new Date(clockNow()),
   height: '100%',
   slotDuration: '00:30:00',
   scrollTime: scrollTime(),
@@ -76,8 +79,10 @@ const options = computed<CalendarOptions>(() => ({
 
 <style scoped>
 .strip {
+  /* Fill the panel, no more: the panel's grid area sets the height. */
   flex: 1;
-  min-height: 320px;
+  min-height: 0;
+  overflow: hidden;
   color-scheme: light dark;
 
   --fc-border-color: rgba(128, 128, 128, 0.35);

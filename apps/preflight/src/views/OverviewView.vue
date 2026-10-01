@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import CountdownTimer from '@greybots/common/components/CountdownTimer.vue';
 import ChecklistRun from '@/components/overview/ChecklistRun.vue';
+import RepairPanel from '@/components/overview/RepairPanel.vue';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
 import StatusHero from '@/components/overview/StatusHero.vue';
 import RobotStatusDialog from '@/components/robot-status/RobotStatusDialog.vue';
 import TaskList from '@/components/tasks/TaskList.vue';
 import { useLiveQuery } from '@/lib/live-query';
-import { markDeparted, markInbound, robotArrived } from '@/lib/robot-status/robot-status';
+import { markDeparted, markInbound, resumeChecklist, robotArrived } from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
 import type { ActiveEvent, ScheduleItem } from '@/lib/schedule/types';
@@ -18,7 +18,8 @@ import { useSessionStore } from '@/stores/session-store';
 // robot's status:
 //   Inbound  - a big "Robot arrived" button
 //   Pending  - the active checklist and its active step (tasks still on hand)
-//   Ready    - schedule, tasks, and timer, with "Robot departed"
+//   Repair   - red banner; resume the interrupted checklist or go to pre-match
+//   Ready    - schedule and tasks, with "Robot departed"
 //   Away     - same, with "Match over" (also automatic when the match ends)
 const session = useSessionStore();
 const isMember = computed(() => session.hasRole('member'));
@@ -37,9 +38,6 @@ const status = computed(() => flow.effective.value.status);
 
 // The match the robot is heading to: the first one not yet over.
 const departingFor = computed(() => matches.value.find((m) => Date.parse(m.end_at) > flow.now.value) ?? null);
-// The timer counts down to the next match that hasn't started.
-const nextMatch = computed(() => matches.value.find((m) => Date.parse(m.start_at) > flow.now.value) ?? null);
-const timerTarget = computed(() => (nextMatch.value ? { label: nextMatch.value.title, at: nextMatch.value.start_at } : null));
 
 const busy = ref(false);
 const actionError = ref<string | null>(null);
@@ -57,6 +55,8 @@ async function act(action: () => Promise<unknown>) {
 const onArrived = () => act(() => robotArrived(eventKey.value, flow.sequence.value, editor()));
 const onDeparted = () => act(() => markDeparted(eventKey.value, departingFor.value?.match_key ?? null, editor()));
 const onMatchOver = () => act(() => markInbound(eventKey.value, editor()));
+const onResume = (index: number) =>
+  act(() => resumeChecklist(eventKey.value, flow.latest.value!, index, flow.sequence.value, editor()));
 
 const historyOpen = ref(false);
 </script>
@@ -90,9 +90,26 @@ const historyOpen = ref(false);
         :entry="flow.latest.value"
         :sequence="flow.sequence.value"
         :roles="flow.roles.value"
+        :matches="matches"
+        :now="flow.now.value"
         :elapsed-ms="flow.elapsedMs.value"
       />
       <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
+    </template>
+
+    <template v-else-if="status === 'repair' && flow.latest.value">
+      <RepairPanel
+        class="area-hero"
+        :entry="flow.latest.value"
+        :sequence="flow.sequence.value"
+        :elapsed-ms="flow.elapsedMs.value"
+        :can-act="isMember"
+        :busy="busy"
+        @resume="onResume"
+        @history="historyOpen = true"
+      />
+      <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
+      <ScheduleStrip class="area-schedule" :event-key="eventKey" :items="items" />
     </template>
 
     <template v-else>
@@ -108,13 +125,6 @@ const historyOpen = ref(false);
         @departed="onDeparted"
         @match-over="onMatchOver"
         @history="historyOpen = true"
-      />
-      <CountdownTimer
-        v-if="status !== 'inbound'"
-        class="panel area-timer"
-        :target="timerTarget"
-        target-button-label="Next match"
-        storage-key="preflight_timer"
       />
       <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
       <ScheduleStrip class="area-schedule" :event-key="eventKey" :items="items" />
@@ -148,14 +158,14 @@ const historyOpen = ref(false);
 .area-notice { grid-area: notice; margin: 0; }
 .area-bar { grid-area: bar; }
 .area-hero { grid-area: hero; }
-.area-timer { grid-area: timer; }
 .area-tasks { grid-area: tasks; overflow-y: auto; }
 .area-schedule { grid-area: schedule; }
 .overview :deep(.area-checklist) { grid-area: checklist; }
 .overview :deep(.area-step) { grid-area: step; }
 
 /* Pit laptop / big screen. Empty "notice" rows collapse to nothing. */
-.state-inbound {
+.state-inbound,
+.state-repair {
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-areas:
@@ -175,12 +185,12 @@ const historyOpen = ref(false);
 
 .state-ready,
 .state-away {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas:
-    'notice notice notice'
-    'hero hero timer'
-    'schedule tasks tasks';
+    'notice notice'
+    'hero hero'
+    'schedule tasks';
 }
 
 .pending-bar {
@@ -216,7 +226,8 @@ const historyOpen = ref(false);
     grid-template-rows: none;
   }
 
-  .state-inbound {
+  .state-inbound,
+  .state-repair {
     grid-template-areas:
       'notice notice'
       'hero hero'
@@ -235,7 +246,7 @@ const historyOpen = ref(false);
   .state-away {
     grid-template-areas:
       'notice notice'
-      'hero timer'
+      'hero hero'
       'tasks schedule';
   }
 
@@ -254,7 +265,8 @@ const historyOpen = ref(false);
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .state-inbound {
+  .state-inbound,
+  .state-repair {
     grid-template-areas: 'notice' 'hero' 'tasks' 'schedule';
   }
 
@@ -264,7 +276,7 @@ const historyOpen = ref(false);
 
   .state-ready,
   .state-away {
-    grid-template-areas: 'notice' 'hero' 'timer' 'tasks' 'schedule';
+    grid-template-areas: 'notice' 'hero' 'tasks' 'schedule';
   }
 
   .area-schedule {

@@ -162,7 +162,10 @@ status, which moves through a fixed cycle:
 
 ```
 Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
-   ^                                                            |
+   ^                          |        ^                         |
+   |                     (Repairs)  (back / pre-match)           |
+   |                          v        |                         |
+   |                       Repair in progress                    |
    +--(Match over, or automatic when the match ends)-- Away <--(Robot departed)
 ```
 
@@ -172,8 +175,21 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   strictly in order (one Done button for the active step; Undo for the last
   one). Finishing a checklist loads the next, and the count-up timer resets.
   After the last checklist, the robot is Ready. Tasks stay available.
+- **Repair in progress** (red): from any checklist, "Repairs" (with an
+  optional note) stops the flow. Afterwards the pit goes back to the
+  interrupted checklist (same run, so its checked steps are kept) or straight
+  to the pre-match checklist (the one flagged pre-match on Pit setup, else the
+  last checklist).
 - **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
-  over"), the countdown timer, the schedule strip, and tasks.
+  over"), the schedule strip, and tasks. (The `CountdownTimer` component is
+  in `@greybots/common` but not shown for now.)
+- **Smart steps** (`src/lib/checklists/smart.ts`): a step can have a
+  condition. "Swap bumpers" (`bumper_swap`) compares our alliance in the last
+  match played with the next match on the TBA schedule. When the color
+  doesn't change, the step is checked off as *skipped* (grayed out, with the
+  reason) and counts as complete. Skips are computed, not stored, so they
+  follow schedule changes; when the schedule can't tell (e.g. before the
+  first match), the step stays a normal step.
 
 How it's stored:
 
@@ -201,8 +217,21 @@ How it's stored:
 - **Tasks** (`PreflightTask`): members and above add, reorder, start, and
   check off tasks; finished tasks appear on the Schedule calendar under the
   "Tasks" filter.
-- **Timer:** the shared `CountdownTimer` from `@greybots/common`, counting
-  down to the next match.
+- **Status log order:** entries are ordered by when they were written
+  (`updated_at`), not by `set_at`, the time shown to people. Testing mode or
+  a drifting device clock can make a newer entry's `set_at` look older.
+
+### Testing mode (admins)
+
+Settings → Testing mode lets an admin pretend it's a different date and
+time on that device, e.g. to replay an event day that's over and check the
+schedule-driven features. The clock keeps ticking from the pretend time, and
+an orange strip shows while it's shifted. Everything user-facing reads the
+app clock (`clockNow()` / `useNow()` in `@greybots/common/lib/now`): the
+now-lines, automatic Inbound, smart steps, and recorded times (status
+changes, checked steps, task start and done). Sync bookkeeping
+(`updated_at`, `synced_at`) always uses real time. Data recorded in testing
+mode carries pretend times, so test on a test event.
 
 ## Schedule
 

@@ -46,7 +46,7 @@ watch(
   { immediate: true }
 );
 
-const optionLabel = (s: RobotStatus) => (s === 'pending' ? 'Restart checklists' : robotStatusLabels[s]);
+const optionLabel = (s: RobotStatus) => (s === 'pending' ? 'Restart checklists' : s === 'repair' ? 'Repair' : robotStatusLabels[s]);
 
 async function save() {
   error.value = null;
@@ -113,14 +113,8 @@ async function save() {
 <style scoped>
 .status-options {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 6px;
-}
-
-@media (max-width: 420px) {
-  .status-options {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 
 .status-option {

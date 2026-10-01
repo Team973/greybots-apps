@@ -1,3 +1,4 @@
+import { clockNow } from '@greybots/common/lib/now';
 import { db } from '@/lib/db';
 import type { ChecklistSequence } from '@/lib/checklists/config';
 import type { ScheduleItem } from '@/lib/schedule/types';
@@ -9,13 +10,16 @@ export const robotStatusTable = 'robotStatus';
 // The pit flow (issues #82, #84, #86):
 //   Inbound (match over) -> Robot arrived -> Pending checklist 1..N
 //   -> Robot Ready -> Robot departed -> Away -> (match ends) -> Inbound
-export type RobotStatus = 'inbound' | 'pending' | 'ready' | 'away';
+// From any checklist, "Repairs" switches to Repair in progress, which then
+// resumes that checklist or jumps to the pre-match checklist.
+export type RobotStatus = 'inbound' | 'pending' | 'repair' | 'ready' | 'away';
 
-export const robotStatuses: RobotStatus[] = ['inbound', 'pending', 'ready', 'away'];
+export const robotStatuses: RobotStatus[] = ['inbound', 'pending', 'repair', 'ready', 'away'];
 
 export const robotStatusLabels: Record<RobotStatus, string> = {
     inbound: 'Inbound',
     pending: 'Pending',
+    repair: 'Repair in progress',
     ready: 'Robot Ready',
     away: 'Away'
 };
@@ -24,6 +28,7 @@ export const robotStatusLabels: Record<RobotStatus, string> = {
 export const robotStatusColors: Record<RobotStatus, { bg: string; fg: string }> = {
     inbound: { bg: '#6d4fb3', fg: '#ffffff' },
     pending: { bg: '#ffc107', fg: '#1a1a1a' },
+    repair: { bg: '#c62828', fg: '#ffffff' },
     ready: { bg: '#2e7d32', fg: '#ffffff' },
     away: { bg: '#1565c0', fg: '#ffffff' }
 };
@@ -33,14 +38,16 @@ export const robotStatusColors: Record<RobotStatus, { bg: string; fg: string }> 
 export interface RobotStatusEntry extends SyncedRecord {
     event_key: string;
     status: RobotStatus;
-    // The active checklist's name (status 'pending'), for display/history.
+    // The active checklist's name (status 'pending'), or the checklist repairs
+    // interrupted (status 'repair'), for display/history.
     pending_label: string | null;
     note: string | null;
     set_at: string;
     set_by_name: string | null;
     // The pit visit this entry belongs to (from arrival onward).
     run_id: string | null;
-    // Active checklist in the sequence (status 'pending'), 0-based.
+    // Active checklist in the sequence (status 'pending'), or the one repairs
+    // interrupted (status 'repair'), 0-based.
     checklist_index: number | null;
     // The match the robot left for (status 'away').
     match_key: string | null;
@@ -53,7 +60,10 @@ function normalize(entry: RobotStatusEntry): RobotStatusEntry {
     return (entry.status as string) === 'in_pit' ? { ...entry, status: 'inbound' } : entry;
 }
 
-// Newest first.
+// Newest first, by when each entry was actually written (updated_at, which
+// never changes for these append-only rows). Not by set_at: that's the time
+// shown to people, and testing mode or a device's drifting clock can make a
+// newer entry's set_at look older than the one before it.
 export async function listStatusHistory(eventKey: string): Promise<RobotStatusEntry[]> {
     const entries = await db
         .syncedTable<RobotStatusEntry>(robotStatusTable)
@@ -61,12 +71,15 @@ export async function listStatusHistory(eventKey: string): Promise<RobotStatusEn
         .equals(eventKey)
         .filter((e) => !e.deleted)
         .toArray();
-    return entries.map(normalize).sort((a, b) => Date.parse(b.set_at) - Date.parse(a.set_at));
+    return entries
+        .map(normalize)
+        .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || Date.parse(b.set_at) - Date.parse(a.set_at));
 }
 
 export function statusText(entry: Pick<RobotStatusEntry, 'status' | 'pending_label'> | null): string {
     if (!entry) return robotStatusLabels.inbound;
     if (entry.status === 'pending' && entry.pending_label) return `Pending ${entry.pending_label}`;
+    if (entry.status === 'repair' && entry.pending_label) return `Repair in progress (from ${entry.pending_label})`;
     return robotStatusLabels[entry.status];
 }
 
@@ -105,7 +118,7 @@ function append(eventKey: string, fields: EntryFields, editor: string | null) {
         run_id: fields.run_id ?? null,
         checklist_index: fields.checklist_index ?? null,
         match_key: fields.match_key ?? null,
-        set_at: new Date().toISOString(),
+        set_at: new Date(clockNow()).toISOString(),
         set_by_name: editor,
         updated_by_name: editor
     });
@@ -138,6 +151,23 @@ export async function advanceChecklist(eventKey: string, current: RobotStatusEnt
         : append(eventKey, { status: 'ready', run_id: current.run_id }, editor);
 }
 
+// From a checklist: stop for repairs, remembering where we were.
+export function startRepair(eventKey: string, current: RobotStatusEntry, editor: string | null, note?: string) {
+    return append(
+        eventKey,
+        { status: 'repair', run_id: current.run_id, checklist_index: current.checklist_index, pending_label: current.pending_label, note },
+        editor
+    );
+}
+
+// After repairs: resume a checklist in the same run (its checked steps are
+// kept). Pass the interrupted checklist's index, or the pre-match index.
+export function resumeChecklist(eventKey: string, repair: RobotStatusEntry, index: number, sequence: ChecklistSequence, editor: string | null) {
+    const checklist = sequence.checklists[index];
+    if (!checklist) return append(eventKey, { status: 'ready', run_id: repair.run_id }, editor);
+    return append(eventKey, { status: 'pending', run_id: repair.run_id ?? crypto.randomUUID(), checklist_index: index, pending_label: checklist.name }, editor);
+}
+
 export function markDeparted(eventKey: string, matchKey: string | null, editor: string | null, note?: string) {
     return append(eventKey, { status: 'away', match_key: matchKey, note }, editor);
 }
@@ -157,6 +187,8 @@ export function setStatusManually(
             return robotArrived(eventKey, options.sequence, editor, options.note);
         case 'away':
             return markDeparted(eventKey, options.matchKey, editor, options.note);
+        case 'repair':
+            return append(eventKey, { status: 'repair', note: options.note }, editor);
         case 'ready':
             return append(eventKey, { status: 'ready', note: options.note }, editor);
     }

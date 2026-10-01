@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
-import { useNow } from '../lib/now';
+import { clockNow, useNow } from '../lib/now';
 
 // Countdown timer with +/− buttons per digit of MM:SS, Start/Pause, and
 // Reset. Optionally it can count down to an app-supplied target time (e.g.
@@ -81,12 +81,12 @@ function adjust(stepMs: number, direction: 1 | -1) {
 function startPause() {
   // The ticking clock can be up to one tick stale; refresh it so the display
   // doesn't jump up a second on start or pause.
-  now.value = Date.now();
+  now.value = clockNow();
   if (running.value) {
     state.pausedMs = remainingMs.value;
     state.endsAt = null;
   } else if (remainingMs.value > 0) {
-    state.endsAt = Date.now() + remainingMs.value;
+    state.endsAt = clockNow() + remainingMs.value;
     state.pausedMs = null;
   }
 }

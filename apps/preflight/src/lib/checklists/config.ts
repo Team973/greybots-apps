@@ -13,18 +13,29 @@ export interface PitRole {
     assignee: string;
 }
 
+// A "smart" step only applies in some situations; when it doesn't, it's
+// shown as skipped and checked off automatically. See ./smart.ts.
+export type StepCondition = 'bumper_swap';
+
+export const stepConditionLabels: Record<StepCondition, string> = {
+    bumper_swap: 'Only if a bumper swap is needed (from the TBA schedule)'
+};
+
 export interface ChecklistStep {
     id: string;
     title: string;
     instructions: string;
     // PitRole ids involved in this step.
     role_ids: string[];
+    condition?: StepCondition | null;
 }
 
 export interface ChecklistDef {
     id: string;
     name: string;
     steps: ChecklistStep[];
+    // The checklist "Repairs" can jump straight to once repairs are done.
+    prematch?: boolean;
 }
 
 export interface ChecklistSequence {
@@ -55,7 +66,14 @@ export function newId(): string {
 }
 
 export function newStep(title = ''): ChecklistStep {
-    return { id: newId(), title, instructions: '', role_ids: [] };
+    return { id: newId(), title, instructions: '', role_ids: [], condition: null };
+}
+
+// The checklist to resume at after repairs: the one flagged pre-match, or
+// the last checklist when none is flagged.
+export function prematchIndex(sequence: ChecklistSequence): number {
+    const flagged = sequence.checklists.findIndex((c) => c.prematch);
+    return flagged >= 0 ? flagged : sequence.checklists.length - 1;
 }
 
 // Starter roles and checklists based on the requirements doc (§4.1), so leads
@@ -69,11 +87,12 @@ export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequen
         battery: role('Battery'),
         drive: role('Drive Team')
     };
-    const step = (title: string, instructions: string, roleList: PitRole[]): ChecklistStep => ({
+    const step = (title: string, instructions: string, roleList: PitRole[], condition: StepCondition | null = null): ChecklistStep => ({
         id: newId(),
         title,
         instructions,
-        role_ids: roleList.map((r) => r.id)
+        role_ids: roleList.map((r) => r.id),
+        condition
     });
     return {
         roles: Object.values(roles),
@@ -87,21 +106,27 @@ export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequen
                         step('Visual damage inspection', 'Walk around the robot. Look for bent or cracked parts, loose wires, and debris.', [roles.mech]),
                         step('Check critical fasteners', 'Check the critical bolts with the paint-pen marks and re-torque any that moved.', [roles.mech]),
                         step('Check electrical connections', 'Tug-test connectors on the PDH, motor controllers, and radio. Check the main breaker.', [roles.elec]),
-                        step('Record repairs needed', 'Add a task for anything that needs fixing before the next match.', [roles.lead])
-                    ]
-                },
-                {
-                    id: newId(),
-                    name: 'Battery swap',
-                    steps: [
-                        step('Swap in a charged battery', 'Install the next charged battery and put the used one on the charger.', [roles.battery]),
-                        step('Record battery number', 'Note which battery is installed for this match.', [roles.battery])
+                        step('Record repairs needed', 'Add a task for anything that needs fixing before the next match.', [roles.lead]),
+                        step(
+                            'Post-match system check',
+                            'Power on and run every mechanism through its full range (drive, intake, shooter, climber). Listen and watch for grinding, binding, slipping, or anything that broke. If something is broken, hit Repairs.',
+                            [roles.mech, roles.elec, roles.drive]
+                        )
                     ]
                 },
                 {
                     id: newId(),
                     name: 'Pre-match',
+                    prematch: true,
                     steps: [
+                        step('Swap in a charged battery', 'Install the next charged battery and put the used one on the charger.', [roles.battery]),
+                        step('Record battery number', 'Note which battery is installed for this match.', [roles.battery]),
+                        step(
+                            'Swap bumpers',
+                            "Switch the bumpers to the next match's alliance color. Skipped automatically when the color doesn't change.",
+                            [roles.mech, roles.drive],
+                            'bumper_swap'
+                        ),
                         step('Bumpers attached, correct color', 'Check the alliance color for the next match and that the bumpers are secure.', [roles.mech, roles.drive]),
                         step('Robot powers on cleanly', 'Power on and confirm no faults on the driver station.', [roles.elec]),
                         step('Driver station connects', 'Tether, enable, and confirm all subsystems respond.', [roles.drive, roles.elec]),

@@ -536,7 +536,7 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightRobotStatusLog" (
     "run_id" "uuid",
     "checklist_index" smallint,
     "match_key" "text",
-    CONSTRAINT "PreflightRobotStatusLog_status_check" CHECK (("status" = ANY (ARRAY['inbound'::"text", 'pending'::"text", 'ready'::"text", 'away'::"text"])))
+    CONSTRAINT "PreflightRobotStatusLog_status_check" CHECK (("status" = ANY (ARRAY['inbound'::"text", 'pending'::"text", 'repair'::"text", 'ready'::"text", 'away'::"text"])))
 );
 
 

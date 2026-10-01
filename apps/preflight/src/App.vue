@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 import NavBar from '@/components/NavBar.vue';
+import TestingClockBanner from '@/components/TestingClockBanner.vue';
 import UpdateBanner from '@/components/UpdateBanner.vue';
 import { useIdleLock } from '@/lib/idle-lock';
 import { useDeviceStore } from '@/stores/device-store';
@@ -37,6 +38,7 @@ useIdleLock(
 <template>
   <NavBar v-if="showNav" />
   <main class="main-content" :class="{ 'no-nav': !showNav }">
+    <TestingClockBanner />
     <RouterView />
   </main>
   <UpdateBanner />

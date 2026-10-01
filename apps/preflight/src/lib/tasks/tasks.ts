@@ -1,3 +1,4 @@
+import { clockNow } from '@greybots/common/lib/now';
 import { db } from '@/lib/db';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
 import type { SyncedRecord } from '@/lib/sync/types';
@@ -80,11 +81,11 @@ export function updateTaskDetails(task: Task, input: TaskInput, editor: string |
 }
 
 export function startTask(task: Task, editor: string | null) {
-    return update(task, { started_at: new Date().toISOString(), started_by_name: editor }, editor);
+    return update(task, { started_at: new Date(clockNow()).toISOString(), started_by_name: editor }, editor);
 }
 
 export function completeTask(task: Task, editor: string | null) {
-    return update(task, { completed_at: new Date().toISOString(), completed_by_name: editor }, editor);
+    return update(task, { completed_at: new Date(clockNow()).toISOString(), completed_by_name: editor }, editor);
 }
 
 // Reopening keeps the start time (the work already began) but clears completion.

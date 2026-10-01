@@ -4,6 +4,7 @@ import FullCalendar from '@fullcalendar/vue3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import type { CalendarOptions, DateSelectArg, EventApi, EventClickArg, EventInput } from '@fullcalendar/core';
+import { clockNow } from '@greybots/common/lib/now';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 import { addDays, toDateString } from '@/lib/schedule/dates';
 import { scheduleItemColor, taskColor, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
@@ -31,12 +32,12 @@ const rangeEnd = computed(() => addDays(props.event.end_date, 1));
 
 // Start on today when it's an event day, otherwise the first day.
 function initialDate() {
-  const today = toDateString(new Date());
+  const today = toDateString(new Date(clockNow()));
   return today >= props.event.start_date && today <= props.event.end_date ? today : props.event.start_date;
 }
 
 function scrollTime() {
-  const now = new Date();
+  const now = new Date(clockNow());
   return `${String(Math.max(now.getHours() - 1, 0)).padStart(2, '0')}:00:00`;
 }
 
@@ -91,6 +92,8 @@ const options = computed<CalendarOptions>(() => ({
   height: '100%',
   allDaySlot: false,
   nowIndicator: true,
+  // Follows the app clock (which testing mode can shift).
+  now: () => new Date(clockNow()),
   slotMinTime: '06:00:00',
   slotMaxTime: '24:00:00',
   scrollTime: scrollTime(),

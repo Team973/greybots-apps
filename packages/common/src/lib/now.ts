@@ -1,11 +1,33 @@
-import { onScopeDispose, ref, type Ref } from 'vue';
+import { onScopeDispose, ref, watch, type Ref } from 'vue';
 
-// The current time as a ref that ticks every `intervalMs`, for countdowns
-// and "started 12m ago" labels.
+// The app's clock. Normally the real time; for testing, an app can shift it
+// (e.g. to replay an event day that's already past) with setClockOffset().
+const clockOffsetMs = ref(0);
+
+export function setClockOffset(ms: number) {
+    clockOffsetMs.value = ms;
+}
+
+export function clockOffset(): Ref<number> {
+    return clockOffsetMs;
+}
+
+// "Now" on the app's clock, in epoch milliseconds. Use this (not Date.now())
+// for anything the user sees or that's compared against schedule times.
+export function clockNow(): number {
+    return Date.now() + clockOffsetMs.value;
+}
+
+// The app clock as a ref that ticks every `intervalMs`, for countdowns and
+// "started 12m ago" labels. Jumps immediately when the clock is shifted.
 export function useNow(intervalMs = 1000): Ref<number> {
-    const now = ref(Date.now());
-    const timer = setInterval(() => (now.value = Date.now()), intervalMs);
-    onScopeDispose(() => clearInterval(timer));
+    const now = ref(clockNow());
+    const timer = setInterval(() => (now.value = clockNow()), intervalMs);
+    const stop = watch(clockOffsetMs, () => (now.value = clockNow()));
+    onScopeDispose(() => {
+        clearInterval(timer);
+        stop();
+    });
     return now;
 }
 
