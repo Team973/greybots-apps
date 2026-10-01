@@ -5,6 +5,8 @@ import { localChangeSyncDelayMs, syncIntervalMs } from '@/lib/constants';
 import { countPendingChanges, syncAll } from '@/lib/sync/engine';
 import { isServerReachable, signInAccount, signOutAccount, type AccountProfile } from '@/lib/greybots-account';
 import { hasRole } from '@/lib/roles';
+import { getActiveEvent } from '@/lib/schedule/schedule-repo';
+import { refreshScoutingCompletion } from '@/lib/schedule/scouting';
 
 export type SyncStatus = 'offline' | 'unlinked' | 'syncing' | 'error' | 'pending' | 'synced';
 
@@ -83,6 +85,10 @@ export const useSyncStore = defineStore('sync', {
                 this.reachable = await isServerReachable();
                 if (!this.reachable) return;
                 await syncAll();
+                // Which of our matches GreyScout has scouting data for. Not
+                // worth failing the sync over.
+                const event = await getActiveEvent();
+                if (event) await refreshScoutingCompletion(event.event_key).catch((e) => console.warn(e));
                 this.lastError = null;
                 this.lastSyncAt = new Date().toISOString();
                 await setMeta(lastSyncKey, this.lastSyncAt);

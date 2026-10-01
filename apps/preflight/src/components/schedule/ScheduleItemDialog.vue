@@ -158,7 +158,11 @@ const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id))
           <dd class="source">{{ estimateSourceLabels[times.source] }}</dd>
         </div>
         <div :class="{ primary: !!times.actualStart }"><dt>Started</dt><dd>{{ times.actualStart ? formatTime(times.actualStart) : '—' }}</dd></div>
-        <div><dt>Completed</dt><dd>{{ times.completed ? formatTime(times.completed) : '—' }}</dd></div>
+        <div>
+          <dt>Completed</dt>
+          <dd>{{ times.completed ? formatTime(times.completed) : '—' }}</dd>
+          <dd v-if="times.completedSource" class="source">{{ times.completedSource === 'tba' ? 'result posted' : 'scouting data in' }}</dd>
+        </div>
       </dl>
       <label v-if="canOverride" class="field">
         <span>Set the estimated start by hand (overrides TBA and the field delay)</span>

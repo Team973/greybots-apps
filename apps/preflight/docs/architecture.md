@@ -302,6 +302,14 @@ view of the whole event, built on FullCalendar's time grid.
   its `times`, so the calendar, countdowns, automatic Inbound, and smart steps
   all follow it. Feature code should read the schedule through that function,
   not the table.
+- **Completion from GreyScout** (`src/lib/schedule/scouting.ts`): a match is
+  also complete once it has scouting data, which usually arrives before TBA
+  posts the result. After each sync, every device asks GreyScout's
+  `MatchData` table which of our unfinished qualification matches have
+  entries (matched on the event key and match number) and keeps the earliest
+  submission time per match locally. TBA's result time wins when both exist.
+  An Away robot goes back to Inbound as soon as its match is complete by
+  either source, or its block on the calendar ends.
 - **Prep timing** (the `match_prep` setting): how long before a match to
   start prep and to leave for the queue. `matchDeadlines()` turns that into
   deadlines, shown with the countdown on the Overview (`NextMatchLine`).

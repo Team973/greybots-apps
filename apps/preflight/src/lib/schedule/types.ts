@@ -73,6 +73,9 @@ export interface MatchTimes {
     source: EstimateSource;
     actualStart: string | null;
     completed: string | null;
+    // Where the completion time came from: TBA posting the result, or the
+    // match getting scouting data in GreyScout.
+    completedSource: 'tba' | 'scouting' | null;
 }
 
 // Timeline groups for milestones (requirements §2.1.1). Adding a phase also

@@ -1,4 +1,5 @@
 import { getSetting, saveSetting } from '@/lib/settings';
+import type { ScoutingCompletion } from './scouting';
 import type { EstimateSource, MatchTimes, ScheduleItem } from './types';
 
 // Match timing (issue #80). FRC schedules drift, so every match has up to
@@ -9,6 +10,8 @@ import type { EstimateSource, MatchTimes, ScheduleItem } from './types';
 //      delay, when one is set,
 //   3. TBA's predicted time,
 //   4. the published time.
+// A match is complete once TBA posts its result or, failing that, once it
+// has scouting data in GreyScout (see ./scouting.ts).
 // Overrides and the delay are shared settings, so they work offline and sync
 // to every pit device. listScheduleItems() applies them, so the calendar, the
 // countdowns, automatic Inbound, and smart steps all follow the estimate.
@@ -79,12 +82,15 @@ export const estimateSourceLabels: Record<EstimateSource, string> = {
 };
 
 // `item` must be the stored row (not one already adjusted by applyTiming).
-export function matchTimes(item: ScheduleItem, timing: MatchTiming | null): MatchTimes {
+export function matchTimes(item: ScheduleItem, timing: MatchTiming | null, scouted: ScoutingCompletion = {}): MatchTimes {
     const info = item.match_info;
     const published = info?.scheduled_time ?? null;
     const actualStart = info?.actual_time ?? null;
-    const completed = info?.result_time ?? null;
-    const base = { published, actualStart, completed };
+    // GreyScout scouts qualification matches, identified by match number.
+    const scoutedAt = info?.comp_level === 'qm' ? scouted[String(info.match_number)] ?? null : null;
+    const completed = info?.result_time ?? scoutedAt;
+    const completedSource = info?.result_time ? ('tba' as const) : scoutedAt ? ('scouting' as const) : null;
+    const base = { published, actualStart, completed, completedSource };
 
     if (actualStart) return { ...base, estimated: actualStart, source: 'actual' };
     const override = item.match_key ? timing?.overrides[item.match_key] : undefined;
@@ -99,10 +105,10 @@ export function matchTimes(item: ScheduleItem, timing: MatchTiming | null): Matc
 
 // Moves each match's block to its estimated start, keeping its length, and
 // attaches all of its times.
-export function applyTiming(items: ScheduleItem[], timing: MatchTiming | null): ScheduleItem[] {
+export function applyTiming(items: ScheduleItem[], timing: MatchTiming | null, scouted: ScoutingCompletion = {}): ScheduleItem[] {
     return items.map((item) => {
         if (item.kind !== 'match') return item;
-        const times = matchTimes(item, timing);
+        const times = matchTimes(item, timing, scouted);
         const length = Date.parse(item.end_at) - Date.parse(item.start_at);
         const start = Date.parse(times.estimated);
         return {
