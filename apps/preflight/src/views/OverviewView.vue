@@ -6,9 +6,12 @@ import NextMatchLine from '@/components/overview/NextMatchLine.vue';
 import RepairPanel from '@/components/overview/RepairPanel.vue';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
 import StatusHero from '@/components/overview/StatusHero.vue';
+import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
+import RepairList from '@/components/repairs/RepairList.vue';
 import RobotStatusDialog from '@/components/robot-status/RobotStatusDialog.vue';
 import TaskList from '@/components/tasks/TaskList.vue';
 import { useLiveQuery } from '@/lib/live-query';
+import { activeRepairs, listRepairs, type Repair } from '@/lib/repairs/repairs';
 import { markDeparted, markInbound, resumeChecklist, robotArrived } from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
@@ -20,7 +23,8 @@ import { useSessionStore } from '@/stores/session-store';
 // robot's status:
 //   Inbound  - a big "Robot arrived" button
 //   Pending  - the active checklist and its active step (tasks still on hand)
-//   Repair   - red banner; resume the interrupted checklist or go to pre-match
+//   Repair   - red banner; resume the interrupted checklist or go to pre-match;
+//              the repair log takes over from the schedule
 //   Ready    - schedule and tasks, with "Robot departed"
 //   Away     - same, with "Match over" (also automatic when the match ends)
 const session = useSessionStore();
@@ -40,6 +44,13 @@ const status = computed(() => flow.effective.value.status);
 
 // The match the robot is heading to: the first one not yet over.
 const departingFor = computed(() => matches.value.find((m) => Date.parse(m.end_at) > flow.now.value) ?? null);
+
+// The last match we played: what a repair found in the pit is most likely from.
+const lastMatch = computed(() => [...matches.value].reverse().find((m) => Date.parse(m.start_at) <= flow.now.value) ?? null);
+
+// Repairs being worked on show next to the status in every state (issue #83).
+const repairs = useLiveQuery<Repair[]>(() => (eventKey.value ? listRepairs(eventKey.value) : []), [], eventKey);
+const repairsInProgress = computed(() => activeRepairs(repairs.value));
 
 // Countdown, prep, and queue deadlines for it (issue #80).
 const prep = useLiveQuery<MatchPrep>(getMatchPrep, defaultMatchPrep);
@@ -87,6 +98,7 @@ const historyOpen = ref(false);
       <div class="pending-bar area-bar">
         <strong>Robot in the pit</strong>
         <span>{{ flow.sequence.value.checklists.length ? 'Working through checklists' : 'No checklists configured' }}</span>
+        <ActiveRepairChip :repairs="repairsInProgress" />
         <span class="bar-spacer"></span>
         <NextMatchLine :match="departingFor" :prep="prep" :now="flow.now.value" />
         <button class="bar-link" @click="historyOpen = true">Status history</button>
@@ -117,8 +129,16 @@ const historyOpen = ref(false);
         @resume="onResume"
         @history="historyOpen = true"
       />
-      <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" heading="Repair tasks" quick-add />
-      <ScheduleStrip class="area-schedule" :event-key="eventKey" :items="items" />
+      <RepairList
+        class="area-tasks"
+        :event-key="eventKey"
+        :matches="matches"
+        heading="Repairs"
+        quick-add
+        :origin="{ source: 'checklist', run_id: flow.latest.value.run_id }"
+        :default-match-key="lastMatch?.match_key ?? null"
+      />
+      <TaskList class="area-schedule" :event-key="eventKey" :matches="matches" quick-add />
     </template>
 
     <template v-else>
@@ -129,6 +149,7 @@ const historyOpen = ref(false);
         :next-match="departingFor"
         :prep="prep"
         :now="flow.now.value"
+        :repairs="repairsInProgress"
         :can-act="isMember"
         :busy="busy"
         @arrived="onArrived"
@@ -174,7 +195,8 @@ const historyOpen = ref(false);
 .overview :deep(.area-step) { grid-area: step; }
 
 /* Pit laptop / big screen. Empty "notice" rows collapse to nothing. */
-/* Repairs: compact red strip on top, the repair task list front and center. */
+/* Repairs: compact red strip on top, the repair log front and center, tasks
+   beside it. */
 .state-repair {
   grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
