@@ -440,8 +440,9 @@ Subsystem and robot are free text with suggestions (`src/lib/subsystems.ts`).
 ## Dialog conventions
 
 - Dialogs use `AppDialog` and stay compact enough to fit a short screen
-  (about 650 px) without scrolling: related fields share a row, notes are two
-  lines, and long option lists scroll horizontally.
+  (about 650 px) without scrolling: related fields share a row and notes are
+  two lines. Quick-create presets are small chips that wrap (`.preset-chips`),
+  so every option shows at once.
 - **Creating** something uses an explicit Create/Save button. **Editing**
   something that already exists saves automatically with `useAutosave`
   (`src/lib/autosave.ts`): it saves about 600 ms after typing stops (or on

@@ -131,8 +131,8 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
 <template>
   <AppDialog :open="open" :title="isNew ? 'New task' : task?.title || 'Task'" @close="close">
     <label class="field"><span>Task</span><input v-model="title" :readonly="!canEdit" placeholder="What needs doing?" /></label>
-    <div v-if="isNew" class="presets" aria-label="Quick add">
-      <button v-for="preset in taskPresets" :key="preset" type="button" class="preset" @click="title = preset">
+    <div v-if="isNew" class="preset-chips" aria-label="Quick add">
+      <button v-for="preset in taskPresets" :key="preset" type="button" class="preset-chip" :class="{ on: title === preset }" @click="title = preset">
         {{ preset }}
       </button>
     </div>
@@ -181,32 +181,6 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
 </template>
 
 <style scoped>
-/* One scrollable row of quick-add chips instead of several wrapped rows. */
-.presets {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
-}
-
-.preset {
-  flex: none;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--accent-color);
-  background: transparent;
-  color: var(--primary-text-color);
-  font: inherit;
-  font-size: 0.8rem;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.preset:hover {
-  border-color: var(--header-color);
-}
-
 .assignee-row {
   display: flex;
   gap: 6px;
