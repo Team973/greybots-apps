@@ -31,7 +31,7 @@ export const displayWidgets: DisplayWidget[] = [
 
 export const displayWidgetLabels: Record<DisplayWidget, string> = {
     next_match: 'Next match',
-    countdown: 'Countdown to next match',
+    countdown: 'Countdown (to queue, then to the match)',
     readiness: 'Readiness (prep and queue deadlines)',
     current_match: 'Current match',
     checklist: 'Active checklist',

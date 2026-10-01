@@ -17,7 +17,7 @@ import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { formatTime } from '@/lib/schedule/dates';
 import { currentPhase, milestoneState, sortMilestones } from '@/lib/schedule/milestones';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
-import { defaultMatchPrep, getMatchPrep, matchDeadlines, type MatchPrep } from '@/lib/schedule/timing';
+import { defaultMatchPrep, getMatchPrep, matchCountdown, matchDeadlines, type MatchPrep } from '@/lib/schedule/timing';
 import { matchColor, phaseLabels, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
 import { useSyncStore } from '@/stores/sync-store';
 
@@ -105,6 +105,8 @@ const currentMatch = computed(() => {
 });
 const prep = useLiveQuery<MatchPrep>(getMatchPrep, defaultMatchPrep);
 const deadlines = computed(() => (nextMatch.value ? matchDeadlines(nextMatch.value, prep.value) : null));
+// Counts down to queue time, then to the match.
+const countdown = computed(() => (deadlines.value ? matchCountdown(deadlines.value, now.value) : null));
 function deadline(at: number) {
   const ms = at - now.value;
   return { at: formatTime(new Date(at).toISOString()), late: ms <= 0, text: ms <= 0 ? `${formatElapsed(-ms)} ago` : `in ${formatElapsed(ms)}` };
@@ -192,10 +194,10 @@ onBeforeUnmount(() => {
           </section>
 
           <section v-else-if="widget === 'countdown'" class="widget">
-            <h2>Countdown</h2>
-            <template v-if="nextMatch">
-              <p class="huge">{{ formatClock(Date.parse(nextMatch.start_at) - now) }}</p>
-              <p class="line">until {{ nextMatch.title }}</p>
+            <h2>{{ countdown ? countdown.label : 'Countdown' }}</h2>
+            <template v-if="nextMatch && countdown">
+              <p class="huge">{{ countdown.ms > 0 ? formatClock(countdown.ms) : 'Now' }}</p>
+              <p class="line">{{ countdown.target === 'queue' ? `${nextMatch.title} · queue by ${formatTime(new Date(deadlines!.queueAt).toISOString())}` : `until ${nextMatch.title}` }}</p>
             </template>
             <p v-else class="none">No upcoming match</p>
           </section>

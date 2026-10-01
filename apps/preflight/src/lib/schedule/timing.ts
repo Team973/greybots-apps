@@ -133,3 +133,21 @@ export function matchDeadlines(match: ScheduleItem, prep: MatchPrep): MatchDeadl
     const start = Date.parse(match.start_at);
     return { start, queueAt: start - prep.queue_minutes * 60_000, prepAt: start - prep.prep_minutes * 60_000 };
 }
+
+export interface MatchCountdown {
+    // What the timer is counting down to.
+    target: 'queue' | 'match';
+    // Shown right next to the timer, so it's never ambiguous.
+    label: string;
+    // Time left; 0 once the match's (estimated) start has passed.
+    ms: number;
+}
+
+// The one countdown the pit works to: the time left until the robot has to
+// leave for the queue and then, once that time has come, the time left until
+// the match itself (its estimated start).
+export function matchCountdown(deadlines: MatchDeadlines, now: number): MatchCountdown {
+    return now < deadlines.queueAt
+        ? { target: 'queue', label: 'Time to queue', ms: deadlines.queueAt - now }
+        : { target: 'match', label: 'Time to match', ms: Math.max(0, deadlines.start - now) };
+}
