@@ -226,6 +226,39 @@ How it's stored:
   (`updated_at`), not by `set_at`, the time shown to people. Testing mode or
   a drifting device clock can make a newer entry's `set_at` look older.
 
+### Checklists
+
+`src/lib/checklists/`. Two kinds of checklist are configured on Pit setup:
+
+- **Pit checklists:** the standard sequence above, run on the Overview every
+  pit visit (the `checklist_sequence` setting).
+- **Other checklists:** started by hand from the Checklists page
+  (`/checklists`) when needed, e.g. start of day, a bumper swap, or a
+  subsystem deep dive (the `adhoc_checklists` setting). Each run is a
+  `PreflightChecklistRun` row holding a snapshot of the checklist, so editing
+  the template later doesn't change a run in progress or the history.
+
+Both are run by the same component (`ChecklistRunner`), and both record their
+checked steps as `PreflightChecklistCheck` rows under a `run_id`.
+
+- **What a step records** (`input`): just a check, free text (e.g. driver
+  feedback), pass or fail, or the battery going in the robot. The value is
+  stored in the check's `value`. A battery step also assigns that battery to
+  the run's match (see Batteries), and a failed step is marked in the list.
+- **Instances per match** (`instances.ts`): each run belongs to a match where
+  that makes sense, which names it ("Qual 12 · Pre-match", "Qual 9 → Qual 12
+  · Bumper swap") and is stored as the check's `match_key`. In the pit
+  sequence, checklists before the pre-match one go with the match just played
+  and the rest with the next match; "Belongs to" on Pit setup overrides this
+  per checklist.
+- **History:** the Checklists page lists every run at the event with its
+  start and finish times and, per step, who did it, when, and what was
+  recorded. Ad-hoc runs come from their run rows; runs of the pit sequence
+  are rebuilt from the checks, with the start time from the robot status log.
+- Steps that complete themselves from robot state (DS connected, logs
+  offloaded) wait on the diagnostics integration (#103). Smart steps are the
+  place to add them.
+
 ### Testing mode (admins)
 
 Settings → Testing mode lets an admin pretend it's a different date and

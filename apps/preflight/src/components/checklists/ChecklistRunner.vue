@@ -1,50 +1,68 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
-import RepairDialog from '@/components/repairs/RepairDialog.vue';
 import { formatClock } from '@greybots/common/lib/now';
+import BatteryScanner from '@/components/batteries/BatteryScanner.vue';
+import RepairDialog from '@/components/repairs/RepairDialog.vue';
+import { formatReading, installBattery } from '@/lib/batteries/batteries';
+import { useBatteries } from '@/lib/batteries/use-batteries';
 import { checkStep, listChecks, uncheckStep, type ChecklistCheck } from '@/lib/checklists/checks';
-import type { ChecklistSequence, PitRole } from '@/lib/checklists/config';
+import { stepInput, type ChecklistDef, type PitRole } from '@/lib/checklists/config';
+import { instanceTitle } from '@/lib/checklists/instances';
 import { activeStepIndex, evaluateStep, stepState, type StepContext } from '@/lib/checklists/smart';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatTime } from '@/lib/schedule/dates';
 import type { ScheduleItem } from '@/lib/schedule/types';
-import { advanceChecklist, startRepair, type RobotStatusEntry } from '@/lib/robot-status/robot-status';
 import { useSessionStore } from '@/stores/session-store';
 
-// The Pending state: the active checklist (steps done strictly in order) and,
-// in its own panel, the active step's instructions and who holds each role.
+// Runs one checklist (issue #82): the steps, done strictly in order, and in
+// its own panel the active step's instructions, who holds each role, and
+// whatever the step records (text, pass/fail, or the installed battery).
 // Smart steps that don't apply (e.g. no bumper swap needed) show as skipped.
-// Finishing the last step loads the next checklist, or Robot Ready after the
-// last one. "Repairs" switches straight to Repair in progress (no prompt:
-// repair tasks get added and assigned from the repair screen).
-// Renders two panels (.area-checklist and .area-step) for the Overview grid.
-const props = defineProps<{
-  eventKey: string;
-  entry: RobotStatusEntry;
-  sequence: ChecklistSequence;
-  roles: PitRole[];
-  matches: ScheduleItem[];
-  now: number;
-  elapsedMs: number | null;
-}>();
+// Used for the pit sequence on the Overview and for ad-hoc runs on the
+// Checklists page; the parent decides what happens on `complete`.
+// Renders two panels (.area-checklist and .area-step) for the parent's grid.
+const props = withDefaults(
+  defineProps<{
+    eventKey: string;
+    // The run the checked steps are recorded under.
+    runId: string;
+    checklist: ChecklistDef | null;
+    // Shown when the checklist can't be found (e.g. removed mid-run).
+    fallbackName?: string | null;
+    // Small line above the name, e.g. "Checklist 1 of 2".
+    eyebrow?: string | null;
+    // The match this run belongs to: its name ("Qual 12") and key.
+    matchLabel?: string | null;
+    matchKey?: string | null;
+    roles: PitRole[];
+    matches: ScheduleItem[];
+    now: number;
+    elapsedMs: number | null;
+    // What the Done button says when it finishes the checklist.
+    finishLabel?: string;
+    // Offer "Repairs" (pauses the pit flow).
+    canRepair?: boolean;
+  }>(),
+  { fallbackName: null, eyebrow: null, matchLabel: null, matchKey: null, finishLabel: 'Done · finish checklist', canRepair: false }
+);
+const emit = defineEmits<{ complete: []; repairs: [] }>();
+
 const session = useSessionStore();
 const canAct = computed(() => session.hasRole('member'));
 const canEditSetup = computed(() => session.hasRole('lead'));
 const editor = () => session.user?.name ?? null;
 
-const runId = computed(() => props.entry.run_id ?? '');
+const runId = computed(() => props.runId);
 const checks = useLiveQuery<ChecklistCheck[]>(() => listChecks(props.eventKey, runId.value), [], runId);
 const ctx = computed<StepContext>(() => ({ matches: props.matches, now: props.now }));
 
-const index = computed(() => props.entry.checklist_index ?? 0);
-const checklist = computed(() => props.sequence.checklists[index.value] ?? null);
-const states = computed(() => (checklist.value ? checklist.value.steps.map((s) => stepState(checks.value, checklist.value!, s, ctx.value)) : []));
-const nextIndex = computed(() => (checklist.value ? activeStepIndex(checks.value, checklist.value, ctx.value) : 0));
-const activeStep = computed(() => checklist.value?.steps[nextIndex.value] ?? null);
+const states = computed(() => (props.checklist ? props.checklist.steps.map((s) => stepState(checks.value, props.checklist!, s, ctx.value)) : []));
+const nextIndex = computed(() => (props.checklist ? activeStepIndex(checks.value, props.checklist, ctx.value) : 0));
+const activeStep = computed(() => props.checklist?.steps[nextIndex.value] ?? null);
+const activeInput = computed(() => (activeStep.value ? stepInput(activeStep.value) : 'check'));
 const activeNote = computed(() => (activeStep.value ? evaluateStep(activeStep.value, ctx.value).note : null));
-const total = computed(() => props.sequence.checklists.length);
-const isComplete = computed(() => !!checklist.value && checklist.value.steps.length > 0 && nextIndex.value >= checklist.value.steps.length);
+const isComplete = computed(() => !!props.checklist && props.checklist.steps.length > 0 && nextIndex.value >= props.checklist.steps.length);
 // The last step that was actually done (not skipped), for Undo.
 const undoIndex = computed(() => {
   for (let i = nextIndex.value - 1; i >= 0; i--) if (states.value[i] === 'done') return i;
@@ -54,8 +72,7 @@ const undoIndex = computed(() => {
 // What happens after the active step: counts only steps still to do.
 const doneLabel = computed(() => {
   const remaining = states.value.slice(nextIndex.value + 1).filter((st) => st === 'todo').length;
-  if (remaining > 0) return 'Done · next step';
-  return index.value + 1 < total.value ? 'Done · next checklist' : 'Done · robot ready';
+  return remaining > 0 ? 'Done · next step' : props.finishLabel;
 });
 
 const rolesById = computed(() => new Map(props.roles.map((r) => [r.id, r])));
@@ -64,7 +81,15 @@ const activeRoles = computed(() =>
 );
 
 function checkFor(stepId: string) {
-  return checks.value.find((c) => c.checklist_id === checklist.value?.id && c.step_id === stepId && c.completed_at) ?? null;
+  return checks.value.find((c) => c.checklist_id === props.checklist?.id && c.step_id === stepId && c.completed_at) ?? null;
+}
+
+// How a recorded value reads in the step list.
+function valueLabel(check: ChecklistCheck, input: string): string | null {
+  if (!check.value) return null;
+  if (input === 'pass_fail') return check.value === 'fail' ? 'Fail' : 'Pass';
+  if (input === 'battery') return `Battery ${check.value}`;
+  return check.value;
 }
 
 const busy = ref(false);
@@ -82,35 +107,82 @@ async function act(action: () => Promise<unknown>) {
   }
 }
 
-// Complete the active step; once nothing is left to do, move on.
-function completeActive() {
-  const list = checklist.value;
+// --- What the active step records ---
+const text = ref('');
+const batteryId = ref('');
+const scanOpen = ref(false);
+const { batteries, readings } = useBatteries();
+const usable = computed(() => batteries.value.filter((b) => b.status !== 'retired'));
+watch(
+  () => activeStep.value?.id,
+  () => {
+    text.value = '';
+    // No default: the battery going in is usually not the one recorded as
+    // installed, and a wrong default is easy to tap through.
+    batteryId.value = '';
+  },
+  { immediate: true }
+);
+
+function batteryOption(id: string): string {
+  const b = batteries.value.find((x) => x.id === id);
+  if (!b) return '';
+  const r = readings.value.get(id);
+  const parts = [`Battery ${b.number}`];
+  if (r?.resting_voltage !== null && r?.resting_voltage !== undefined) parts.push(`${formatReading(r.resting_voltage, 2)} V`);
+  if (r?.state_of_charge !== null && r?.state_of_charge !== undefined) parts.push(`${formatReading(r.state_of_charge, 0)}%`);
+  if (b.status === 'suspect') parts.push('suspect');
+  return parts.join(' · ');
+}
+
+function onScanned(number: number) {
+  scanOpen.value = false;
+  const found = usable.value.find((b) => b.number === number);
+  if (found) batteryId.value = found.id;
+  else error.value = `Battery ${number} isn't registered (or is retired). Add it on the Batteries page.`;
+}
+
+// Complete the active step, recording `value` if the step captures one; once
+// nothing is left to do, tell the parent.
+function completeActive(value: string | null = null) {
+  const list = props.checklist;
   const step = activeStep.value;
   if (!list || !step) return;
   return act(async () => {
-    await checkStep(props.eventKey, runId.value, list, step, editor());
-    const fresh = await listChecks(props.eventKey, runId.value);
-    if (activeStepIndex(fresh, list, ctx.value) >= list.steps.length) {
-      await advanceChecklist(props.eventKey, props.entry, props.sequence, editor());
+    let recorded = value;
+    if (activeInput.value === 'text') recorded = text.value;
+    if (activeInput.value === 'battery') {
+      const battery = usable.value.find((b) => b.id === batteryId.value);
+      if (!battery) throw new Error('Choose the battery that went in the robot');
+      // Recording the battery also assigns it to this run's match.
+      await installBattery(
+        battery.id,
+        {
+          event_key: props.eventKey,
+          kind: props.matchKey ? 'match' : 'other',
+          match_key: props.matchKey,
+          label: props.matchLabel ?? list.name,
+          run_id: props.runId
+        },
+        editor()
+      );
+      recorded = String(battery.number);
     }
+    await checkStep(props.eventKey, props.runId, list, step, editor(), { value: recorded, matchKey: props.matchKey });
+    const fresh = await listChecks(props.eventKey, props.runId);
+    if (activeStepIndex(fresh, list, ctx.value) >= list.steps.length) emit('complete');
   });
 }
 
 function undoLast() {
-  const list = checklist.value;
+  const list = props.checklist;
   const step = list?.steps[undoIndex.value];
   if (!list || !step) return;
-  return act(() => uncheckStep(runId.value, list, step, editor()));
+  return act(() => uncheckStep(props.runId, list, step, editor()));
 }
 
-// Moves on when nothing is left to click: an empty checklist, one removed
-// from the sequence mid-run, or one whose remaining steps were all skipped.
-const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry, props.sequence, editor()));
-
-const startRepairs = () => act(() => startRepair(props.eventKey, props.entry, editor()));
-
 // Log something to fix later without leaving the checklist (issue #83). It's
-// linked to this pit visit and to the match the robot just played.
+// linked to this run and to the match the robot just played.
 const repairOpen = ref(false);
 const lastMatchKey = computed(
   () => [...props.matches].reverse().find((m) => Date.parse(m.start_at) <= props.now)?.match_key ?? null
@@ -119,13 +191,11 @@ const lastMatchKey = computed(
 
 <template>
   <section class="panel area-checklist">
-    <ol class="progress" aria-label="Checklist sequence">
-      <li v-for="(c, i) in sequence.checklists" :key="c.id" :class="{ done: i < index, current: i === index }">{{ c.name }}</li>
-    </ol>
+    <slot name="progress" />
     <header class="checklist-header">
       <div>
-        <p v-if="checklist" class="eyebrow">Checklist {{ index + 1 }} of {{ total }}</p>
-        <h2>{{ checklist?.name ?? entry.pending_label ?? 'Checklist' }}</h2>
+        <p v-if="eyebrow" class="eyebrow">{{ eyebrow }}</p>
+        <h2>{{ instanceTitle(checklist?.name ?? fallbackName ?? 'Checklist', matchLabel) }}</h2>
       </div>
       <div class="elapsed" title="Time in this checklist">
         <span class="elapsed-value">{{ elapsedMs === null ? '--:--' : formatClock(elapsedMs) }}</span>
@@ -139,13 +209,14 @@ const lastMatchKey = computed(
           v-for="(step, i) in checklist.steps"
           :key="step.id"
           class="step"
-          :class="[states[i], { active: i === nextIndex, upcoming: i > nextIndex && states[i] === 'todo' }]"
+          :class="[states[i], { active: i === nextIndex, upcoming: i > nextIndex && states[i] === 'todo', failed: checkFor(step.id)?.value === 'fail' }]"
         >
-          <span class="marker" aria-hidden="true">{{ states[i] === 'done' ? '✓' : states[i] === 'skipped' ? '–' : i + 1 }}</span>
+          <span class="marker" aria-hidden="true">{{ states[i] === 'done' ? (checkFor(step.id)?.value === 'fail' ? '✕' : '✓') : states[i] === 'skipped' ? '–' : i + 1 }}</span>
           <span class="step-text">
             <span class="step-title">{{ step.title }}<span v-if="step.condition" class="smart-badge">Smart</span></span>
             <span v-if="states[i] === 'done' && checkFor(step.id)" class="step-meta">
               {{ formatTime(checkFor(step.id)!.completed_at!) }}<template v-if="checkFor(step.id)!.completed_by_name"> · {{ checkFor(step.id)!.completed_by_name }}</template>
+              <template v-if="valueLabel(checkFor(step.id)!, stepInput(step))"> · <span class="step-value">{{ valueLabel(checkFor(step.id)!, stepInput(step)) }}</span></template>
             </span>
             <span v-else-if="states[i] === 'skipped'" class="step-meta">Skipped · {{ evaluateStep(step, ctx).note }}</span>
           </span>
@@ -155,13 +226,14 @@ const lastMatchKey = computed(
     </template>
     <div v-if="!checklist || !checklist.steps.length || isComplete" class="empty">
       <p class="hint">
-        {{ !checklist ? "This checklist isn't in the sequence anymore." : !checklist.steps.length ? 'This checklist has no steps.' : 'Everything here is done.' }}
+        {{ !checklist ? "This checklist isn't available anymore." : !checklist.steps.length ? 'This checklist has no steps.' : 'Everything here is done.' }}
       </p>
-      <button v-if="canAct" class="primary-action small" :disabled="busy" @click="continueOn">Continue</button>
+      <button v-if="canAct" class="primary-action small" :disabled="busy" @click="emit('complete')">Continue</button>
     </div>
-    <div v-if="canAct" class="repair-row">
-      <button class="repair-button" :disabled="busy" @click="startRepairs">Repairs</button>
+    <div v-if="canAct && canRepair" class="repair-row">
+      <button class="repair-button" :disabled="busy" @click="emit('repairs')">Repairs</button>
     </div>
+    <slot name="footer" />
     <p v-if="error" class="error-text">{{ error }}</p>
   </section>
 
@@ -180,57 +252,51 @@ const lastMatchKey = computed(
           </li>
         </ul>
       </div>
+
+      <label v-if="canAct && activeInput === 'text'" class="field record">
+        <span>Record</span>
+        <textarea v-model="text" rows="3" placeholder="Type what was said or found"></textarea>
+      </label>
+      <div v-if="canAct && activeInput === 'battery'" class="record">
+        <label class="field">
+          <span>Battery going in the robot</span>
+          <span class="battery-row">
+            <select v-model="batteryId">
+              <option value="" disabled>Choose a battery</option>
+              <option v-for="b in usable" :key="b.id" :value="b.id">{{ batteryOption(b.id) }}</option>
+            </select>
+            <button type="button" class="scan" @click="scanOpen = true">Scan</button>
+          </span>
+        </label>
+        <p v-if="!usable.length" class="hint">No batteries registered. <RouterLink to="/batteries" class="panel-link">Add them on the Batteries page.</RouterLink></p>
+      </div>
+
       <span class="grow"></span>
       <button v-if="canAct" class="log-repair" @click="repairOpen = true">Log a repair for later</button>
-      <button v-if="canAct" class="primary-action" :disabled="busy" @click="completeActive">{{ doneLabel }}</button>
+      <div v-if="canAct && activeInput === 'pass_fail'" class="pass-fail">
+        <button class="primary-action fail" :disabled="busy" @click="completeActive('fail')">Fail</button>
+        <button class="primary-action" :disabled="busy" @click="completeActive('pass')">Pass</button>
+      </div>
+      <button v-else-if="canAct" class="primary-action" :disabled="busy || (activeInput === 'battery' && !batteryId)" @click="completeActive()">{{ doneLabel }}</button>
     </template>
     <p v-else class="hint">Nothing left in this checklist.</p>
+    <RouterLink v-if="canEditSetup" to="/pit-setup" class="panel-link setup-link">Edit checklists and roles</RouterLink>
+
     <RepairDialog
       :open="repairOpen"
       :event-key="eventKey"
       :repair="null"
       :matches="matches"
       :can-edit="canAct"
-      :origin="{ source: 'checklist', run_id: entry.run_id }"
+      :origin="{ source: 'checklist', run_id: runId }"
       :preset="{ match_key: lastMatchKey }"
       @close="repairOpen = false"
     />
-    <RouterLink v-if="canEditSetup" to="/pit-setup" class="panel-link setup-link">Edit checklists and roles</RouterLink>
+    <BatteryScanner :open="scanOpen" title="Scan the battery going in" @close="scanOpen = false" @scanned="onScanned" />
   </section>
-
 </template>
 
 <style scoped>
-.progress {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.8rem;
-}
-
-.progress li {
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--accent-color);
-  opacity: 0.6;
-}
-
-.progress li.done {
-  opacity: 0.45;
-  text-decoration: line-through;
-}
-
-.progress li.current {
-  border-color: #ffc107;
-  background: #ffc107;
-  color: #1a1a1a;
-  font-weight: 600;
-  opacity: 1;
-}
-
 .checklist-header {
   display: flex;
   align-items: flex-start;
@@ -327,6 +393,16 @@ const lastMatchKey = computed(
   color: #fff;
 }
 
+/* A step that was completed with "Fail" stands out in the list. */
+.step.failed {
+  border-color: #c62828;
+}
+
+.step.failed .marker {
+  border-color: #c62828;
+  background: #c62828;
+}
+
 .step-text {
   flex: 1;
   display: flex;
@@ -353,6 +429,11 @@ const lastMatchKey = computed(
 .step-meta {
   font-size: 0.75rem;
   opacity: 0.65;
+  overflow-wrap: anywhere;
+}
+
+.step-value {
+  font-weight: 700;
 }
 
 .undo {
@@ -463,6 +544,45 @@ const lastMatchKey = computed(
   opacity: 0.6;
 }
 
+/* The value the step records. `flex: none` so .field's flex-basis (meant for
+   form rows) doesn't stretch it down this column. */
+.record {
+  flex: none;
+}
+
+.record textarea,
+.record select {
+  font-size: 1.05rem;
+}
+
+.battery-row {
+  display: flex;
+  gap: 6px;
+  opacity: 1;
+}
+
+.battery-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan {
+  flex: none;
+  padding: 0 14px;
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hint {
+  margin: 0;
+  opacity: 0.7;
+}
+
 .grow {
   flex: 1;
 }
@@ -495,8 +615,18 @@ const lastMatchKey = computed(
   font-size: 1rem;
 }
 
+.primary-action.fail {
+  background: #c62828;
+}
+
 .primary-action:disabled {
   opacity: 0.6;
+}
+
+.pass-fail {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 8px;
 }
 
 .setup-link {

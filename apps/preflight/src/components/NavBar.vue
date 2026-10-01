@@ -25,6 +25,7 @@ async function signOut() {
     </span>
     <RouterLink to="/" class="nav-button" exact-active-class="router-link-active" active-class="">Overview</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/schedule" class="nav-button">Schedule</RouterLink>
+    <RouterLink v-if="session.hasRole('member')" to="/checklists" class="nav-button">Checklists</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/repairs" class="nav-button">Repairs</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/batteries" class="nav-button">Batteries</RouterLink>
     <RouterLink v-if="session.hasRole('member')" to="/notes" class="nav-button">Notes</RouterLink>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import ChecklistRun from '@/components/overview/ChecklistRun.vue';
+import ChecklistRunner from '@/components/checklists/ChecklistRunner.vue';
 import NextMatchLine from '@/components/overview/NextMatchLine.vue';
 import RepairPanel from '@/components/overview/RepairPanel.vue';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
@@ -11,9 +11,11 @@ import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
 import RepairList from '@/components/repairs/RepairList.vue';
 import RobotStatusDialog from '@/components/robot-status/RobotStatusDialog.vue';
 import TaskList from '@/components/tasks/TaskList.vue';
+import { sequenceMatchLink } from '@/lib/checklists/config';
+import { matchContext, resolveMatchLink } from '@/lib/checklists/instances';
 import { useLiveQuery } from '@/lib/live-query';
 import { activeRepairs, listRepairs, type Repair } from '@/lib/repairs/repairs';
-import { markDeparted, markInbound, resumeChecklist, robotArrived } from '@/lib/robot-status/robot-status';
+import { advanceChecklist, markDeparted, markInbound, resumeChecklist, robotArrived, startRepair } from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { getActiveEvent, listScheduleItems } from '@/lib/schedule/schedule-repo';
 import { defaultMatchPrep, getMatchPrep, type MatchPrep } from '@/lib/schedule/timing';
@@ -75,6 +77,21 @@ const onMatchOver = () => act(() => markInbound(eventKey.value, editor()));
 const onResume = (index: number) =>
   act(() => resumeChecklist(eventKey.value, flow.latest.value!, index, flow.sequence.value, editor()));
 
+// The checklist the pit is on (Pending), and the match this run of it
+// belongs to: post-match work goes with the match just played, pre-match
+// with the next one (issue #82).
+const checklistIndex = computed(() => flow.latest.value?.checklist_index ?? 0);
+const checklistCount = computed(() => flow.sequence.value.checklists.length);
+const activeChecklist = computed(() => flow.sequence.value.checklists[checklistIndex.value] ?? null);
+const checklistLink = computed(() =>
+  resolveMatchLink(sequenceMatchLink(flow.sequence.value, checklistIndex.value), matchContext(matches.value, flow.now.value))
+);
+// Finishing a checklist loads the next one, or Robot Ready after the last.
+const onChecklistComplete = () => act(() => advanceChecklist(eventKey.value, flow.latest.value!, flow.sequence.value, editor()));
+// "Repairs" switches straight to Repair in progress (no prompt: repairs get
+// logged and assigned from the repair screen).
+const onRepairs = () => act(() => startRepair(eventKey.value, flow.latest.value!, editor()));
+
 const historyOpen = ref(false);
 </script>
 
@@ -105,15 +122,31 @@ const historyOpen = ref(false);
         <NextMatchLine :match="departingFor" :prep="prep" :now="flow.now.value" />
         <button class="bar-link" @click="historyOpen = true">Status history</button>
       </div>
-      <ChecklistRun
+      <ChecklistRunner
         :event-key="eventKey"
-        :entry="flow.latest.value"
-        :sequence="flow.sequence.value"
+        :run-id="flow.latest.value.run_id ?? ''"
+        :checklist="activeChecklist"
+        :fallback-name="flow.latest.value.pending_label"
+        :eyebrow="activeChecklist ? `Checklist ${checklistIndex + 1} of ${checklistCount}` : null"
+        :match-label="checklistLink.label"
+        :match-key="checklistLink.matchKey"
         :roles="flow.roles.value"
         :matches="matches"
         :now="flow.now.value"
         :elapsed-ms="flow.elapsedMs.value"
-      />
+        :finish-label="checklistIndex + 1 < checklistCount ? 'Done · next checklist' : 'Done · robot ready'"
+        can-repair
+        @complete="onChecklistComplete"
+        @repairs="onRepairs"
+      >
+        <template #progress>
+          <ol class="progress" aria-label="Checklist sequence">
+            <li v-for="(c, i) in flow.sequence.value.checklists" :key="c.id" :class="{ done: i < checklistIndex, current: i === checklistIndex }">
+              {{ c.name }}
+            </li>
+          </ol>
+        </template>
+      </ChecklistRunner>
       <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
     </template>
 
@@ -234,6 +267,36 @@ const historyOpen = ref(false);
     'notice notice'
     'hero hero'
     'schedule tasks';
+}
+
+.progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.progress li {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-color);
+  opacity: 0.6;
+}
+
+.progress li.done {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.progress li.current {
+  border-color: #ffc107;
+  background: #ffc107;
+  color: #1a1a1a;
+  font-weight: 600;
+  opacity: 1;
 }
 
 .pending-bar {

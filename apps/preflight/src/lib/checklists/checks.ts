@@ -7,9 +7,10 @@ import type { ChecklistDef, ChecklistStep } from './config';
 
 export const checksTable = 'checklistChecks';
 
-// A checked-off checklist step within one pit run (PreflightChecklistCheck).
-// Its id is derived from run + checklist + step, so two devices checking the
-// same step converge on one row.
+// A checked-off checklist step within one run (PreflightChecklistCheck): a
+// pit visit's run of the standard sequence, or an ad-hoc run. Its id is
+// derived from run + checklist + step, so two devices checking the same step
+// converge on one row.
 export interface ChecklistCheck extends SyncedRecord {
     event_key: string;
     run_id: string;
@@ -19,6 +20,11 @@ export interface ChecklistCheck extends SyncedRecord {
     step_title: string | null;
     completed_at: string | null;
     completed_by_name: string | null;
+    // What the step recorded, if it captures a value: free text, 'pass' or
+    // 'fail', or a battery number. Absent on rows from before values existed.
+    value?: string | null;
+    // The match this run of the checklist belongs to, if any.
+    match_key?: string | null;
     updated_by_name: string | null;
 }
 
@@ -29,6 +35,12 @@ function checkId(runId: string, checklistId: string, stepId: string) {
 export async function listChecks(eventKey: string, runId: string): Promise<ChecklistCheck[]> {
     const rows = await db.syncedTable<ChecklistCheck>(checksTable).where('event_key').equals(eventKey).toArray();
     return rows.filter((r) => r.run_id === runId && !r.deleted);
+}
+
+// Every check at the event, for the history.
+export async function listAllChecks(eventKey: string): Promise<ChecklistCheck[]> {
+    const rows = await db.syncedTable<ChecklistCheck>(checksTable).where('event_key').equals(eventKey).toArray();
+    return rows.filter((r) => !r.deleted);
 }
 
 export function isStepDone(checks: ChecklistCheck[], checklistId: string, stepId: string): boolean {
@@ -46,7 +58,8 @@ export async function checkStep(
     runId: string,
     checklist: ChecklistDef,
     step: ChecklistStep,
-    editor: string | null
+    editor: string | null,
+    recorded: { value?: string | null; matchKey?: string | null } = {}
 ) {
     return saveRecord<ChecklistCheck>(checksTable, {
         id: await checkId(runId, checklist.id, step.id),
@@ -58,6 +71,8 @@ export async function checkStep(
         step_title: step.title,
         completed_at: new Date(clockNow()).toISOString(),
         completed_by_name: editor,
+        value: recorded.value?.trim() || null,
+        match_key: recorded.matchKey ?? null,
         updated_by_name: editor
     });
 }
@@ -66,6 +81,7 @@ export async function uncheckStep(runId: string, checklist: ChecklistDef, step: 
     return patchRecord<ChecklistCheck>(checksTable, await checkId(runId, checklist.id, step.id), {
         completed_at: null,
         completed_by_name: null,
+        value: null,
         updated_by_name: editor
     });
 }
