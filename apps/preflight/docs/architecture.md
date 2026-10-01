@@ -155,6 +155,89 @@ Both modes use the same `admin > lead > member > observer` ladder
    (`src/lib/sync/local-repo.ts`). They set the bookkeeping fields and
    schedule a push.
 
+## Overview and the pit flow
+
+The landing page (`/`, members and above) changes layout with the robot's
+status, which moves through a fixed cycle:
+
+```
+Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
+   ^                          |        ^                         |
+   |                     (Repairs)  (back / pre-match)           |
+   |                          v        |                         |
+   |                       Repair in progress                    |
+   +--(Match over, or automatic when the match ends)-- Away <--(Robot departed)
+```
+
+- **Inbound:** a big "Robot arrived" button, with tasks and the schedule.
+- **Pending:** the active checklist with its steps, and a separate panel for
+  the active step: its instructions and who holds each role. Steps are done
+  strictly in order (one Done button for the active step; Undo for the last
+  one). Finishing a checklist loads the next, and the count-up timer resets.
+  After the last checklist, the robot is Ready. Tasks stay available.
+- **Repair in progress** (red): from any checklist, "Repairs" stops the flow
+  immediately, with no prompt. The repair screen is a compact red strip
+  (time in repair, plus the ways out) above a "Repair tasks" list with an
+  inline add-and-assign row, so repair work is handed out as tasks. Afterwards
+  the pit goes back to the interrupted checklist (same run, so its checked
+  steps are kept) or straight to the pre-match checklist (the one flagged
+  pre-match on Pit setup, else the last checklist).
+- **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
+  over"), the schedule strip, and tasks. (The `CountdownTimer` component is
+  in `@greybots/common` but not shown for now.)
+- **Smart steps** (`src/lib/checklists/smart.ts`): a step can have a
+  condition. "Swap bumpers" (`bumper_swap`) compares our alliance in the last
+  match played with the next match on the TBA schedule. When the color
+  doesn't change, the step is checked off as *skipped* (grayed out, with the
+  reason) and counts as complete. Skips are computed, not stored, so they
+  follow schedule changes; when the schedule can't tell (e.g. before the
+  first match), the step stays a normal step.
+
+How it's stored:
+
+- **Status** (`PreflightRobotStatusLog`, `src/lib/robot-status/`): an
+  append-only log; the newest entry is the current status, so devices never
+  overwrite each other. Arriving starts a *run* (`run_id`). Each checklist
+  is its own Pending entry (`checklist_index`), which is what resets the
+  timer. Departing records the match the robot left for (`match_key`).
+- **Automatic Inbound:** `effectiveStatus()` shows Away as Inbound once that
+  match has ended. This is computed, not written, so no device writes
+  transitions in the background. The only transitions written automatically
+  are the ones the person checking the last step causes, and
+  `advanceChecklist` skips if another device already advanced.
+- **Checklist steps** (`PreflightChecklistCheck`, `src/lib/checklists/checks.ts`):
+  one row per checked step per run (who and when). Its id is derived from
+  run + checklist + step, so devices converge.
+- **Configuration** (`src/lib/checklists/config.ts`, edited on **Pit setup**,
+  `/pit-setup`, leads/admins): the pit roles roster (role → assignee) and one
+  standard checklist sequence (checklists → steps with instructions and
+  roles), stored as the `pit_roles` and `checklist_sequence` settings. Steps
+  reference roles, so reassigning a role updates every checklist. "Load
+  suggested checklists" seeds both from the requirements doc.
+- Anyone member and above drives the flow; leads/admins also get a manual
+  override (and everyone sees the history) under "Status history".
+- **Tasks** (`PreflightTask`): members and above add, reorder, start, and
+  check off tasks; finished tasks appear on the Schedule calendar under the
+  "Tasks" filter. Each task has an owner (`assignee`, free text), shown in
+  every task list ("Unassigned" when nobody has it). Names are suggested from
+  the pit roles roster and the kiosk crew, and anyone can claim a task with
+  "Assign to me" in its dialog.
+- **Status log order:** entries are ordered by when they were written
+  (`updated_at`), not by `set_at`, the time shown to people. Testing mode or
+  a drifting device clock can make a newer entry's `set_at` look older.
+
+### Testing mode (admins)
+
+Settings → Testing mode lets an admin pretend it's a different date and
+time on that device, e.g. to replay an event day that's over and check the
+schedule-driven features. The clock keeps ticking from the pretend time, and
+an orange strip shows while it's shifted. Everything user-facing reads the
+app clock (`clockNow()` / `useNow()` in `@greybots/common/lib/now`): the
+now-lines, automatic Inbound, smart steps, and recorded times (status
+changes, checked steps, task start and done). Sync bookkeeping
+(`updated_at`, `synced_at`) always uses real time. Data recorded in testing
+mode carries pretend times, so test on a test event.
+
 ## Schedule
 
 The Schedule page (`/schedule`, members and above) is a Google Calendar-style
@@ -181,6 +264,22 @@ view of the whole event, built on FullCalendar's time grid.
   toggles. Matches can't be dragged; they're colored by our alliance.
 - Times are shown in the device's timezone. A notice appears when that
   differs from the event's TBA timezone.
+
+## Dialog conventions
+
+- Dialogs use `AppDialog` and stay compact enough to fit a short screen
+  (about 650 px) without scrolling: related fields share a row, notes are two
+  lines, and long option lists scroll horizontally.
+- **Creating** something uses an explicit Create/Save button. **Editing**
+  something that already exists saves automatically with `useAutosave`
+  (`src/lib/autosave.ts`): it saves about 600 ms after typing stops (or on
+  blur, for fields where saving mid-typing is wrong, like the event key),
+  only when values actually changed, blocks invalid values with an inline
+  error, and flushes on close. `AutosaveStatus` shows Saving…/Saved.
+- Give an editing dialog the **live** record (look it up by id from a live
+  query), and write partial changes with `patchRecord`, which reads the
+  stored row first. A copy captured when the dialog opened can be stale, and
+  writing it back would undo other changes.
 
 ## Deployment
 

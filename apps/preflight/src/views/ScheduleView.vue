@@ -5,19 +5,22 @@ import '@material/web/button/outlined-button';
 import EventSettingsDialog from '@/components/schedule/EventSettingsDialog.vue';
 import ScheduleCalendar from '@/components/schedule/ScheduleCalendar.vue';
 import ScheduleItemDialog from '@/components/schedule/ScheduleItemDialog.vue';
+import { clockNow } from '@greybots/common/lib/now';
 import { tbaAutoImportMs } from '@/lib/constants';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatDateRange, isDifferentTimezone } from '@/lib/schedule/dates';
 import { getActiveEvent, listScheduleItems, rescheduleItem } from '@/lib/schedule/schedule-repo';
 import { getLastImportAt, importTbaSchedule } from '@/lib/schedule/tba-import';
 import {
-  categoryColors,
-  categoryLabels,
-  scheduleCategories,
+  filterColors,
+  filterLabels,
+  scheduleFilters,
   type ActiveEvent,
-  type ScheduleCategory,
+  type ScheduleFilter,
   type ScheduleItem
 } from '@/lib/schedule/types';
+import TaskDialog from '@/components/tasks/TaskDialog.vue';
+import { listTasks, type Task } from '@/lib/tasks/tasks';
 import { useSessionStore } from '@/stores/session-store';
 import { useSyncStore } from '@/stores/sync-store';
 
@@ -36,11 +39,15 @@ watch(activeEventKey, async (key) => {
   lastImportAt.value = key ? await getLastImportAt(key) : null;
 });
 
-// Category filters, remembered per device. The *hidden* categories are
-// stored, so a newly added category shows up by default.
+// Completed tasks, drawn on the calendar for post-event review.
+const tasks = useLiveQuery<Task[]>(() => (activeEventKey.value ? listTasks(activeEventKey.value) : []), [], activeEventKey);
+const matches = computed(() => items.value.filter((i) => i.kind === 'match'));
+
+// Filters, remembered per device. The *hidden* filters are stored, so a
+// newly added one shows up by default.
 const filterStorageKey = 'preflight_schedule_hidden_categories';
-const categories = scheduleCategories;
-function loadHidden(): ScheduleCategory[] {
+const categories = scheduleFilters;
+function loadHidden(): ScheduleFilter[] {
   try {
     const saved = JSON.parse(localStorage.getItem(filterStorageKey) ?? 'null');
     if (Array.isArray(saved)) return saved.filter((c) => categories.includes(c));
@@ -50,7 +57,7 @@ function loadHidden(): ScheduleCategory[] {
   return [];
 }
 const hidden = loadHidden();
-const visibleCategories = ref<ScheduleCategory[]>(categories.filter((c) => !hidden.includes(c)));
+const visibleCategories = ref<ScheduleFilter[]>(categories.filter((c) => !hidden.includes(c)));
 watch(visibleCategories, (value) => {
   try {
     localStorage.setItem(filterStorageKey, JSON.stringify(categories.filter((c) => !value.includes(c))));
@@ -59,6 +66,10 @@ watch(visibleCategories, (value) => {
   }
 });
 const visibleItems = computed(() => items.value.filter((item) => visibleCategories.value.includes(item.category)));
+const visibleTasks = computed(() => (visibleCategories.value.includes('task') ? tasks.value : []));
+
+const taskDialogId = ref<string | null>(null);
+const taskDialogTask = computed(() => tasks.value.find((t) => t.id === taskDialogId.value) ?? null);
 
 // --- TBA import ---
 const canImport = computed(() => canEdit.value && !!activeEvent.value && sync.online && sync.hasServerSession);
@@ -106,20 +117,27 @@ watch(() => [activeEvent.value?.event_key, canImport.value], autoImport);
 
 // --- Dialogs ---
 const settingsOpen = ref(false);
-const itemDialog = ref<{ item: ScheduleItem | null; draft: { start: string; end: string } | null } | null>(null);
+// The dialog gets the live copy of an existing item (looked up by id), so its
+// autosave never writes back stale fields.
+const itemDialog = ref<{ itemId: string | null; draft: { start: string; end: string } | null } | null>(null);
+const dialogItem = computed(() => (itemDialog.value?.itemId ? items.value.find((i) => i.id === itemDialog.value!.itemId) ?? null : null));
+// Close the dialog if its item is deleted (e.g. from another device).
+watch(dialogItem, (item) => {
+  if (!item && itemDialog.value?.itemId) itemDialog.value = null;
+});
 
 function onEventSaved(_event: ActiveEvent, changed: boolean) {
   if (changed && canImport.value) runImport();
 }
 
 function onSelect(range: { start: string; end: string }) {
-  itemDialog.value = { item: null, draft: range };
+  itemDialog.value = { itemId: null, draft: range };
 }
 
 function newEvent() {
-  const start = new Date();
+  const start = new Date(clockNow());
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
-  itemDialog.value = { item: null, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
+  itemDialog.value = { itemId: null, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
 }
 
 async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: () => void) {
@@ -157,8 +175,8 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
         </div>
         <div class="filters" role="group" aria-label="Show event types">
           <label v-for="c in categories" :key="c" class="filter">
-            <input v-model="visibleCategories" type="checkbox" :value="c" :style="{ accentColor: categoryColors[c] }" />
-            {{ categoryLabels[c] }}
+            <input v-model="visibleCategories" type="checkbox" :value="c" :style="{ accentColor: filterColors[c] }" />
+            {{ filterLabels[c] }}
           </label>
         </div>
         <div v-if="canEdit" class="actions">
@@ -183,10 +201,12 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
         <ScheduleCalendar
           :event="activeEvent"
           :items="visibleItems"
+          :tasks="visibleTasks"
           :can-edit="canEdit"
           @select="onSelect"
-          @open="(item) => (itemDialog = { item, draft: null })"
+          @open="(item) => (itemDialog = { itemId: item.id, draft: null })"
           @reschedule="onReschedule"
+          @open-task="(task) => (taskDialogId = task.id)"
         />
       </div>
     </template>
@@ -196,10 +216,19 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
       v-if="activeEvent"
       :open="!!itemDialog"
       :event-key="activeEvent.event_key"
-      :item="itemDialog?.item ?? null"
+      :item="dialogItem"
       :draft="itemDialog?.draft ?? null"
       :can-edit="canEdit"
       @close="itemDialog = null"
+    />
+    <TaskDialog
+      v-if="activeEvent"
+      :open="!!taskDialogTask"
+      :event-key="activeEvent.event_key"
+      :task="taskDialogTask"
+      :matches="matches"
+      :can-edit="session.hasRole('member')"
+      @close="taskDialogId = null"
     />
   </div>
 </template>

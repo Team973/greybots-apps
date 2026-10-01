@@ -31,7 +31,10 @@ watch(
 
 <style scoped>
 .app-dialog {
-  width: min(520px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 24px));
+  /* Compact by design; scrolling is only a fallback on very short screens. */
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   padding: 0;
   border: none;
   border-radius: 12px;
@@ -47,20 +50,21 @@ watch(
 .dialog-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 20px;
+  gap: 8px;
+  padding: 14px 16px;
 }
 
 h2 {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 1.05rem;
 }
 
 .dialog-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 2px;
 }
 </style>

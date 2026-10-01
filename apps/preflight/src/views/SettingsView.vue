@@ -4,6 +4,7 @@ import TextInput from '@greybots/common/components/TextInput.vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import CrewManager from '@/components/CrewManager.vue';
+import TestingClockCard from '@/components/TestingClockCard.vue';
 import SyncPanel from '@/components/SyncPanel.vue';
 import { appVersion, isDesktopBuild } from '@/lib/constants';
 import { isStoragePersistent } from '@/lib/db';
@@ -64,6 +65,8 @@ async function reset() {
   <SyncPanel />
 
   <CrewManager v-if="device.isKiosk && session.hasRole('admin')" />
+
+  <TestingClockCard v-if="session.hasRole('admin')" />
 
   <div v-if="canManageDevice" class="card">
     <h2>Reset device</h2>
