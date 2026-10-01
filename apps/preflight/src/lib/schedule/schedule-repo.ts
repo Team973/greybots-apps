@@ -3,15 +3,17 @@ import { getSetting, saveSetting } from '@/lib/settings';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
 import { getScoutingCompletion } from './scouting';
 import { applyTiming, getMatchTiming } from './timing';
-import type { ActiveEvent, MilestonePhase, ScheduleCategory, ScheduleItem } from './types';
+import { normalizeTeam, type ActiveEvent, type MilestonePhase, type ScheduleCategory, type ScheduleItem } from './types';
 
 export const scheduleTable = 'scheduleItems';
 const activeEventKey = 'active_event';
 
 // --- Active event ---------------------------------------------------------
 
-export function getActiveEvent(): Promise<ActiveEvent | null> {
-    return getSetting<ActiveEvent>(activeEventKey);
+export async function getActiveEvent(): Promise<ActiveEvent | null> {
+    const event = await getSetting<ActiveEvent>(activeEventKey);
+    // Events saved before lettered teams were supported hold a number.
+    return event ? { ...event, team_number: normalizeTeam(event.team_number) } : null;
 }
 
 export function saveActiveEvent(value: ActiveEvent, editorName: string | null): Promise<void> {

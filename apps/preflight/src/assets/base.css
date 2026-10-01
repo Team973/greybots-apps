@@ -154,16 +154,29 @@ dialog .form-row {
   font-size: 0.9rem;
 }
 
-/* Printing (e.g. battery labels): the app normally scrolls inside a fixed
-   #app, which would print only what's on screen. Let the page flow, and drop
-   the chrome. */
+/* Printing (battery labels, the event script): the app normally lives in a
+   fixed, viewport-high #app laid out with flexbox, inside a flex body. On
+   paper that box is one page tall and can't be split, so page breaks inside
+   the first page's worth of content are ignored (everything there runs
+   together) while content past it breaks normally. Turn the whole chain into
+   ordinary flowing blocks, and drop the chrome. */
 @media print {
+  html,
+  body {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
   #app {
     position: static;
+    display: block;
+    height: auto;
     overflow: visible;
   }
 
   .main-content {
+    display: block;
     margin-top: 0;
     padding: 0;
   }
@@ -171,6 +184,26 @@ dialog .form-row {
   .no-print {
     display: none !important;
   }
+}
+
+/* Chart colors (the Stats page). Three series, in a fixed order, checked to
+   stay distinguishable for color-blind readers against each theme's surface.
+   The dark values are the same hues stepped for the dark surface. */
+.viz-root {
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #eb6834;
+  --viz-series-3: #1baf7a;
+  --viz-axis: rgba(128, 128, 128, 0.5);
+  --viz-tooltip-bg: #1a1a19;
+  --viz-tooltip-fg: #ffffff;
+}
+
+html[theme='dark'] .viz-root {
+  --viz-series-1: #3987e5;
+  --viz-series-2: #d95926;
+  --viz-series-3: #199e70;
+  --viz-tooltip-bg: #f2f2f0;
+  --viz-tooltip-fg: #0b0b0b;
 }
 
 /* Quick-create chips (task and repair presets). They wrap, so every option

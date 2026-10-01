@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Not authenticated." }, 401);
   }
 
-  let body: { action?: string; event_id?: string; team_number?: number };
+  let body: { action?: string; event_id?: string; team_number?: number | string };
   try {
     body = await req.json();
   } catch {
@@ -95,9 +95,11 @@ Deno.serve(async (req) => {
   }
 
   if (action === "get_team_schedule") {
-    const teamNumber = Number(body.team_number);
-    if (!Number.isInteger(teamNumber) || teamNumber <= 0) {
-      return jsonResponse({ error: "team_number is required." }, 400);
+    // A team number, optionally with one letter: offseason events give some
+    // teams a letter (e.g. 973B), and TBA keys those as "frc973B".
+    const teamNumber = String(body.team_number ?? "").trim().toUpperCase();
+    if (!/^[1-9]\d{0,4}[A-Z]?$/.test(teamNumber)) {
+      return jsonResponse({ error: "team_number is required (e.g. 973 or 973B)." }, 400);
     }
 
     const [eventResponse, matchesResponse] = await Promise.all([

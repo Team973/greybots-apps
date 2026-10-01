@@ -223,6 +223,15 @@ Inbound --(Robot arrived)--> Pending: checklist 1 ... N --> Robot Ready
   field*; "Back from practice field" then starts the pre-match checklist from
   the top in a new run, since the robot has been driven. From the practice
   checklist, "Back to pre-match" does the same without going.
+- **Break:** "Take a break" (from a checklist or from repairs) pauses the pit
+  while the robot isn't ready, e.g. for lunch. "Back to work" returns to
+  exactly where the pit was: the same checklist in the same run, with its
+  checked steps kept. Break time is never counted in the stats.
+- **Ending and starting the day:** "End the day" runs the end of day
+  checklist; finishing it puts the pit in *Day ended*, where nothing is timed
+  (so a laptop left on overnight doesn't run up a timer). It can be called
+  off part-way, which goes back to where the pit was. "Start day" then runs
+  the start of day checklist, and finishing that goes to pre-match.
 - **Robot Ready / Away:** the status banner (with "Robot departed" or "Match
   over"), the schedule strip, and tasks. (The `CountdownTimer` component is
   in `@greybots/common` but not shown for now.)
@@ -243,9 +252,11 @@ How it's stored:
   overwrite each other. Arriving starts a *run* (`run_id`). Each checklist
   is its own Pending entry (`checklist_index`), which is what resets the
   timer. Departing records the match the robot left for (`match_key`). A
-  Pending entry for the practice field checklist has `checklist_id =
-  'practice'` instead of an index, and `practice` is the status while the
-  robot is at the practice field.
+  Pending entry for a checklist outside the sequence has a `checklist_id`
+  (`practice`, `start_of_day`, or `end_of_day`) instead of an index.
+  `practice`, `break`, and `day_ended` are statuses of their own. Going
+  back from a break (or a called-off end of day) appends a copy of the entry
+  before it (`resumePrevious`), so the log stays append-only.
 - **Automatic Inbound:** `effectiveStatus()` shows Away as Inbound once that
   match has ended. This is computed, not written, so no device writes
   transitions in the background. The only transitions written automatically
@@ -296,11 +307,10 @@ in the list stays selectable on that record.
 
 - **Pit checklists:** the standard sequence above, run on the Overview every
   pit visit (the `checklist_sequence` setting).
-- **Practice field checklist:** the one built-in checklist (the
-  `practice_checklist` setting, id `practice`), run from the Overview as
-  described above. Until it's edited it's a suggested one: swap in a charged
-  battery, bumpers installed (with the swap hint), spool packed, and driver
-  station ready, the last two for Programming.
+- **Flow checklists:** three built-in checklists that the pit flow runs at
+  fixed points, each with a fixed id and its own setting: `practice` (before
+  the practice field), `start_of_day`, and `end_of_day`. Each is a suggested
+  checklist until a lead edits it on Pit setup.
 - **Other checklists:** started by hand from the Checklists page
   (`/checklists`) when needed, e.g. start of day, a bumper swap, or a
   subsystem deep dive (the `adhoc_checklists` setting). Each run is a
@@ -410,6 +420,64 @@ view of the whole event, built on FullCalendar's time grid.
   anything else inside it (e.g. `uuidFromName`, which hashes) makes Dexie
   lose track of what the query read, and it stops updating. Compute such
   values outside the query.
+
+## Stats
+
+`/stats` (members and above; `src/lib/stats/pit-stats.ts`) shows how long the
+pit takes and where the time goes. Nothing is stored for it: everything is
+worked out from the robot status log, where the time in a state is the gap to
+the next entry, and from the checked steps.
+
+- A **turnaround** is one pit visit, from the robot coming in to it being
+  ready. Its time is the time on the pit checklists plus the time in repairs.
+  The practice field side trip (its checklist and being at the practice field)
+  and time sitting Ready never count. A turnaround is only counted once the
+  robot reached Ready.
+- **Headline numbers:** average (and median) turnaround with and without
+  repairs, average repair time, practice field prep time, and the average
+  time on each checklist with repairs left out. A run of a checklist only
+  counts once the pit moved on from it.
+- **Each turnaround** is a stacked bar: post-match (every checklist before
+  the pre-match one), repairs, pre-match (that checklist and any after).
+- **Histograms** show how each of those times is spread.
+- **Slowest steps:** a step's time is the gap from the step before it,
+  counting only time spent on that checklist, so a repair in the middle isn't
+  blamed on the next step.
+- **Not counted:** breaks, the start and end of day checklists, and anything
+  after the day is ended.
+- **Clean up** (admins, `cleanup.ts`): remove one turnaround with the ✕ beside
+  its bar (for one left running because the day wasn't ended), or clear all
+  timing data from before a chosen match. Both soft-delete status log entries
+  and checked steps, never the newest status entry (that's the pit's current
+  state), and never repairs, tasks, notes, or batteries.
+- The chart colors (`.viz-root` in `base.css`) are a fixed three-series
+  palette checked for color-blind separation in both themes. Stages are also
+  named in a legend and available as a table, so color is never the only cue.
+
+## Event script
+
+`/script` (leads and admins; `src/lib/script/event-script.ts`) puts the
+rest of the event on paper, for people who'd rather work from a printout.
+
+- **One checklist per sheet**, so each can be handed to whoever is doing it.
+- **Match pages:** for each match of ours that hasn't started yet (on the app
+  clock), a sheet per pre-match checklist and a sheet per post-match one.
+  With one of each, a match prints as the front and back of a page. The
+  pre-match sheets have the match time, when to start prep and when to queue,
+  our alliance, partners and opponents, and the pit checklists for that match
+  with the smart parts already worked out: whether to swap bumpers and from
+  which color to which, and which battery is next in the rotation. Which
+  checklists are pre-match and which are post-match follows the same rule the
+  Overview uses to tie a checklist to a match.
+- **Blank checklists:** one page per checklist (the pit sequence, the practice
+  field checklist, and the ad-hoc ones) with nothing filled in and the
+  conditions spelled out, for playoffs and anything else that can't be known
+  ahead.
+- **Printing:** "Print / save as PDF" opens the browser's print dialog, which
+  prints or saves a PDF. Only the sheets print (letter, one per page, black
+  on white whatever the app theme). Steps that record something get a place
+  to write it. It's built from what's on the device, so it works offline.
+- Times are a snapshot: they're the estimates at the moment of printing.
 
 ## Pit display
 

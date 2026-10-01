@@ -6,6 +6,7 @@ import BatteriesView from '@/views/BatteriesView.vue';
 import BatteryDetailView from '@/views/BatteryDetailView.vue';
 import BatteryLabelsView from '@/views/BatteryLabelsView.vue';
 import ChecklistsView from '@/views/ChecklistsView.vue';
+import EventScriptView from '@/views/EventScriptView.vue';
 import LoginView from '@/views/LoginView.vue';
 import NotesView from '@/views/NotesView.vue';
 import OverviewView from '@/views/OverviewView.vue';
@@ -15,6 +16,7 @@ import RepairsView from '@/views/RepairsView.vue';
 import SetupView from '@/views/SetupView.vue';
 import ScheduleView from '@/views/ScheduleView.vue';
 import SettingsView from '@/views/SettingsView.vue';
+import StatsView from '@/views/StatsView.vue';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -47,6 +49,9 @@ const router = createRouter({
     // It's also the one page observers (accounts not yet made members) get.
     { path: '/display', name: 'display', component: PitDisplayView, meta: { title: 'Pit display', bare: true, kioskPublic: true } },
     { path: '/pit-setup', name: 'pit-setup', component: PitSetupView, meta: { title: 'Pit setup', minRole: 'lead' } },
+    { path: '/stats', name: 'stats', component: StatsView, meta: { title: 'Stats', minRole: 'member' } },
+    // The printable event script, for leads and admins.
+    { path: '/script', name: 'script', component: EventScriptView, meta: { title: 'Event script', minRole: 'lead' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings', minRole: 'member' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]

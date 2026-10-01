@@ -12,7 +12,7 @@ import { activeStepIndex } from '@/lib/checklists/smart';
 import { activeLayout, defaultDisplayConfig, getDisplayConfig, type DisplayConfig } from '@/lib/display/display';
 import { useLiveQuery } from '@/lib/live-query';
 import { activeRepairs, listRepairs, type Repair } from '@/lib/repairs/repairs';
-import { isPracticeChecklist, robotStatusColors } from '@/lib/robot-status/robot-status';
+import { flowChecklistOf, robotStatusColors } from '@/lib/robot-status/robot-status';
 import { useRobotFlow } from '@/lib/robot-status/use-robot-flow';
 import { formatTime } from '@/lib/schedule/dates';
 import { currentPhase, milestoneState, sortMilestones } from '@/lib/schedule/milestones';
@@ -63,13 +63,24 @@ const widgetRows = computed(() => {
 // --- Checklist in progress ---
 const sequence = flow.sequence;
 const checklistIndex = computed(() => flow.latest.value?.checklist_index ?? 0);
-const onPractice = computed(() => isPracticeChecklist(flow.latest.value));
+// The practice field, start of day, and end of day checklists run outside the
+// sequence.
+const flowChecklist = computed(() => flowChecklistOf(flow.latest.value));
 const pitChecklist = computed(() => {
   if (status.value !== 'pending') return null;
-  return onPractice.value ? flow.practice.value : sequence.value.checklists[checklistIndex.value] ?? null;
+  switch (flowChecklist.value) {
+    case 'practice':
+      return flow.practice.value;
+    case 'start_of_day':
+      return flow.startOfDay.value;
+    case 'end_of_day':
+      return flow.endOfDay.value;
+    default:
+      return sequence.value.checklists[checklistIndex.value] ?? null;
+  }
 });
 const pitLink = computed(() =>
-  onPractice.value
+  flowChecklist.value
     ? { label: null, matchKey: null }
     : resolveMatchLink(sequenceMatchLink(sequence.value, checklistIndex.value), matchContext(matches.value, now.value))
 );
@@ -97,13 +108,18 @@ const headline = computed(() => {
       return 'Robot Ready';
     case 'practice':
       return 'At practice field';
+    case 'break':
+      return 'On break';
+    case 'day_ended':
+      return 'Day ended';
     case 'away':
       return match ? `Away · ${match.title}` : 'Away';
     default:
       return 'Inbound';
   }
 });
-const elapsed = computed(() => (flow.elapsedMs.value === null ? null : formatClock(flow.elapsedMs.value)));
+// No timer once the day has ended: nothing is running.
+const elapsed = computed(() => (flow.elapsedMs.value === null || status.value === 'day_ended' ? null : formatClock(flow.elapsedMs.value)));
 
 // --- Matches ---
 const nextMatch = computed(() => matches.value.find((m) => Date.parse(m.start_at) > now.value) ?? null);

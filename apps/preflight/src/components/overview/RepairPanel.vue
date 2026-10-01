@@ -22,7 +22,7 @@ const props = defineProps<{
   prep: MatchPrep;
   now: number;
 }>();
-const emit = defineEmits<{ resume: [index: number]; history: [] }>();
+const emit = defineEmits<{ resume: [index: number]; break: []; history: [] }>();
 
 const colors = robotStatusColors.repair;
 const fromIndex = computed(() => props.entry.checklist_index);
@@ -53,6 +53,7 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
         Go to {{ prematch!.checklist.name }}
       </button>
     </div>
+    <button v-if="canAct" class="break-link" :disabled="busy" @click="emit('break')">Take a break</button>
     <button class="history-link" @click="emit('history')">Status history</button>
   </section>
 </template>
@@ -131,6 +132,21 @@ const showPrematch = computed(() => !!prematch.value && prematch.value.index !==
 
 .hero-action:disabled {
   opacity: 0.6;
+}
+
+.break-link {
+  position: absolute;
+  left: 20px;
+  bottom: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.8;
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .history-link {

@@ -5,8 +5,10 @@ import { getSetting, saveSetting } from '@/lib/settings';
 // - the pit roles roster: who currently does each job,
 // - one standard sequence of checklists that runs every time the robot
 //   comes back to the pit, and
-// - ad-hoc checklists that are started by hand when needed (start of day,
-//   a subsystem deep dive, a bumper swap).
+// - the practice field, start of day, and end of day checklists, which the
+//   pit flow runs at fixed points, and
+// - ad-hoc checklists that are started by hand when needed (a subsystem
+//   deep dive, a bumper swap).
 
 export interface PitRole {
     id: string;
@@ -83,11 +85,22 @@ export interface ChecklistSequence {
 const pitRolesKey = 'pit_roles';
 const sequenceKey = 'checklist_sequence';
 const adhocKey = 'adhoc_checklists';
-const practiceKey = 'practice_checklist';
-
-// The practice field checklist is a fixed part of the pit flow (see
-// lib/robot-status), so it has a fixed id rather than a generated one.
+// Three checklists are a fixed part of the pit flow (see lib/robot-status),
+// so they have fixed ids rather than generated ones:
+// - practice:     before the robot goes to the practice field
+// - start_of_day: when the day is started
+// - end_of_day:   when the day is ended
 export const practiceChecklistId = 'practice';
+export const startOfDayChecklistId = 'start_of_day';
+export const endOfDayChecklistId = 'end_of_day';
+export type FlowChecklistId = typeof practiceChecklistId | typeof startOfDayChecklistId | typeof endOfDayChecklistId;
+export const flowChecklistIds: FlowChecklistId[] = [practiceChecklistId, startOfDayChecklistId, endOfDayChecklistId];
+
+const flowChecklistKeys: Record<FlowChecklistId, string> = {
+    practice: 'practice_checklist',
+    start_of_day: 'start_of_day_checklist',
+    end_of_day: 'end_of_day_checklist'
+};
 
 export async function getPitRoles(): Promise<PitRole[]> {
     return (await getSetting<{ roles: PitRole[] }>(pitRolesKey))?.roles ?? [];
@@ -113,23 +126,27 @@ export function saveAdhocChecklists(checklists: ChecklistDef[], editorName: stri
     return saveSetting(adhocKey, { checklists }, editorName);
 }
 
-// What to do before the robot goes to the practice field. Until a lead edits
-// it, this is the suggested checklist, with its roles matched by name to the
+// The checklists that are a fixed part of the pit flow. Until a lead edits
+// one, it's a suggested checklist with its roles matched by name to the
 // current roster.
-export async function getPracticeChecklist(): Promise<ChecklistDef> {
-    return (await getSetting<ChecklistDef>(practiceKey)) ?? defaultPracticeChecklist(await getPitRoles());
+export async function getFlowChecklist(id: FlowChecklistId): Promise<ChecklistDef> {
+    return (await getSetting<ChecklistDef>(flowChecklistKeys[id])) ?? defaultFlowChecklist(id, await getPitRoles());
 }
 
-export function savePracticeChecklist(checklist: ChecklistDef, editorName: string | null) {
-    return saveSetting(practiceKey, { ...checklist, id: practiceChecklistId }, editorName);
+export function saveFlowChecklist(id: FlowChecklistId, checklist: ChecklistDef, editorName: string | null) {
+    return saveSetting(flowChecklistKeys[id], { ...checklist, id }, editorName);
 }
 
-export function defaultPracticeChecklist(roles: PitRole[]): ChecklistDef {
+export const getPracticeChecklist = () => getFlowChecklist(practiceChecklistId);
+export const getStartOfDayChecklist = () => getFlowChecklist(startOfDayChecklistId);
+export const getEndOfDayChecklist = () => getFlowChecklist(endOfDayChecklistId);
+
+export function defaultFlowChecklist(id: FlowChecklistId, roles: PitRole[]): ChecklistDef {
     const byName = new Map(roles.map((r) => [r.name.trim().toLowerCase(), r.id]));
-    const ids = (...names: string[]) => names.map((n) => byName.get(n.toLowerCase())).filter((id): id is string => !!id);
+    const ids = (...names: string[]) => names.map((n) => byName.get(n.toLowerCase())).filter((roleId): roleId is string => !!roleId);
     const step = (key: string, title: string, instructions: string, roleNames: string[], extra: Partial<ChecklistStep> = {}): ChecklistStep => ({
         // Stable ids, so reading the default twice gives the same checklist.
-        id: `practice-${key}`,
+        id: `${id}-${key}`,
         title,
         instructions,
         role_ids: ids(...roleNames),
@@ -137,21 +154,58 @@ export function defaultPracticeChecklist(roles: PitRole[]): ChecklistDef {
         input: 'check',
         ...extra
     });
+
+    if (id === practiceChecklistId) {
+        return {
+            id,
+            name: 'Practice field',
+            match_link: 'none',
+            steps: [
+                step('battery', 'Swap in a charged battery', 'Put in the next charged battery and record which one it is.', ['Battery'], { input: 'battery' }),
+                step(
+                    'bumpers',
+                    'Bumpers installed',
+                    "Either color is fine for the practice field. If the next match is the other color, swapping now saves doing it before the match.",
+                    ['Mechanical', 'Drive Team'],
+                    { condition: 'bumper_hint' }
+                ),
+                step('spool', 'Spool packed', 'Tether spool packed and going with the robot.', ['Programming']),
+                step('driver-station', 'Driver station ready', 'Laptop charged, controllers plugged in, and the right code deployed.', ['Programming'])
+            ]
+        };
+    }
+
+    if (id === startOfDayChecklistId) {
+        return {
+            id,
+            name: 'Start of day',
+            match_link: 'none',
+            steps: [
+                step('mechanical', 'Robot mechanical inspection', 'Overall walk-around: frame, mechanisms, and anything worked on last night.', ['Mechanical']),
+                step('fasteners', 'Fastener inspection', 'Check the paint-pen marks on critical bolts; re-torque any that moved.', ['Mechanical']),
+                step('electrical', 'Electrical inspection', 'Wiring secure, no pinched or chafed wires, connectors seated.', ['Electrical']),
+                step('breaker', 'Main breaker verification', 'Breaker firmly mounted, terminals tight, cover in place.', ['Electrical']),
+                step('radio', 'Radio / network verification', 'Radio powered and configured for this event; robot connects.', ['Programming'], { input: 'pass_fail' }),
+                step('driver-station', 'Driver Station verification', 'Laptop charged, controllers recognized, dashboard and code version correct.', ['Drive Team', 'Programming'], { input: 'pass_fail' }),
+                step('vision', 'Vision system verification', 'Cameras connected and seeing targets; pipelines correct for this field.', ['Programming'], { input: 'pass_fail' }),
+                step('charging', 'Battery charging equipment inspection', 'Chargers on, every battery charging or charged, no damaged leads.', ['Battery']),
+                step('spares', 'Spare parts and tools verification', 'Spares bins stocked, tools back in place, consumables topped up.', ['Pit Lead'])
+            ]
+        };
+    }
+
     return {
-        id: practiceChecklistId,
-        name: 'Practice field',
+        id,
+        name: 'End of day',
         match_link: 'none',
         steps: [
-            step('battery', 'Swap in a charged battery', 'Put in the next charged battery and record which one it is.', ['Battery'], { input: 'battery' }),
-            step(
-                'bumpers',
-                'Bumpers installed',
-                "Either color is fine for the practice field. If the next match is the other color, swapping now saves doing it before the match.",
-                ['Mechanical', 'Drive Team'],
-                { condition: 'bumper_hint' }
-            ),
-            step('spool', 'Spool packed', 'Tether spool packed and going with the robot.', ['Programming']),
-            step('driver-station', 'Driver station ready', 'Laptop charged, controllers plugged in, and the right code deployed.', ['Programming'])
+            step('repairs', 'Review open repairs', "Anything still open goes on tomorrow's list. Log what isn't logged yet.", ['Pit Lead']),
+            step('batteries', 'Batteries on chargers', 'Every battery on a charger, including the one that was in the robot.', ['Battery']),
+            step('power-down', 'Robot powered down', 'Main breaker off. Battery out of the robot.', ['Electrical']),
+            step('laptops', 'Driver station and laptops charging', 'Plugged in, or packed to go back to the hotel.', ['Programming', 'Drive Team']),
+            step('tools', 'Tools and spares put away', 'Tools back in their places; restock list written for anything used up.', ['Mechanical']),
+            step('pit', 'Pit tidy and secured', 'Floor clear, valuables packed or locked, robot covered.', ['Pit Lead']),
+            step('tomorrow', "Confirm tomorrow's first match", 'First match time and when the pit opens. Tell the team.', ['Pit Lead'])
         ]
     };
 }
@@ -272,22 +326,6 @@ export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequen
             ]
         },
         adhoc: [
-            {
-                id: newId(),
-                name: 'Start of day',
-                match_link: 'none',
-                steps: [
-                    step('Robot mechanical inspection', 'Overall walk-around: frame, mechanisms, and anything worked on last night.', [roles.mech]),
-                    step('Fastener inspection', 'Check the paint-pen marks on critical bolts; re-torque any that moved.', [roles.mech]),
-                    step('Electrical inspection', 'Wiring secure, no pinched or chafed wires, connectors seated.', [roles.elec]),
-                    step('Main breaker verification', 'Breaker firmly mounted, terminals tight, cover in place.', [roles.elec]),
-                    step('Radio / network verification', 'Radio powered and configured for this event; robot connects.', [roles.prog], { input: 'pass_fail' }),
-                    step('Driver Station verification', 'Laptop charged, controllers recognized, dashboard and code version correct.', [roles.drive, roles.prog], { input: 'pass_fail' }),
-                    step('Vision system verification', 'Cameras connected and seeing targets; pipelines correct for this field.', [roles.prog], { input: 'pass_fail' }),
-                    step('Battery charging equipment inspection', 'Chargers on, every battery charging or charged, no damaged leads.', [roles.battery]),
-                    step('Spare parts and tools verification', 'Spares bins stocked, tools back in place, consumables topped up.', [roles.lead])
-                ]
-            },
             {
                 id: newId(),
                 name: 'Bumper swap',

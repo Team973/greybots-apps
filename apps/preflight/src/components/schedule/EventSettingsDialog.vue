@@ -9,7 +9,7 @@ import { defaultTeamNumber } from '@/lib/constants';
 import { isValidDateRange } from '@/lib/schedule/dates';
 import { saveActiveEvent } from '@/lib/schedule/schedule-repo';
 import { fetchTeamSchedule } from '@/lib/schedule/tba-import';
-import type { ActiveEvent } from '@/lib/schedule/types';
+import { isValidTeam, normalizeTeam, type ActiveEvent } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
 import { useSyncStore } from '@/stores/sync-store';
 
@@ -36,9 +36,8 @@ const canLookUp = computed(() => sync.online && sync.hasServerSession);
 const normalizedKey = () => eventKey.value.trim().toLowerCase();
 
 function validate(): string | null {
-  const team = Number(teamNumber.value);
   if (!/^\d{4}[a-z0-9]+$/.test(normalizedKey())) return 'Enter a TBA event key, like 2026cc';
-  if (!Number.isInteger(team) || team <= 0) return 'Enter a valid team number';
+  if (!isValidTeam(teamNumber.value)) return 'Enter a team number, like 973 (or 973B for an offseason B team)';
   if (!isValidDateRange(startDate.value, endDate.value)) return 'Enter a first and last day (last on or after first)';
   return null;
 }
@@ -46,7 +45,7 @@ function validate(): string | null {
 function value(): ActiveEvent {
   return {
     event_key: normalizedKey(),
-    team_number: Number(teamNumber.value),
+    team_number: normalizeTeam(teamNumber.value),
     name: name.value.trim() || normalizedKey(),
     start_date: startDate.value,
     end_date: endDate.value,
@@ -87,7 +86,7 @@ async function lookUp() {
   error.value = null;
   busy.value = true;
   try {
-    const { event } = await fetchTeamSchedule(normalizedKey(), Number(teamNumber.value));
+    const { event } = await fetchTeamSchedule(normalizedKey(), normalizeTeam(teamNumber.value));
     name.value = event.name;
     startDate.value = event.start_date;
     endDate.value = event.end_date;
@@ -124,7 +123,7 @@ async function close() {
   <AppDialog :open="open" :title="isNew ? 'Set up event' : 'Event settings'" @close="close">
     <div class="form-row">
       <label class="field"><span>TBA event key</span><input v-model="eventKey" placeholder="2026cc" autocapitalize="off" @change="autosave.trigger" /></label>
-      <label class="field team"><span>Team</span><input v-model="teamNumber" inputmode="numeric" @change="autosave.trigger" /></label>
+      <label class="field team"><span>Team</span><input v-model="teamNumber" autocapitalize="characters" placeholder="973" @change="autosave.trigger" /></label>
       <md-text-button class="lookup" :disabled="busy || !canLookUp || !eventKey" @click="lookUp">Look up on TBA</md-text-button>
     </div>
     <label class="field"><span>Event name</span><input v-model="name" @change="autosave.trigger" /></label>
