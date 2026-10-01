@@ -4,6 +4,7 @@ import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import ChecklistEditor from '@/components/checklists/ChecklistEditor.vue';
+import DisplayLayoutEditor from '@/components/display/DisplayLayoutEditor.vue';
 import { useAutosave } from '@/lib/autosave';
 import {
   defaultPitSetup,
@@ -180,6 +181,7 @@ const sequenceAutoLink = (index: number) =>
     </div>
 
     <div v-if="loaded && !(isEmpty && canEdit)" class="columns">
+      <div class="checklist-column">
       <!-- Roles roster -->
       <section class="panel roles-panel">
         <header class="panel-header">
@@ -196,6 +198,8 @@ const sequenceAutoLink = (index: number) =>
         <p v-if="!roles.length" class="hint">No roles yet.</p>
         <button v-if="canEdit" class="add-link" @click="addRole">+ Add role</button>
       </section>
+      <DisplayLayoutEditor :can-edit="canEdit" />
+      </div>
 
       <div class="checklist-column">
         <!-- Checklist sequence -->

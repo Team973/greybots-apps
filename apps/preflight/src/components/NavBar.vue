@@ -18,19 +18,23 @@ async function signOut() {
 <template>
   <header class="nav">
     <RouterLink to="/" class="brand">Preflight</RouterLink>
+    <!-- The page links scroll sideways when they don't all fit, so the sync
+         status and Lock are always in reach. -->
+    <nav class="links" aria-label="Pages">
+      <RouterLink to="/" class="nav-button" exact-active-class="router-link-active" active-class="">Overview</RouterLink>
+      <RouterLink v-if="session.hasRole('member')" to="/schedule" class="nav-button">Schedule</RouterLink>
+      <RouterLink v-if="session.hasRole('member')" to="/checklists" class="nav-button">Checklists</RouterLink>
+      <RouterLink v-if="session.hasRole('member')" to="/repairs" class="nav-button">Repairs</RouterLink>
+      <RouterLink v-if="session.hasRole('member')" to="/batteries" class="nav-button">Batteries</RouterLink>
+      <RouterLink v-if="session.hasRole('member')" to="/notes" class="nav-button">Notes</RouterLink>
+      <RouterLink v-if="session.hasRole('member')" to="/display" class="nav-button">Display</RouterLink>
+      <RouterLink v-if="session.hasRole('lead')" to="/pit-setup" class="nav-button">Pit setup</RouterLink>
+      <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
+    </nav>
     <SyncStatusChip />
-    <span class="spacer"></span>
     <span v-if="session.user" class="user">
       {{ session.user.name }} <span class="role">{{ roleLabel(session.user.role) }}</span>
     </span>
-    <RouterLink to="/" class="nav-button" exact-active-class="router-link-active" active-class="">Overview</RouterLink>
-    <RouterLink v-if="session.hasRole('member')" to="/schedule" class="nav-button">Schedule</RouterLink>
-    <RouterLink v-if="session.hasRole('member')" to="/checklists" class="nav-button">Checklists</RouterLink>
-    <RouterLink v-if="session.hasRole('member')" to="/repairs" class="nav-button">Repairs</RouterLink>
-    <RouterLink v-if="session.hasRole('member')" to="/batteries" class="nav-button">Batteries</RouterLink>
-    <RouterLink v-if="session.hasRole('member')" to="/notes" class="nav-button">Notes</RouterLink>
-    <RouterLink v-if="session.hasRole('lead')" to="/pit-setup" class="nav-button">Pit setup</RouterLink>
-    <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
     <button class="nav-button" @click="signOut">{{ device.isKiosk ? 'Lock' : 'Sign out' }}</button>
   </header>
 </template>
@@ -59,8 +63,18 @@ async function signOut() {
   font-weight: 600;
 }
 
-.spacer {
+.links {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.links::-webkit-scrollbar {
+  display: none;
 }
 
 .user {
@@ -75,13 +89,14 @@ async function signOut() {
 }
 
 .nav-button {
-  padding: 8px 12px;
+  padding: 8px 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -99,7 +114,8 @@ async function signOut() {
   }
 }
 
-@media (max-width: 600px) {
+/* The name gives way to the page links first. */
+@media (max-width: 1400px) {
   .user {
     display: none;
   }

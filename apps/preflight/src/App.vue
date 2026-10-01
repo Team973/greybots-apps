@@ -22,11 +22,14 @@ const session = useSessionStore();
 const route = useRoute();
 const router = useRouter();
 
-const showNav = computed(() => session.isSignedIn && route.meta.requiresAuth !== false);
+// Full-screen pages (the pit display) take over the whole window.
+const bare = computed(() => !!route.meta.bare);
+const showNav = computed(() => session.isSignedIn && route.meta.requiresAuth !== false && !bare.value);
 
-// Shared kiosk devices lock themselves after a period of inactivity.
+// Shared kiosk devices lock themselves after a period of inactivity, except
+// on the pit display, which is meant to stay up all day untouched.
 useIdleLock(
-  () => device.isKiosk && session.isSignedIn,
+  () => device.isKiosk && session.isSignedIn && !bare.value,
   () => device.config?.idleLockMinutes ?? 0,
   async () => {
     await session.signOut();
