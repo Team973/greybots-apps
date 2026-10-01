@@ -38,6 +38,16 @@ export const taskColor = '#00897b';
 export const filterLabels: Record<ScheduleFilter, string> = { ...categoryLabels, task: 'Tasks' };
 export const filterColors: Record<ScheduleFilter, string> = { ...categoryColors, task: taskColor };
 
+// "973b " -> "973B". Also accepts the number older saved events hold.
+export function normalizeTeam(team: string | number | null | undefined): string {
+    return String(team ?? '').trim().toUpperCase();
+}
+
+// A team number, optionally followed by one letter.
+export function isValidTeam(team: string): boolean {
+    return /^[1-9]\d{0,4}[A-Z]?$/.test(normalizeTeam(team));
+}
+
 export function matchColor(alliance: 'red' | 'blue' | null | undefined): string {
     return alliance === 'red' ? '#c62828' : alliance === 'blue' ? '#1565c0' : '#616161';
 }
@@ -52,8 +62,10 @@ export interface MatchInfo {
     match_number: number;
     // Our alliance in this match, if we're in it.
     alliance: 'red' | 'blue' | null;
-    red: number[];
-    blue: number[];
+    // Teams as TBA names them: "973", or "973B" for an offseason B team.
+    // (Rows imported before lettered teams were supported hold numbers.)
+    red: (string | number)[];
+    blue: (string | number)[];
     // ISO timestamps from TBA; null when TBA doesn't have them yet.
     scheduled_time: string | null;
     predicted_time: string | null;
@@ -114,7 +126,9 @@ export interface ScheduleItem extends SyncedRecord {
 // The event the schedule is built around. Shared by every device.
 export interface ActiveEvent {
     event_key: string;
-    team_number: number;
+    // Our team at this event. A string, not a number: offseason events give
+    // some teams a letter ("973B"). Always normalized by normalizeTeam().
+    team_number: string;
     name: string;
     // Local calendar dates, "YYYY-MM-DD", inclusive.
     start_date: string;

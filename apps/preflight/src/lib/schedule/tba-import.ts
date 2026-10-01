@@ -4,7 +4,7 @@ import { matchBlockMinutes } from '@/lib/constants';
 import { saveRecord } from '@/lib/sync/local-repo';
 import { uuidFromName } from '@/lib/uuid';
 import { deleteScheduleItem, saveActiveEvent, scheduleTable } from './schedule-repo';
-import type { ActiveEvent, MatchInfo, ScheduleItem } from './types';
+import { normalizeTeam, type ActiveEvent, type MatchInfo, type ScheduleItem } from './types';
 
 // Calls the tba-proxy Edge Function (which holds the TBA API key), so an
 // import needs internet and a Supabase session: the web user's own, or a
@@ -56,7 +56,7 @@ async function describeFunctionError(error: unknown, data: { error?: string } | 
     return (error as Error)?.message ?? 'Unknown error';
 }
 
-export async function fetchTeamSchedule(eventKey: string, teamNumber: number): Promise<TeamSchedule> {
+export async function fetchTeamSchedule(eventKey: string, teamNumber: string): Promise<TeamSchedule> {
     const { data, error } = await supabase.functions.invoke(tbaProxyFunction, {
         body: { action: 'get_team_schedule', event_id: eventKey, team_number: teamNumber }
     });
@@ -64,8 +64,9 @@ export async function fetchTeamSchedule(eventKey: string, teamNumber: number): P
     return data as TeamSchedule;
 }
 
-function teamNumbers(keys: string[] | undefined): number[] {
-    return (keys ?? []).map((k) => Number(k.replace('frc', ''))).filter((n) => Number.isFinite(n));
+// "frc973" -> "973", "frc973B" -> "973B".
+function teamNumbers(keys: string[] | undefined): string[] {
+    return (keys ?? []).map((k) => normalizeTeam(k.replace(/^frc/i, ''))).filter(Boolean);
 }
 
 function unixToIso(seconds: number | null): string | null {
@@ -84,7 +85,7 @@ export function matchTitle(compLevel: string, setNumber: number, matchNumber: nu
     }
 }
 
-function toMatchInfo(match: TbaMatch, teamNumber: number): MatchInfo {
+function toMatchInfo(match: TbaMatch, teamNumber: string): MatchInfo {
     const red = teamNumbers(match.alliances?.red?.team_keys);
     const blue = teamNumbers(match.alliances?.blue?.team_keys);
     return {
