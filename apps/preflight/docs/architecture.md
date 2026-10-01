@@ -212,7 +212,9 @@ How it's stored:
   `/pit-setup`, leads/admins): the pit roles roster (role → assignee) and one
   standard checklist sequence (checklists → steps with instructions and
   roles), stored as the `pit_roles` and `checklist_sequence` settings. Steps
-  reference roles, so reassigning a role updates every checklist. "Load
+  reference roles, so reassigning a role updates every checklist. The
+  standard roles are Pit Lead, Mechanical, Electrical, Programming, Battery,
+  and Drive Team; Pit setup offers any that the roster is missing. "Load
   suggested checklists" seeds both from the requirements doc.
 - Anyone member and above drives the flow; leads/admins also get a manual
   override (and everyone sees the history) under "Status history".

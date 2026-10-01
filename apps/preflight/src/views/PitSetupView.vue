@@ -19,6 +19,7 @@ import {
   saveAdhocChecklists,
   saveChecklistSequence,
   savePitRoles,
+  suggestedRoleNames,
   type ChecklistDef,
   type ChecklistSequence,
   type PitRole
@@ -125,9 +126,16 @@ function move<T>(list: T[], index: number, delta: number) {
 }
 
 // --- Roles ---
-function addRole() {
-  roles.value.push({ id: newId(), name: '', assignee: '' });
+function addRole(name = '') {
+  roles.value.push({ id: newId(), name, assignee: '' });
 }
+
+// Standard roles this pit doesn't have yet (e.g. one added to the app after
+// the pit was set up).
+const missingRoles = computed(() => {
+  const have = new Set(roles.value.map((r) => r.name.trim().toLowerCase()));
+  return suggestedRoleNames.filter((name) => !have.has(name.toLowerCase()));
+});
 
 function removeRole(index: number) {
   const [role] = roles.value.splice(index, 1);
@@ -197,7 +205,10 @@ const sequenceAutoLink = (index: number) =>
           </li>
         </ul>
         <p v-if="!roles.length" class="hint">No roles yet.</p>
-        <button v-if="canEdit" class="add-link" @click="addRole">+ Add role</button>
+        <div v-if="canEdit" class="add-row">
+          <button class="add-link" @click="addRole()">+ Add role</button>
+          <button v-for="name in missingRoles" :key="name" class="add-link" @click="addRole(name)">+ {{ name }}</button>
+        </div>
       </section>
       <DisplayLayoutEditor :can-edit="canEdit" />
       </div>
