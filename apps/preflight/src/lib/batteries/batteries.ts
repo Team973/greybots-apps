@@ -267,6 +267,18 @@ export async function installBattery(batteryIdValue: string, target: UseTarget, 
     });
 }
 
+// Which battery to put in next: batteries are rotated in number order, so
+// it's the next number up from the one installed most recently, wrapping
+// back to the lowest. Only active batteries are suggested (a suspect one can
+// still be chosen by hand). `uses` must be newest first.
+export function recommendBattery(batteries: Battery[], uses: BatteryUse[]): Battery | null {
+    const rotation = batteries.filter((b) => b.status === 'active').sort((a, b) => a.number - b.number);
+    if (!rotation.length) return null;
+    const last = batteries.find((b) => b.id === uses[0]?.battery_id);
+    if (!last) return rotation[0];
+    return rotation.find((b) => b.number > last.number) ?? rotation[0];
+}
+
 export function removeBattery(use: BatteryUse, editor: string | null) {
     return patchRecord<BatteryUse>(batteryUsesTable, use.id, { removed_at: nowIso(), removed_by_name: editor, updated_by_name: editor });
 }

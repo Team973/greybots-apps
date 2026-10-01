@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router';
 import { formatClock } from '@greybots/common/lib/now';
 import BatteryScanner from '@/components/batteries/BatteryScanner.vue';
 import RepairDialog from '@/components/repairs/RepairDialog.vue';
-import { formatReading, installBattery } from '@/lib/batteries/batteries';
+import { formatReading, installBattery, recommendBattery } from '@/lib/batteries/batteries';
 import { useBatteries } from '@/lib/batteries/use-batteries';
 import { checkStep, listChecks, uncheckStep, type ChecklistCheck } from '@/lib/checklists/checks';
 import { stepInput, type ChecklistDef, type PitRole } from '@/lib/checklists/config';
@@ -72,7 +72,9 @@ const undoIndex = computed(() => {
 // What happens after the active step: counts only steps still to do.
 const doneLabel = computed(() => {
   const remaining = states.value.slice(nextIndex.value + 1).filter((st) => st === 'todo').length;
-  return remaining > 0 ? 'Done · next step' : props.finishLabel;
+  const next = remaining > 0 ? 'Done · next step' : props.finishLabel;
+  // On a battery step, the button says which battery is being confirmed.
+  return activeInput.value === 'battery' && chosenBattery.value ? next.replace('Done', `Battery ${chosenBattery.value.number} installed`) : next;
 });
 
 const rolesById = computed(() => new Map(props.roles.map((r) => [r.id, r])));
@@ -111,15 +113,33 @@ async function act(action: () => Promise<unknown>) {
 const text = ref('');
 const batteryId = ref('');
 const scanOpen = ref(false);
-const { batteries, readings } = useBatteries();
+const { batteries, readings, uses } = useBatteries();
 const usable = computed(() => batteries.value.filter((b) => b.status !== 'retired'));
+const chosenBattery = computed(() => usable.value.find((b) => b.id === batteryId.value) ?? null);
+// The next battery in the rotation after the one installed most recently.
+const recommended = computed(() => recommendBattery(batteries.value, uses.value));
+const lastInstalled = computed(() => batteries.value.find((b) => b.id === uses.value[0]?.battery_id) ?? null);
+// What the recommendation was when this step came up. It's kept for the whole
+// step, since installing a battery moves the rotation on.
+const suggested = ref<{ id: string; number: number; after: number | null } | null>(null);
 watch(
   () => activeStep.value?.id,
   () => {
     text.value = '';
-    // No default: the battery going in is usually not the one recorded as
-    // installed, and a wrong default is easy to tap through.
     batteryId.value = '';
+    suggested.value = null;
+  },
+  { immediate: true }
+);
+// A battery step starts on the recommended battery, so confirming it is one
+// tap; any other battery can be picked or scanned instead. (Set once per
+// step, as soon as the registry has loaded.)
+watch(
+  () => [activeStep.value?.id, activeInput.value, recommended.value?.id] as const,
+  () => {
+    if (activeInput.value !== 'battery' || suggested.value || !recommended.value) return;
+    suggested.value = { id: recommended.value.id, number: recommended.value.number, after: lastInstalled.value?.number ?? null };
+    if (!batteryId.value) batteryId.value = recommended.value.id;
   },
   { immediate: true }
 );
@@ -159,7 +179,7 @@ function completeActive(value: string | null = null) {
         battery.id,
         {
           event_key: props.eventKey,
-          kind: props.matchKey ? 'match' : 'other',
+          kind: props.matchKey ? 'match' : 'test',
           match_key: props.matchKey,
           label: props.matchLabel ?? list.name,
           run_id: props.runId
@@ -258,8 +278,14 @@ const lastMatchKey = computed(
         <textarea v-model="text" rows="3" placeholder="Type what was said or found"></textarea>
       </label>
       <div v-if="canAct && activeInput === 'battery'" class="record">
+        <p v-if="suggested" class="recommend" :class="{ changed: batteryId !== suggested.id }">
+          <span class="recommend-label">Next up</span>
+          <strong>Battery {{ suggested.number }}</strong>
+          <span v-if="suggested.after !== null && suggested.after !== suggested.number">after Battery {{ suggested.after }}</span>
+          <button v-if="batteryId !== suggested.id" type="button" class="use-recommended" @click="batteryId = suggested.id">Use it</button>
+        </p>
         <label class="field">
-          <span>Battery going in the robot</span>
+          <span>Battery going in the robot (change it if you're installing a different one)</span>
           <span class="battery-row">
             <select v-model="batteryId">
               <option value="" disabled>Choose a battery</option>
@@ -553,6 +579,51 @@ const lastMatchKey = computed(
 .record textarea,
 .record select {
   font-size: 1.05rem;
+}
+
+.recommend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 4px solid #2e7d32;
+  background: var(--background-color);
+}
+
+.recommend strong {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.recommend-label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* A different battery was picked: the suggestion steps back. */
+.recommend.changed {
+  border-left-color: var(--accent-color);
+}
+
+.recommend.changed strong {
+  opacity: 0.6;
+}
+
+.use-recommended {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .battery-row {

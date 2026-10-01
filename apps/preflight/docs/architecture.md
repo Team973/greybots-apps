@@ -263,6 +263,10 @@ checked steps as `PreflightChecklistCheck` rows under a `run_id`.
   feedback), pass or fail, or the battery going in the robot. The value is
   stored in the check's `value`. A battery step also assigns that battery to
   the run's match (see Batteries), and a failed step is marked in the list.
+  It starts on the recommended battery (`recommendBattery()`): the next
+  active battery in number order after the one installed most recently,
+  wrapping to the lowest. Confirming is one tap; another battery can be
+  picked or scanned instead.
 - **Instances per match** (`instances.ts`): each run belongs to a match where
   that makes sense, which names it ("Qual 12 · Pre-match", "Qual 9 → Qual 12
   · Bumper swap") and is stored as the check's `match_key`. In the pit
