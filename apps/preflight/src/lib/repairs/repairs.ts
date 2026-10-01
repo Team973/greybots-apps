@@ -29,7 +29,7 @@ export interface Repair extends SyncedRecord {
     component: string | null;
     robot: string | null;
     status: RepairStatus;
-    // Who's doing the work (free text).
+    // Who's doing the work: a name picked from lib/people.ts.
     assignee: string | null;
     match_key: string | null;
     // The task it was logged from, if any.

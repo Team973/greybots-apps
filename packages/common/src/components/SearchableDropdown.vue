@@ -19,12 +19,14 @@
 </template>
 
 <script lang="ts">
+import type { PropType } from 'vue';
+
 export default {
     props: {
         // {key, text}[] — same shape as Dropdown.vue's choices, but
         // modelValue here binds directly to a choice's key (not its index),
         // since an index can't survive a live-filtered list.
-        choices: { default: () => [] },
+        choices: { type: Array as PropType<{ key: string | number; text: string }[]>, default: () => [] },
         modelValue: { required: true },
         placeholder: { default: 'Search…' }
     },

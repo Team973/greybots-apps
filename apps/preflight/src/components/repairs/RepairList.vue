@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import RepairDialog from './RepairDialog.vue';
 import { formatElapsed, useNow } from '@greybots/common/lib/now';
-import { usePitMembers } from '@/lib/checklists/pit-members';
+import PersonPicker from '@/components/PersonPicker.vue';
 import { useLiveQuery } from '@/lib/live-query';
 import { createRepair, finishRepair, listRepairs, reopenRepair, startRepairWork, type Repair, type RepairOrigin } from '@/lib/repairs/repairs';
 import { formatTime } from '@/lib/schedule/dates';
@@ -33,7 +33,6 @@ const session = useSessionStore();
 const canEdit = computed(() => session.hasRole('member'));
 const editor = () => session.user?.name ?? null;
 const now = useNow(30_000);
-const members = usePitMembers();
 
 const eventKey = computed(() => props.eventKey);
 const repairs = useLiveQuery<Repair[]>(() => listRepairs(eventKey.value), [], eventKey);
@@ -106,8 +105,7 @@ const dialogRepair = computed(() => (dialog.value?.repairId ? repairs.value.find
       <input v-model="quickTitle" class="quick-title" placeholder="What's being repaired?" aria-label="New repair" />
       <input v-model="quickSubsystem" class="quick-small" list="quick-repair-subsystems" placeholder="Subsystem" aria-label="Subsystem" />
       <datalist id="quick-repair-subsystems"><option v-for="s in subsystemSuggestions" :key="s" :value="s" /></datalist>
-      <input v-model="quickAssignee" class="quick-small" list="quick-repair-assignees" placeholder="Who's on it" aria-label="Who's on it" />
-      <datalist id="quick-repair-assignees"><option v-for="name in members" :key="name" :value="name" /></datalist>
+      <PersonPicker v-model="quickAssignee" class="quick-small" empty-label="Who's on it" roomy />
       <button type="submit" class="quick-submit">Start</button>
     </form>
     <p v-if="error" class="error-text">{{ error }}</p>

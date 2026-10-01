@@ -6,7 +6,7 @@ import '@material/web/button/text-button';
 import AppDialog from '@/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { useAutosave } from '@/lib/autosave';
-import { usePitMembers } from '@/lib/checklists/pit-members';
+import PersonPicker from '@/components/PersonPicker.vue';
 import {
   createRepair,
   deleteRepair,
@@ -39,7 +39,6 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: []; created: [repair: Repair] }>();
 const session = useSessionStore();
-const members = usePitMembers();
 
 const title = ref('');
 const details = ref('');
@@ -144,11 +143,11 @@ const create = (start: boolean) =>
       </label>
     </div>
     <div class="form-row">
-      <label class="field">
+      <!-- Not a <label>: a click on a dropdown option would re-focus the input. -->
+      <div class="field">
         <span>Who's on it</span>
-        <input v-model="assignee" list="repair-assignees" :readonly="!canEdit" placeholder="Unassigned" />
-        <datalist id="repair-assignees"><option v-for="name in members" :key="name" :value="name" /></datalist>
-      </label>
+        <PersonPicker v-model="assignee" :disabled="!canEdit" />
+      </div>
       <label class="field">
         <span>Match (optional)</span>
         <select v-model="matchKey" :disabled="!canEdit">

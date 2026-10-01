@@ -13,7 +13,7 @@ export interface Task extends SyncedRecord {
     sort_order: number;
     // Optional link to one of our matches (TBA match key).
     match_key: string | null;
-    // Pit member the task is assigned to (free text).
+    // Who the task is assigned to: a name picked from lib/people.ts.
     assignee: string | null;
     started_at: string | null;
     started_by_name: string | null;
