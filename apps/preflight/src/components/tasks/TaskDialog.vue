@@ -7,6 +7,8 @@ import AppDialog from '@/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { useAutosave } from '@/lib/autosave';
 import { usePitMembers } from '@/lib/checklists/pit-members';
+import { useLiveQuery } from '@/lib/live-query';
+import { createRepair, repairForTask, type Repair } from '@/lib/repairs/repairs';
 import { formatTime } from '@/lib/schedule/dates';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import {
@@ -87,6 +89,25 @@ async function assignToMe() {
   if (props.task) await autosave.flush();
 }
 
+// A task that turns out to be a repair can be put in the repair log
+// (issue #83), keeping the link back to the task.
+const taskId = computed(() => props.task?.id ?? '');
+const linkedRepair = useLiveQuery<Repair | null>(() => (taskId.value ? repairForTask(taskId.value) : null), null, taskId);
+function logRepair() {
+  const task = props.task;
+  if (!task) return;
+  return run(
+    () =>
+      createRepair(
+        props.eventKey,
+        { title: task.title, details: task.notes, assignee: task.assignee, match_key: task.match_key },
+        editor(),
+        { source: 'task', task_id: task.id, start: !!task.started_at }
+      ),
+    false
+  );
+}
+
 async function close() {
   await autosave.flush();
   emit('close');
@@ -136,7 +157,9 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
       </label>
     </div>
     <label class="field"><span>Notes</span><textarea v-model="notes" rows="2" :readonly="!canEdit"></textarea></label>
-    <p v-if="progress" class="progress">{{ progress }}</p>
+    <p v-if="progress" class="progress">
+      {{ progress }}<template v-if="linkedRepair"> · In the repair log as "{{ linkedRepair.title }}"</template>
+    </p>
     <p v-if="error" class="error-text">{{ error }}</p>
 
     <template #actions>
@@ -147,6 +170,7 @@ async function run(action: () => Promise<unknown>, closeAfter = true) {
         </md-outlined-button>
         <md-outlined-button v-if="!task.completed_at" :disabled="busy" @click="run(() => completeTask(task!, editor()))">Mark done</md-outlined-button>
         <md-outlined-button v-else :disabled="busy" @click="run(() => reopenTask(task!, editor()), false)">Reopen</md-outlined-button>
+        <md-outlined-button v-if="!linkedRepair" :disabled="busy" @click="logRepair">Log as repair</md-outlined-button>
       </template>
       <span class="actions-spacer"></span>
       <AutosaveStatus v-if="task && canEdit" :state="autosave.state.value" :error="autosave.error.value" />

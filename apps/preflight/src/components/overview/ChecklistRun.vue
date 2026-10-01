@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import RepairDialog from '@/components/repairs/RepairDialog.vue';
 import { formatClock } from '@greybots/common/lib/now';
 import { checkStep, listChecks, uncheckStep, type ChecklistCheck } from '@/lib/checklists/checks';
 import type { ChecklistSequence, PitRole } from '@/lib/checklists/config';
@@ -107,6 +108,13 @@ function undoLast() {
 const continueOn = () => act(() => advanceChecklist(props.eventKey, props.entry, props.sequence, editor()));
 
 const startRepairs = () => act(() => startRepair(props.eventKey, props.entry, editor()));
+
+// Log something to fix later without leaving the checklist (issue #83). It's
+// linked to this pit visit and to the match the robot just played.
+const repairOpen = ref(false);
+const lastMatchKey = computed(
+  () => [...props.matches].reverse().find((m) => Date.parse(m.start_at) <= props.now)?.match_key ?? null
+);
 </script>
 
 <template>
@@ -173,9 +181,20 @@ const startRepairs = () => act(() => startRepair(props.eventKey, props.entry, ed
         </ul>
       </div>
       <span class="grow"></span>
+      <button v-if="canAct" class="log-repair" @click="repairOpen = true">Log a repair for later</button>
       <button v-if="canAct" class="primary-action" :disabled="busy" @click="completeActive">{{ doneLabel }}</button>
     </template>
     <p v-else class="hint">Nothing left in this checklist.</p>
+    <RepairDialog
+      :open="repairOpen"
+      :event-key="eventKey"
+      :repair="null"
+      :matches="matches"
+      :can-edit="canAct"
+      :origin="{ source: 'checklist', run_id: entry.run_id }"
+      :preset="{ match_key: lastMatchKey }"
+      @close="repairOpen = false"
+    />
     <RouterLink v-if="canEditSetup" to="/pit-setup" class="panel-link setup-link">Edit checklists and roles</RouterLink>
   </section>
 
@@ -446,6 +465,16 @@ const startRepairs = () => act(() => startRepair(props.eventKey, props.entry, ed
 
 .grow {
   flex: 1;
+}
+
+.log-repair {
+  padding: 10px 16px;
+  border: 1px solid var(--accent-color);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  cursor: pointer;
 }
 
 .primary-action {

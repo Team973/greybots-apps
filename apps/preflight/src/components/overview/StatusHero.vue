@@ -2,6 +2,8 @@
 import { computed } from 'vue';
 import { formatClock } from '@greybots/common/lib/now';
 import NextMatchLine from './NextMatchLine.vue';
+import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
+import type { Repair } from '@/lib/repairs/repairs';
 import type { MatchPrep } from '@/lib/schedule/timing';
 import type { ScheduleItem } from '@/lib/schedule/types';
 import { robotStatusColors, type EffectiveStatus } from '@/lib/robot-status/robot-status';
@@ -14,6 +16,8 @@ const props = defineProps<{
   nextMatch: ScheduleItem | null;
   prep: MatchPrep;
   now: number;
+  // Repairs being worked on right now.
+  repairs: Repair[];
   canAct: boolean;
   busy: boolean;
 }>();
@@ -48,6 +52,7 @@ const subtitle = computed(() => {
       <!-- While the robot is away, the match it left for is the one in play. -->
       <NextMatchLine v-if="effective.status !== 'away'" class="next" :match="nextMatch" :prep="prep" :now="now" />
     </div>
+    <ActiveRepairChip :repairs="repairs" />
     <template v-if="canAct">
       <button v-if="effective.status === 'inbound'" class="hero-action" :disabled="busy" @click="emit('arrived')">Robot arrived</button>
       <button v-else-if="effective.status === 'ready'" class="hero-action" :disabled="busy" @click="emit('departed')">Robot departed</button>

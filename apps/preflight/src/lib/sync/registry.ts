@@ -9,5 +9,6 @@ export const syncedTables: SyncedTableDef[] = [
     { table: 'tasks', remote: 'PreflightTask', indexes: ['event_key'] },
     { table: 'robotStatus', remote: 'PreflightRobotStatusLog', indexes: ['event_key'] },
     { table: 'checklistChecks', remote: 'PreflightChecklistCheck', indexes: ['event_key'] },
-    { table: 'notes', remote: 'PreflightNote', indexes: ['event_key'] }
+    { table: 'notes', remote: 'PreflightNote', indexes: ['event_key'] },
+    { table: 'repairs', remote: 'PreflightRepair', indexes: ['event_key'] }
 ];

@@ -293,6 +293,27 @@ view of the whole event, built on FullCalendar's time grid.
   lose track of what the query read, and it stops updating. Compute such
   values outside the query.
 
+## Repair and maintenance log
+
+`PreflightRepair` (`src/lib/repairs/repairs.ts`; members and above) records
+each repair or maintenance job: what, subsystem, component, robot, who's on
+it, a status (open → in progress → done), and who reported, started, and
+finished it and when. This is separate from the robot's *Repair in progress*
+status, which only says the pit flow is paused.
+
+- **Logged from:** the Repairs page (`/repairs`, the whole log including
+  finished work), a checklist ("Log a repair for later" on the active step),
+  the Repair screen's quick-add row (starts the repair at once), or a task
+  ("Log as repair" in its dialog). `source`, `task_id`, and `run_id` record
+  where it came from; repairs found in the pit default to the match just
+  played (`match_key`).
+- **Surfaced:** repairs in progress show as a chip next to the robot status
+  on the Overview in every state. In the Repair state, the repair log takes
+  the main panel, with tasks beside it.
+- `component` is free text until the parts inventory (#89) exists, and there's
+  no link to test runs until the diagnostics integration (#103); "what was
+  repaired between two tests" is answered by the timestamps for now.
+
 ## Notes
 
 The Notes page (`/notes`, members and above; `PreflightNote`,

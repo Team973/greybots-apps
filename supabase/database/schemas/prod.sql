@@ -587,6 +587,38 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightNote" (
 ALTER TABLE "public"."PreflightNote" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."PreflightRepair" (
+    "id" "uuid" NOT NULL,
+    "event_key" "text" NOT NULL,
+    "title" "text" NOT NULL,
+    "details" "text",
+    "subsystem" "text",
+    "component" "text",
+    "robot" "text",
+    "status" "text" DEFAULT 'open'::"text" NOT NULL,
+    "assignee" "text",
+    "match_key" "text",
+    "task_id" "uuid",
+    "run_id" "uuid",
+    "source" "text" DEFAULT 'standalone'::"text" NOT NULL,
+    "reported_at" timestamp with time zone NOT NULL,
+    "reported_by_name" "text",
+    "started_at" timestamp with time zone,
+    "started_by_name" "text",
+    "finished_at" timestamp with time zone,
+    "finished_by_name" "text",
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text",
+    CONSTRAINT "PreflightRepair_status_check" CHECK (("status" = ANY (ARRAY['open'::"text", 'in_progress'::"text", 'done'::"text"]))),
+    CONSTRAINT "PreflightRepair_source_check" CHECK (("source" = ANY (ARRAY['standalone'::"text", 'task'::"text", 'checklist'::"text"])))
+);
+
+
+ALTER TABLE "public"."PreflightRepair" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."StrategyBoard" (
     "id" bigint NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
@@ -659,6 +691,10 @@ CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "publi
 
 
 CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightNote" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightRepair" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
 
 
 ALTER TABLE ONLY "public"."Event"
@@ -771,6 +807,11 @@ ALTER TABLE ONLY "public"."PreflightNote"
 
 
 
+ALTER TABLE ONLY "public"."PreflightRepair"
+    ADD CONSTRAINT "PreflightRepair_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."RobotPhoto"
     ADD CONSTRAINT "RobotPhoto_pkey" PRIMARY KEY ("team_number");
 
@@ -840,6 +881,10 @@ CREATE INDEX "preflight_checklist_check_synced_at_idx" ON "public"."PreflightChe
 
 
 CREATE INDEX "preflight_note_synced_at_idx" ON "public"."PreflightNote" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_repair_synced_at_idx" ON "public"."PreflightRepair" USING "btree" ("synced_at");
 
 
 
@@ -1168,6 +1213,18 @@ CREATE POLICY "Enable insert for members" ON "public"."PreflightNote" FOR INSERT
 CREATE POLICY "Enable update for members" ON "public"."PreflightNote" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
 
 
+
+CREATE POLICY "Enable read access for members" ON "public"."PreflightRepair" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable insert for members" ON "public"."PreflightRepair" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for members" ON "public"."PreflightRepair" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
 ALTER TABLE "public"."Event" ENABLE ROW LEVEL SECURITY;
 
 
@@ -1237,6 +1294,9 @@ ALTER TABLE "public"."PreflightChecklistCheck" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."PreflightNote" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightRepair" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -1595,6 +1655,12 @@ GRANT ALL ON TABLE "public"."PreflightChecklistCheck" TO "service_role";
 GRANT ALL ON TABLE "public"."PreflightNote" TO "anon";
 GRANT ALL ON TABLE "public"."PreflightNote" TO "authenticated";
 GRANT ALL ON TABLE "public"."PreflightNote" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightRepair" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightRepair" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightRepair" TO "service_role";
 
 
 
