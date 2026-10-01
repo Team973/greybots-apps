@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
+import RolePicker from '@/components/RolePicker.vue';
+import { getPitRoles, type PitRole } from '@/lib/checklists/config';
 import { useAutosave } from '@/lib/autosave';
 import { useLiveQuery } from '@/lib/live-query';
 import { defaultRepairPresets, getRepairPresets, saveRepairPresets, type RepairPreset } from '@/lib/repairs/presets';
@@ -12,6 +14,7 @@ import { useSessionStore } from '@/stores/session-store';
 defineProps<{ canEdit: boolean }>();
 const session = useSessionStore();
 
+const roles = useLiveQuery<PitRole[]>(getPitRoles, []);
 const remote = useLiveQuery<RepairPreset[] | null>(getRepairPresets, null);
 const presets = ref<RepairPreset[]>([]);
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -31,7 +34,7 @@ watch(
 );
 
 function add() {
-  presets.value.push({ id: crypto.randomUUID(), title: '', subsystem: '' });
+  presets.value.push({ id: crypto.randomUUID(), title: '', subsystem: '', role_id: '' });
 }
 
 function move(index: number, delta: number) {
@@ -43,7 +46,7 @@ function move(index: number, delta: number) {
 
 function restoreDefaults() {
   if (presets.value.length && !confirm('Replace the list with the suggested common repairs?')) return;
-  presets.value = defaultRepairPresets();
+  presets.value = defaultRepairPresets(roles.value);
 }
 </script>
 
@@ -53,17 +56,31 @@ function restoreDefaults() {
       <h2>Common repairs</h2>
       <AutosaveStatus v-if="canEdit" :state="autosave.state.value" :error="autosave.error.value" />
     </header>
-    <p class="hint">Offered as one-tap options when logging a repair. Each fills in what's being repaired and its subsystem.</p>
+    <p class="hint">
+      Offered as one-tap options when logging a repair. Each fills in what's being repaired and its subsystem, and goes to whoever
+      holds its subteam's pit role.
+    </p>
 
     <ul class="presets">
       <li v-for="(preset, i) in presets" :key="preset.id">
-        <input v-model="preset.title" class="title" :readonly="!canEdit" placeholder="Repair" aria-label="Repair" />
-        <input v-model="preset.subsystem" class="subsystem" list="preset-subsystems" :readonly="!canEdit" placeholder="Subsystem" aria-label="Subsystem" />
-        <template v-if="canEdit">
-          <button class="icon-small" :disabled="i === 0" :aria-label="`Move ${preset.title || 'repair'} up`" @click="move(i, -1)">↑</button>
-          <button class="icon-small" :disabled="i === presets.length - 1" :aria-label="`Move ${preset.title || 'repair'} down`" @click="move(i, 1)">↓</button>
-          <button class="icon-small" :aria-label="`Remove ${preset.title || 'repair'}`" @click="presets.splice(i, 1)">✕</button>
-        </template>
+        <div class="line">
+          <input v-model="preset.title" class="title" :readonly="!canEdit" placeholder="Repair" aria-label="Repair" />
+          <template v-if="canEdit">
+            <button class="icon-small" :disabled="i === 0" :aria-label="`Move ${preset.title || 'repair'} up`" @click="move(i, -1)">↑</button>
+            <button class="icon-small" :disabled="i === presets.length - 1" :aria-label="`Move ${preset.title || 'repair'} down`" @click="move(i, 1)">↓</button>
+            <button class="icon-small" :aria-label="`Remove ${preset.title || 'repair'}`" @click="presets.splice(i, 1)">✕</button>
+          </template>
+        </div>
+        <div class="line">
+          <RolePicker
+            class="subteam"
+            :model-value="preset.role_id ?? ''"
+            :roles="roles"
+            :disabled="!canEdit"
+            @update:model-value="(roleId) => (preset.role_id = roleId)"
+          />
+          <input v-model="preset.subsystem" class="subsystem" list="preset-subsystems" :readonly="!canEdit" placeholder="Subsystem" aria-label="Subsystem" />
+        </div>
       </li>
     </ul>
     <datalist id="preset-subsystems"><option v-for="s in subsystemSuggestions" :key="s" :value="s" /></datalist>
@@ -93,6 +110,15 @@ function restoreDefaults() {
 
 .presets li {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-color);
+}
+
+.line {
+  display: flex;
   align-items: center;
   gap: 6px;
 }
@@ -109,11 +135,14 @@ function restoreDefaults() {
 }
 
 .title {
-  flex: 2 1 0;
+  flex: 1 1 0;
+  font-weight: 600;
 }
 
+.subteam,
 .subsystem {
   flex: 1 1 0;
+  min-width: 0;
 }
 
 .add-row {

@@ -417,8 +417,10 @@ status, which only says the pit flow is paused.
 - **Common repairs** (`src/lib/repairs/presets.ts`, the `repair_presets`
   setting): one-tap options shown when logging a repair, in the dialog and
   under the Repair screen's quick-add row. Each fills in what's being
-  repaired and its subsystem. Leads/admins edit the list on Pit setup; a
-  suggested list is used until one is saved.
+  repaired and its subsystem, and belongs to a pit subteam (a pit role,
+  picked with a searchable dropdown): the repair goes to whoever holds that
+  role. Leads/admins edit the list on Pit setup; a suggested list is used
+  until one is saved.
 - **Surfaced:** repairs in progress show as a chip next to the robot status
   on the Overview in every state. In the Repair state, the repair log takes
   the main panel, with tasks beside it.

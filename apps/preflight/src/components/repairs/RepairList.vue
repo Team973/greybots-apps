@@ -4,7 +4,8 @@ import RepairDialog from './RepairDialog.vue';
 import { formatElapsed, useNow } from '@greybots/common/lib/now';
 import PersonPicker from '@/components/PersonPicker.vue';
 import { useLiveQuery } from '@/lib/live-query';
-import { getRepairPresets, type RepairPreset } from '@/lib/repairs/presets';
+import { getPitRoles, type PitRole } from '@/lib/checklists/config';
+import { getRepairPresets, presetAssignee, presetRole, type RepairPreset } from '@/lib/repairs/presets';
 import { createRepair, finishRepair, listRepairs, reopenRepair, startRepairWork, type Repair, type RepairOrigin } from '@/lib/repairs/repairs';
 import { formatTime } from '@/lib/schedule/dates';
 import type { ScheduleItem } from '@/lib/schedule/types';
@@ -75,10 +76,14 @@ async function act(action: () => Promise<unknown>) {
 
 // One-tap options for common repairs (configured on Pit setup) fill the row;
 // "Start" then logs it, so the person can still be picked first.
+// A common repair goes to whoever holds its subteam's pit role.
 const presets = useLiveQuery<RepairPreset[]>(getRepairPresets, []);
+const roles = useLiveQuery<PitRole[]>(getPitRoles, []);
 function applyPreset(preset: RepairPreset) {
   quickTitle.value = preset.title;
   quickSubsystem.value = preset.subsystem;
+  const who = presetAssignee(preset, roles.value);
+  if (who) quickAssignee.value = who;
 }
 
 function addQuick() {
@@ -118,7 +123,15 @@ const dialogRepair = computed(() => (dialog.value?.repairId ? repairs.value.find
       <button type="submit" class="quick-submit">Start</button>
     </form>
     <div v-if="quickAdd && canEdit && presets.length" class="preset-chips" aria-label="Common repairs">
-      <button v-for="preset in presets" :key="preset.id" type="button" class="preset-chip" :class="{ on: quickTitle === preset.title }" @click="applyPreset(preset)">
+      <button
+        v-for="preset in presets"
+        :key="preset.id"
+        type="button"
+        class="preset-chip"
+        :class="{ on: quickTitle === preset.title }"
+        :title="presetRole(preset, roles)?.name"
+        @click="applyPreset(preset)"
+      >
         {{ preset.title }}
       </button>
     </div>
