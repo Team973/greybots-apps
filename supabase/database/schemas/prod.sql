@@ -1280,7 +1280,7 @@ CREATE POLICY "Enable delete for authenticated users only" ON "public"."ScoutAss
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightSetting" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightSetting" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1292,7 +1292,7 @@ CREATE POLICY "Enable update for leads and admins" ON "public"."PreflightSetting
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightScheduleItem" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightScheduleItem" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1316,7 +1316,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightTask" FOR UPDATE
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightRobotStatusLog" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightRobotStatusLog" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1329,7 +1329,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightRobotStatusLog" 
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightChecklistCheck" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightChecklistCheck" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1341,7 +1341,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightChecklistCheck" 
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightChecklistRun" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightChecklistRun" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1365,7 +1365,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightNote" FOR UPDATE
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightRepair" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightRepair" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1377,7 +1377,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightRepair" FOR UPDA
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightBattery" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightBattery" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1389,7 +1389,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightBattery" FOR UPD
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightBatteryMeasurement" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightBatteryMeasurement" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1401,7 +1401,7 @@ CREATE POLICY "Enable update for members" ON "public"."PreflightBatteryMeasureme
 
 
 
-CREATE POLICY "Enable read access for members" ON "public"."PreflightBatteryUse" FOR SELECT TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightBatteryUse" FOR SELECT TO "authenticated" USING (true);
 
 
 

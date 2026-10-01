@@ -92,6 +92,14 @@ Both modes use the same `admin > lead > member > observer` ladder
 (`src/lib/roles.ts`). Use `session.hasRole('lead')` in components and
 `meta.minRole` on routes.
 
+- **Observers** (accounts not yet made members) can open only the pit
+  display; every other route sends them there, and it offers Sign out
+  instead of Exit. So the display has something to show, the tables it reads
+  are readable by any signed-in account. Tasks and notes aren't.
+- **Members** get every page except Pit setup.
+- **Leads and admins** also get Pit setup, and are the only ones who can
+  change shared settings and the schedule.
+
 ### Navigation
 
 The nav bar (`src/components/NavBar.vue`) shows the page links as a strip.

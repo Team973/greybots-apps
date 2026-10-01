@@ -32,7 +32,7 @@ declare module 'vue-router' {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'home', component: OverviewView, meta: { title: 'Overview' } },
+    { path: '/', name: 'home', component: OverviewView, meta: { title: 'Overview', minRole: 'member' } },
     { path: '/setup', name: 'setup', component: SetupView, meta: { title: 'Setup', requiresAuth: false } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', requiresAuth: false } },
     { path: '/schedule', name: 'schedule', component: ScheduleView, meta: { title: 'Schedule', minRole: 'member' } },
@@ -44,9 +44,10 @@ const router = createRouter({
     { path: '/notes', name: 'notes', component: NotesView, meta: { title: 'Notes', minRole: 'member' } },
     // The pit display runs unattended on a TV: read-only, and on a kiosk it
     // stays up while the device is locked.
-    { path: '/display', name: 'display', component: PitDisplayView, meta: { title: 'Pit display', minRole: 'member', bare: true, kioskPublic: true } },
-    { path: '/pit-setup', name: 'pit-setup', component: PitSetupView, meta: { title: 'Pit setup', minRole: 'member' } },
-    { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
+    // It's also the one page observers (accounts not yet made members) get.
+    { path: '/display', name: 'display', component: PitDisplayView, meta: { title: 'Pit display', bare: true, kioskPublic: true } },
+    { path: '/pit-setup', name: 'pit-setup', component: PitSetupView, meta: { title: 'Pit setup', minRole: 'lead' } },
+    { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings', minRole: 'member' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]
 });
@@ -64,7 +65,9 @@ router.beforeEach((to) => {
   if (to.meta.requiresAuth !== false && !session.isSignedIn) {
     return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
   }
-  if (to.meta.minRole && !session.hasRole(to.meta.minRole)) return { name: 'home' };
+  // Not allowed here: members and above go to the Overview; an observer's
+  // only page is the pit display.
+  if (to.meta.minRole && !session.hasRole(to.meta.minRole)) return { name: session.hasRole('member') ? 'home' : 'display' };
   return true;
 });
 

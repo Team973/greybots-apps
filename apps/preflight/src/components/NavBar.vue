@@ -20,15 +20,15 @@ async function signOut() {
 // The page links, shown as a strip when they all fit and as a hamburger menu
 // when they don't.
 const pages: { to: string; label: string; minRole?: Role }[] = [
-  { to: '/', label: 'Overview' },
+  { to: '/', label: 'Overview', minRole: 'member' },
   { to: '/schedule', label: 'Schedule', minRole: 'member' },
   { to: '/checklists', label: 'Checklists', minRole: 'member' },
   { to: '/repairs', label: 'Repairs', minRole: 'member' },
   { to: '/batteries', label: 'Batteries', minRole: 'member' },
   { to: '/notes', label: 'Notes', minRole: 'member' },
-  { to: '/display', label: 'Display', minRole: 'member' },
+  { to: '/display', label: 'Display' },
   { to: '/pit-setup', label: 'Pit setup', minRole: 'lead' },
-  { to: '/settings', label: 'Settings' }
+  { to: '/settings', label: 'Settings', minRole: 'member' }
 ];
 const links = computed(() => pages.filter((page) => !page.minRole || session.hasRole(page.minRole)));
 // Overview is "/", which every path starts with, so it only matches exactly.
