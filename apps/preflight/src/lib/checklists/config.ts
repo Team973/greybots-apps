@@ -132,14 +132,21 @@ export function sequenceMatchLink(sequence: ChecklistSequence, index: number): M
     return index >= prematchIndex(sequence) ? 'next' : 'last';
 }
 
+// The roles every pit is expected to have. Pit setup offers any that are
+// missing from the roster, so a pit set up before a role was added here can
+// pick it up without reloading the defaults.
+export const suggestedRoleNames = ['Pit Lead', 'Mechanical', 'Electrical', 'Programming', 'Battery', 'Drive Team'];
+
 // Starter roles and checklists based on the requirements doc (§4.1), so leads
 // can edit rather than type everything from scratch.
 export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequence; adhoc: ChecklistDef[] } {
     const role = (name: string): PitRole => ({ id: newId(), name, assignee: '' });
+    // Keep these names in step with suggestedRoleNames.
     const roles = {
         lead: role('Pit Lead'),
         mech: role('Mechanical'),
         elec: role('Electrical'),
+        prog: role('Programming'),
         battery: role('Battery'),
         drive: role('Drive Team')
     };
@@ -170,8 +177,8 @@ export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequen
                         step('Inspect drivetrain', 'Spin each wheel by hand. Check modules, belts or chains, and wheel tread.', [roles.mech]),
                         step('Inspect mechanisms', 'Run each mechanism by hand through its travel. Check for binding, slop, and damage.', [roles.mech]),
                         step('Check electrical connections', 'Tug-test connectors on the PDH, motor controllers, and radio. Check the main breaker.', [roles.elec]),
-                        step('Offload robot logs', 'Pull the logs off the robot and note which match they belong to.', [roles.elec]),
-                        step('Review diagnostic warnings', 'Check the driver station and logs for faults, brownouts, and CAN errors from the match.', [roles.elec], { input: 'pass_fail' }),
+                        step('Offload robot logs', 'Pull the logs off the robot and note which match they belong to.', [roles.prog]),
+                        step('Review diagnostic warnings', 'Check the driver station and logs for faults, brownouts, and CAN errors from the match.', [roles.prog, roles.elec], { input: 'pass_fail' }),
                         step('Record repairs needed', 'Use "Log a repair for later" for anything that needs fixing before the next match.', [roles.lead]),
                         step(
                             'Post-match system check',
@@ -195,10 +202,10 @@ export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequen
                             { condition: 'bumper_swap' }
                         ),
                         step('Bumpers attached, correct color', 'Check the alliance color for the next match and that the bumpers are secure.', [roles.mech, roles.drive]),
-                        step('Verify robot configuration', 'Starting configuration, pre-loaded game pieces, and autonomous selection for this match.', [roles.drive]),
+                        step('Verify robot configuration', 'Starting configuration, pre-loaded game pieces, and autonomous selection for this match.', [roles.drive, roles.prog]),
                         step('Subsystem checks', 'Power on with no faults on the driver station. Run each subsystem briefly.', [roles.elec, roles.mech], { input: 'pass_fail' }),
-                        step('Verify critical sensor states', 'Encoders zeroed, limit switches reading correctly, gyro and vision alive.', [roles.elec], { input: 'pass_fail' }),
-                        step('Driver station connects', 'Tether, enable, and confirm all subsystems respond.', [roles.drive, roles.elec], { input: 'pass_fail' }),
+                        step('Verify critical sensor states', 'Encoders zeroed, limit switches reading correctly, gyro and vision alive.', [roles.prog, roles.elec], { input: 'pass_fail' }),
+                        step('Driver station connects', 'Tether, enable, and confirm all subsystems respond.', [roles.drive, roles.prog], { input: 'pass_fail' }),
                         step('Confirm robot ready', 'Everything above is done and nothing is open on the repair list.', [roles.lead]),
                         step('Release robot to queue', 'Cart, battery, bumpers, and driver station all go with the robot.', [roles.lead])
                     ]
@@ -215,9 +222,9 @@ export function defaultPitSetup(): { roles: PitRole[]; sequence: ChecklistSequen
                     step('Fastener inspection', 'Check the paint-pen marks on critical bolts; re-torque any that moved.', [roles.mech]),
                     step('Electrical inspection', 'Wiring secure, no pinched or chafed wires, connectors seated.', [roles.elec]),
                     step('Main breaker verification', 'Breaker firmly mounted, terminals tight, cover in place.', [roles.elec]),
-                    step('Radio / network verification', 'Radio powered and configured for this event; robot connects.', [roles.elec], { input: 'pass_fail' }),
-                    step('Driver Station verification', 'Laptop charged, controllers recognized, dashboard and code version correct.', [roles.drive], { input: 'pass_fail' }),
-                    step('Vision system verification', 'Cameras connected and seeing targets; pipelines correct for this field.', [roles.elec], { input: 'pass_fail' }),
+                    step('Radio / network verification', 'Radio powered and configured for this event; robot connects.', [roles.prog], { input: 'pass_fail' }),
+                    step('Driver Station verification', 'Laptop charged, controllers recognized, dashboard and code version correct.', [roles.drive, roles.prog], { input: 'pass_fail' }),
+                    step('Vision system verification', 'Cameras connected and seeing targets; pipelines correct for this field.', [roles.prog], { input: 'pass_fail' }),
                     step('Battery charging equipment inspection', 'Chargers on, every battery charging or charged, no damaged leads.', [roles.battery]),
                     step('Spare parts and tools verification', 'Spares bins stocked, tools back in place, consumables topped up.', [roles.lead])
                 ]
