@@ -411,6 +411,32 @@ view of the whole event, built on FullCalendar's time grid.
   lose track of what the query read, and it stops updating. Compute such
   values outside the query.
 
+## Stats
+
+`/stats` (members and above; `src/lib/stats/pit-stats.ts`) shows how long the
+pit takes and where the time goes. Nothing is stored for it: everything is
+worked out from the robot status log, where the time in a state is the gap to
+the next entry, and from the checked steps.
+
+- A **turnaround** is one pit visit, from the robot coming in to it being
+  ready. Its time is the time on the pit checklists plus the time in repairs.
+  The practice field side trip (its checklist and being at the practice field)
+  and time sitting Ready never count. A turnaround is only counted once the
+  robot reached Ready.
+- **Headline numbers:** average (and median) turnaround with and without
+  repairs, average repair time, practice field prep time, and the average
+  time on each checklist with repairs left out. A run of a checklist only
+  counts once the pit moved on from it.
+- **Each turnaround** is a stacked bar: post-match (every checklist before
+  the pre-match one), repairs, pre-match (that checklist and any after).
+- **Histograms** show how each of those times is spread.
+- **Slowest steps:** a step's time is the gap from the step before it,
+  counting only time spent on that checklist, so a repair in the middle isn't
+  blamed on the next step.
+- The chart colors (`.viz-root` in `base.css`) are a fixed three-series
+  palette checked for color-blind separation in both themes. Stages are also
+  named in a legend and available as a table, so color is never the only cue.
+
 ## Event script
 
 `/script` (leads and admins; `src/lib/script/event-script.ts`) puts the
