@@ -8,6 +8,18 @@ import type { UserAccount } from './user-roles';
 
 const userTable = 'User';
 
+// What's in a form's fields right now, by field name. The sign-in and
+// registration forms read their values this way when they're submitted,
+// instead of trusting what input events told them: autofill and password
+// managers can fill a field without firing one.
+export function readFormValues(form: HTMLFormElement): Record<string, string> {
+    const values: Record<string, string> = {};
+    for (const element of Array.from(form.elements)) {
+        if (element instanceof HTMLInputElement && element.name) values[element.name] = element.value;
+    }
+    return values;
+}
+
 export interface Registration {
     name: string;
     email: string;

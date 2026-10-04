@@ -2,8 +2,8 @@
 import { ref } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/text-button';
-import TextInput from './TextInput.vue';
-import { registerAccount } from '../lib/account';
+import AuthInput from './AuthInput.vue';
+import { readFormValues, registerAccount } from '../lib/account';
 
 // The registration form, shared by every greybots app: one account works in
 // all of them. A new account is pending until a lead or admin gives it a
@@ -25,20 +25,19 @@ const error = ref('');
 const confirmationSent = ref(false);
 const busy = ref(false);
 
-type Field = { readValue: () => string };
-const nameField = ref<Field | null>(null);
-const emailField = ref<Field | null>(null);
-const passwordField = ref<Field | null>(null);
-const confirmField = ref<Field | null>(null);
+const form = ref<HTMLFormElement | null>(null);
 
 async function register() {
     error.value = '';
     // Read the fields themselves: a password manager may have filled them
     // without the form hearing about it.
-    name.value = nameField.value?.readValue() ?? name.value;
-    email.value = emailField.value?.readValue() ?? email.value;
-    password.value = passwordField.value?.readValue() ?? password.value;
-    confirm.value = confirmField.value?.readValue() ?? confirm.value;
+    if (form.value) {
+        const values = readFormValues(form.value);
+        name.value = values['name'] ?? name.value;
+        email.value = values['email'] ?? email.value;
+        password.value = values['new-password'] ?? password.value;
+        confirm.value = values['confirm-password'] ?? confirm.value;
+    }
 
     missing.value = { name: !name.value.trim(), email: !email.value.trim(), password: !password.value, confirm: !confirm.value };
     if (Object.values(missing.value).some(Boolean)) return;
@@ -62,20 +61,18 @@ async function register() {
 </script>
 
 <template>
-    <form class="register-form" @submit.prevent="register">
+    <form ref="form" class="register-form" @submit.prevent="register">
         <template v-if="!confirmationSent">
             <p class="register-note">
                 One account works across the greybots apps. After you register, a lead or admin has to approve your
                 account before you can use them.
             </p>
-            <TextInput ref="nameField" v-model="name" label="Name" name="name" autocomplete="name" :required="true" :error="missing.name" />
-            <TextInput ref="emailField" v-model="email" label="Email" type="email" name="email" autocomplete="email" :required="true" :error="missing.email" />
-            <TextInput ref="passwordField" v-model="password" label="Password" type="password" name="new-password" autocomplete="new-password"
-                :required="true" :error="missing.password" />
-            <TextInput ref="confirmField" v-model="confirm" label="Confirm password" type="password" name="confirm-password"
-                autocomplete="new-password" :required="true" :error="missing.confirm" @keyup.enter="register" />
+            <AuthInput v-model="name" label="Name" name="name" autocomplete="name" :error="missing.name" />
+            <AuthInput v-model="email" label="Email" type="email" name="email" autocomplete="email" :error="missing.email" />
+            <AuthInput v-model="password" label="Password" type="password" name="new-password" autocomplete="new-password" :error="missing.password" />
+            <AuthInput v-model="confirm" label="Confirm password" type="password" name="confirm-password" autocomplete="new-password" :error="missing.confirm" />
             <p v-if="error" class="register-error">{{ error }}</p>
-            <md-filled-button type="button" :disabled="busy" @click="register">{{ busy ? 'Registering…' : 'Register' }}</md-filled-button>
+            <md-filled-button type="submit" :disabled="busy">{{ busy ? 'Registering…' : 'Register' }}</md-filled-button>
         </template>
         <p v-else class="register-success">
             Check your email to confirm your account, then log in. A lead or admin will need to approve it before you
