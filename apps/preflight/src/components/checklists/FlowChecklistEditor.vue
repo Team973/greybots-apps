@@ -16,6 +16,8 @@ const session = useSessionStore();
 const remote = useLiveQuery<ChecklistDef | null>(() => getFlowChecklist(props.id), null);
 const checklist = ref<ChecklistDef | null>(null);
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+// Starts collapsed, like the other checklists on Pit setup.
+const collapsed = ref(true);
 
 const autosave = useAutosave(() => checklist.value, (value) => saveFlowChecklist(props.id, clone(value!), session.user?.name ?? null), {
   enabled: () => props.canEdit && !!checklist.value,
@@ -46,7 +48,17 @@ watch(
       <AutosaveStatus v-if="canEdit" :state="autosave.state.value" :error="autosave.error.value" />
     </header>
     <p class="hint">{{ hint }}</p>
-    <ChecklistEditor :checklist="checklist" :index="0" :count="1" :roles="roles" :can-edit="canEdit" auto-link-label="" fixed />
+    <ChecklistEditor
+      :checklist="checklist"
+      :index="0"
+      :count="1"
+      :roles="roles"
+      :can-edit="canEdit"
+      auto-link-label=""
+      fixed
+      :collapsed="collapsed"
+      @toggle="collapsed = !collapsed"
+    />
   </section>
 </template>
 

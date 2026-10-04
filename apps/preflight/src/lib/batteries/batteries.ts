@@ -1,5 +1,6 @@
 import { clockNow } from '@greybots/common/lib/now';
 import { db } from '@/lib/db';
+import { getSetting, saveSetting } from '@/lib/settings';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
 import type { SyncedRecord } from '@/lib/sync/types';
 import { uuidFromName } from '@/lib/uuid';
@@ -28,6 +29,8 @@ export interface Battery extends SyncedRecord {
     // "YYYY-MM-DD".
     purchase_date: string | null;
     status: BatteryStatus;
+    // The set it belongs to (e.g. "Season", "Championship"); null when unassigned.
+    set_name: string | null;
     notes: string | null;
     updated_by_name: string | null;
 }
@@ -65,6 +68,9 @@ export interface BatteryUse extends SyncedRecord {
     installed_by_name: string | null;
     removed_at: string | null;
     removed_by_name: string | null;
+    // Energy taken out of the battery in this use. Entered by hand for now;
+    // match logs or charger telemetry can fill it later.
+    wh_discharged: number | null;
     updated_by_name: string | null;
 }
 
@@ -86,6 +92,7 @@ export interface BatteryInput {
     label?: string | null;
     purchase_date?: string | null;
     status?: BatteryStatus;
+    set_name?: string | null;
     notes?: string | null;
 }
 
@@ -100,6 +107,7 @@ export async function registerBattery(number: number, input: BatteryInput, edito
         label: clean(input.label),
         purchase_date: input.purchase_date || null,
         status: input.status ?? 'active',
+        set_name: clean(input.set_name),
         notes: clean(input.notes),
         updated_by_name: editor
     });
@@ -110,6 +118,7 @@ export function updateBattery(id: string, input: BatteryInput, editor: string | 
         label: clean(input.label),
         purchase_date: input.purchase_date || null,
         status: input.status ?? 'active',
+        set_name: clean(input.set_name),
         notes: clean(input.notes),
         updated_by_name: editor
     });
@@ -127,6 +136,30 @@ export function nextBatteryNumber(batteries: Battery[]): number {
     let n = 1;
     while (used.has(n)) n++;
     return n;
+}
+
+// --- Sets ------------------------------------------------------------------
+
+// The team runs more than one complete set (e.g. one held back for the
+// championship). The set in use is a shared setting: the Batteries page shows
+// it, and the rotation only recommends batteries from it. Null = every set.
+const setInUseKey = 'battery_set_in_use';
+
+export async function getBatterySetInUse(): Promise<string | null> {
+    return (await getSetting<string | null>(setInUseKey)) ?? null;
+}
+
+export function saveBatterySetInUse(setName: string | null, editor: string | null) {
+    return saveSetting<string | null>(setInUseKey, setName, editor);
+}
+
+// The set names in use across the registry, in alphabetical order.
+export function batterySets(batteries: Battery[]): string[] {
+    return [...new Set(batteries.map((b) => b.set_name).filter((s): s is string => !!s))].sort((a, b) => a.localeCompare(b));
+}
+
+export function inSet(battery: Battery, setInUse: string | null): boolean {
+    return !setInUse || battery.set_name === setInUse;
 }
 
 // --- QR labels -------------------------------------------------------------
@@ -169,7 +202,6 @@ export function validateMeasurement(input: MeasurementInput): string | null {
     if ([v, r, soc, wh].every((n) => n === null) && !input.observations?.trim()) return 'Enter at least one value or an observation';
     if ([v, r, soc, wh].some((n) => n !== null && (!Number.isFinite(n) || n < 0))) return 'Values must be positive numbers';
     if (v !== null && v > 20) return 'Resting voltage looks wrong (a charged battery is about 13 V)';
-    if (soc !== null && soc > 100) return 'State of charge is a percentage (0–100)';
     return null;
 }
 
@@ -263,6 +295,7 @@ export async function installBattery(batteryIdValue: string, target: UseTarget, 
         installed_by_name: editor,
         removed_at: null,
         removed_by_name: null,
+        wh_discharged: null,
         updated_by_name: editor
     });
 }
@@ -270,9 +303,14 @@ export async function installBattery(batteryIdValue: string, target: UseTarget, 
 // Which battery to put in next: batteries are rotated in number order, so
 // it's the next number up from the one installed most recently, wrapping
 // back to the lowest. Only active batteries are suggested (a suspect one can
-// still be chosen by hand). `uses` must be newest first.
-export function recommendBattery(batteries: Battery[], uses: BatteryUse[]): Battery | null {
-    const rotation = batteries.filter((b) => b.status === 'active').sort((a, b) => a.number - b.number);
+// still be chosen by hand), and only from the set in use. `uses` must be
+// newest first.
+export function batteryRotation(batteries: Battery[], setInUse: string | null = null): Battery[] {
+    return batteries.filter((b) => b.status === 'active' && inSet(b, setInUse)).sort((a, b) => a.number - b.number);
+}
+
+export function recommendBattery(batteries: Battery[], uses: BatteryUse[], setInUse: string | null = null): Battery | null {
+    const rotation = batteryRotation(batteries, setInUse);
     if (!rotation.length) return null;
     const last = batteries.find((b) => b.id === uses[0]?.battery_id);
     if (!last) return rotation[0];
@@ -286,6 +324,19 @@ export function removeBattery(use: BatteryUse, editor: string | null) {
 // Undo a wrong assignment.
 export function deleteBatteryUse(id: string) {
     return deleteRecord(batteryUsesTable, id);
+}
+
+// Record (or clear) the energy a use took out of the battery.
+export function setUseWh(id: string, wh: number | null, editor: string | null) {
+    if (wh !== null && (!Number.isFinite(wh) || wh < 0)) throw new Error('Wh discharged must be a positive number');
+    return patchRecord<BatteryUse>(batteryUsesTable, id, { wh_discharged: wh, updated_by_name: editor });
+}
+
+// Running total of the energy discharged from a battery over all its uses.
+// Null when nothing has been recorded yet.
+export function totalWhDischarged(uses: BatteryUse[]): number | null {
+    const recorded = uses.filter((u) => u.wh_discharged !== null && u.wh_discharged !== undefined);
+    return recorded.length ? recorded.reduce((sum, u) => sum + Number(u.wh_discharged), 0) : null;
 }
 
 export function useCounts(uses: BatteryUse[]): { matches: number; tests: number } {

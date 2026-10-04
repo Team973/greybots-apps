@@ -116,6 +116,14 @@ connection and a server session; on a kiosk that's the linked account, so
 only kiosk admins see it. Kiosk crew members (local PIN users) are separate
 and still managed under Crew.
 
+### Theme
+
+Light or dark is a per-device choice: Settings → Appearance (System / Light /
+Dark) or the sun/moon button on the nav bar. It's kept in `localStorage` by
+the shared view-mode store (`themePreference`), and "System" follows the
+device. The pit display is always dark, and the event script always prints
+black on white.
+
 ### Navigation
 
 The nav bar (`src/components/NavBar.vue`) shows the page links as a strip.
@@ -268,13 +276,24 @@ How it's stored:
 - **Configuration** (`src/lib/checklists/config.ts`, edited on **Pit setup**,
   `/pit-setup`, leads/admins): the pit roles roster (role → assignee) and one
   standard checklist sequence (checklists → steps with instructions and
-  roles), stored as the `pit_roles` and `checklist_sequence` settings. Steps
+  roles), stored as the `pit_roles` and `checklist_sequence` settings. Each
+  checklist on Pit setup collapses to one row (they start collapsed). Steps
   reference roles, so reassigning a role updates every checklist. The
   standard roles are Pit Lead, Mechanical, Electrical, Programming, Battery,
   and Drive Team; Pit setup offers any that the roster is missing. "Load
   suggested checklists" seeds both from the requirements doc.
 - Anyone member and above drives the flow; leads/admins also get a manual
   override (and everyone sees the history) under "Status history".
+- **Pit timer** (`PreflightTimer`, `src/lib/timer/timer.ts`, `PitTimer.vue`):
+  a countdown the crew sets by hand, above the task list on the Overview and
+  as the Timer widget on the pit display. Four digits, each with its own + and
+  − (so up to 99:99); Start, then Pause / Play and Reset (back to the time
+  dialed in). Its state is one synced row, so every copy on every device is
+  the same timer. `ends_at` is real time, not the app clock, so a device in
+  testing mode agrees with the rest. Members and above run it.
+- **Bumper color:** `BumperChip` shows which bumpers the next match needs
+  (from its alliance on the schedule) beside the installed battery, wherever
+  the status is shown, and on the pit display's status.
 - **Tasks** (`PreflightTask`): members and above add, reorder, start, and
   check off tasks; finished tasks appear on the Schedule calendar under the
   "Tasks" filter. Each task has an owner (`assignee`), shown in every task
@@ -469,7 +488,7 @@ rest of the event on paper, for people who'd rather work from a printout.
   which color to which, and which battery is next in the rotation. Which
   checklists are pre-match and which are post-match follows the same rule the
   Overview uses to tie a checklist to a match.
-- **Blank checklists:** one page per checklist (the pit sequence, the practice
+- **Administrative checklists:** one page per checklist (the pit sequence, the practice
   field checklist, and the ad-hoc ones) with nothing filled in and the
   conditions spelled out, for playoffs and anything else that can't be known
   ahead.
@@ -486,16 +505,20 @@ summary for a TV in the pit. (The requirements call this "kiosk mode"; here
 "kiosk" already means the shared-device sign-in mode, so it's the *pit
 display*.)
 
-- The robot status fills the top third. Below it are widgets: next match,
+- The robot status fills the bottom third. Above it are widgets: next match,
   countdown, readiness (prep and queue deadlines, open repairs), current
   match, active checklist with progress, active repair, battery installed,
-  pit responsibilities, and event phase. Sizes follow the viewport, and the
+  pit responsibilities, event phase, and the pit timer (which members can
+  run from the display). Sizes follow the viewport, and the
   type scales down as more rows of widgets are shown, so nothing scrolls.
 - **Layouts per phase** (`src/lib/display/display.ts`, the `pit_display`
   setting): leads/admins choose and order the widgets for each event phase on
   Pit setup. The display follows the phase from the event timeline
   (`currentPhase()`), uses the default layout when there are no milestones,
-  and can be pinned to one phase's layout.
+  and can be pinned to one phase's layout. The config has a `version`, so a
+  layout saved before a widget existed gets it added once.
+- While it's up, the display syncs every 15 s (not once a minute), so a
+  timer started on another device shows promptly.
 - **Stays up:** it reads only the local database, so reloads and network
   drops don't affect it. The route is marked `bare` (no nav bar, and the kiosk
   idle lock is off while it's showing) and `kioskPublic` (on a kiosk it's
@@ -541,15 +564,24 @@ team, not to one event, so these tables aren't filtered by event.
 - **Registry** (`PreflightBattery`): number, label, purchase date, and
   lifecycle status (active / suspect / retired). The id is derived from the
   number, so two devices registering battery 7 converge. The number can't be
-  changed afterwards.
+  changed afterwards. A retired battery (Lifecycle, or "Retire battery" on its
+  page) keeps its history but is hidden from the grid and the rotation.
+- **Sets** (`set_name`): the team runs more than one complete set, e.g. one
+  held back for the championship. The shared `battery_set_in_use` setting
+  (leads/admins) picks the set the grid shows and the rotation recommends
+  from; "All batteries" turns that off.
 - **Measurements** (`PreflightBatteryMeasurement`): manual readings of
   resting voltage, internal resistance (mΩ), state of charge, capacity (Wh),
-  and observations. Every value is optional; cards show the latest value of
-  each. `source` is `manual` today, leaving room for charger telemetry.
+  and observations. Every value is optional; cards show the latest charge,
+  resistance, and voltage. State of charge isn't capped at 100%. `source` is
+  `manual` today, leaving room for charger telemetry.
 - **Use** (`PreflightBatteryUse`): a battery going into the robot for a
   match or a test. The newest use with no `removed_at` is the installed
   battery, and installing one takes the previous one out. The installed
-  battery shows as a chip next to the robot status on the Overview.
+  battery shows as a chip next to the robot status on the Overview. Each use
+  can record the Wh it discharged (`wh_discharged`, entered by hand in the
+  usage history until match logs or the charger supply it); a card's Wh is
+  the running total over all of the battery's uses.
 - **Pages:** `/batteries` is the grid of cards from the mockup;
   `/batteries/:number` has details, assignment, measurements, and history;
   `/batteries/labels` prints QR labels (`?only=<number>` for one).

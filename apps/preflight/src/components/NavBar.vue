@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import SyncStatusChip from './SyncStatusChip.vue';
+import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 import { roleLabel, type Role } from '@/lib/roles';
 import { useDeviceStore } from '@/stores/device-store';
 import { useSessionStore } from '@/stores/session-store';
@@ -10,6 +11,10 @@ const device = useDeviceStore();
 const session = useSessionStore();
 const route = useRoute();
 const router = useRouter();
+
+// One tap between light and dark (Settings also offers following the system).
+const viewMode = useViewModeStore();
+const toggleTheme = () => viewMode.setThemePreference(viewMode.isDarkMode ? 'light' : 'dark');
 
 async function signOut() {
   menuOpen.value = false;
@@ -106,6 +111,14 @@ function onOutsideClick(event: MouseEvent) {
       </RouterLink>
     </nav>
     <SyncStatusChip />
+    <button
+      class="nav-button theme-button"
+      :aria-label="viewMode.isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'"
+      :title="viewMode.isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'"
+      @click="toggleTheme"
+    >
+      <span aria-hidden="true">{{ viewMode.isDarkMode ? '☀' : '☾' }}</span>
+    </button>
     <span v-if="session.user" class="user">
       {{ session.user.name }} <span class="role">{{ roleLabel(session.user.role) }}</span>
     </span>
@@ -187,6 +200,12 @@ function onOutsideClick(event: MouseEvent) {
 .nav-button.active,
 .nav-button:hover {
   background-color: var(--header-hover-color);
+}
+
+.theme-button {
+  padding: 6px 10px;
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 /* Hamburger: three bars that become a cross while the menu is open. */

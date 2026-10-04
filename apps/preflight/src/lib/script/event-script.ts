@@ -1,4 +1,4 @@
-import { recommendBattery, type Battery, type BatteryUse } from '@/lib/batteries/batteries';
+import { batteryRotation, recommendBattery, type Battery, type BatteryUse } from '@/lib/batteries/batteries';
 import {
     sequenceMatchLink,
     stepConditionLabels,
@@ -78,6 +78,8 @@ export interface ScriptInput {
     batteries: Battery[];
     // Newest first.
     uses: BatteryUse[];
+    // The battery set in use (null = every set).
+    batterySet?: string | null;
 }
 
 const colorName = (a: Alliance) => (a === 'red' ? 'RED' : 'BLUE');
@@ -136,9 +138,9 @@ function genericStep(step: ChecklistStep, roles: PitRole[]): ScriptStep {
 // it, by the same rule the Overview uses to name each run.
 export function buildMatchScripts(input: ScriptInput): ScriptMatch[] {
     const ours = input.matches.filter((m) => m.kind === 'match').sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at));
-    const rotation = input.batteries.filter((b) => b.status === 'active').sort((a, b) => a.number - b.number);
+    const rotation = batteryRotation(input.batteries, input.batterySet ?? null);
     // Where the rotation stands now; it moves on one battery per match.
-    let battery = recommendBattery(input.batteries, input.uses);
+    let battery = recommendBattery(input.batteries, input.uses, input.batterySet ?? null);
 
     const before: ChecklistDef[] = [];
     const after: ChecklistDef[] = [];

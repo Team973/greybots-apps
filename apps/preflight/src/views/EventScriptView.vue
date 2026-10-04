@@ -43,7 +43,7 @@ const endOfDay = useLiveQuery<ChecklistDef | null>(getEndOfDayChecklist, null);
 const adhoc = useLiveQuery<ChecklistDef[]>(getAdhocChecklists, []);
 const roles = useLiveQuery<PitRole[]>(getPitRoles, []);
 const prep = useLiveQuery<MatchPrep>(getMatchPrep, defaultMatchPrep);
-const { batteries, uses } = useBatteries();
+const { batteries, uses, setInUse } = useBatteries();
 
 // --- What to include ---
 const includeMatches = ref(true);
@@ -58,7 +58,8 @@ const matchScripts = computed(() =>
     roles: roles.value,
     prep: prep.value,
     batteries: batteries.value,
-    uses: uses.value
+    uses: uses.value,
+    batterySet: setInUse.value
   })
 );
 const generic = computed(() =>
@@ -94,13 +95,13 @@ const print = () => window.print();
       <div class="heading">
         <h1>Event script</h1>
         <p class="hint">
-          The rest of the event on paper: a page per upcoming match with its checklists already worked out, then a blank copy of every
-          checklist. Print it, or choose “Save as PDF” in the print dialog.
+          The rest of the event on paper: a page per upcoming match with its checklists already worked out, then the administrative checklists (a blank
+          copy of every checklist). Print it, or choose “Save as PDF” in the print dialog.
         </p>
       </div>
       <div class="options">
         <label><input v-model="includeMatches" type="checkbox" /> Match pages ({{ matchScripts.length }} upcoming)</label>
-        <label><input v-model="includeGeneric" type="checkbox" /> Blank checklists ({{ generic.length }})</label>
+        <label><input v-model="includeGeneric" type="checkbox" /> Administrative checklists ({{ generic.length }})</label>
         <label><input v-model="includeInstructions" type="checkbox" /> Step instructions</label>
         <md-filled-button :disabled="nothingToPrint" @click="print">Print / save as PDF</md-filled-button>
       </div>

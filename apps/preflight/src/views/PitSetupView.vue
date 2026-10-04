@@ -151,6 +151,27 @@ function removeRole(index: number) {
 // --- Checklists ---
 const blankChecklist = (): ChecklistDef => ({ id: newId(), name: '', steps: [newStep()] });
 
+// Checklists start collapsed to one row each, so the page is easy to get
+// around; these are the ones opened up.
+const openIds = ref(new Set<string>());
+function toggleOpen(id: string) {
+  const next = new Set(openIds.value);
+  if (!next.delete(id)) next.add(id);
+  openIds.value = next;
+}
+const allOpen = (list: ChecklistDef[]) => list.length > 0 && list.every((c) => openIds.value.has(c.id));
+function setAllOpen(list: ChecklistDef[], open: boolean) {
+  const next = new Set(openIds.value);
+  for (const c of list) open ? next.add(c.id) : next.delete(c.id);
+  openIds.value = next;
+}
+// A new checklist opens, ready to be filled in.
+function addChecklist(list: ChecklistDef[]) {
+  const checklist = blankChecklist();
+  list.push(checklist);
+  setAllOpen([checklist], true);
+}
+
 function removeFrom(list: ChecklistDef[], index: number) {
   const checklist = list[index];
   if (checklist.steps.length > 1 && !confirm(`Delete the "${checklist.name || 'untitled'}" checklist and its ${checklist.steps.length} steps?`)) return;
@@ -188,7 +209,7 @@ const sequenceAutoLink = (index: number) =>
       </p>
       <div class="form-row">
         <md-filled-button @click="loadDefaults">Load suggested checklists</md-filled-button>
-        <md-outlined-button @click="sequence.checklists.push(blankChecklist())">Start from scratch</md-outlined-button>
+        <md-outlined-button @click="addChecklist(sequence.checklists)">Start from scratch</md-outlined-button>
       </div>
     </div>
 
@@ -222,6 +243,10 @@ const sequenceAutoLink = (index: number) =>
         <section class="panel">
           <header class="panel-header">
             <h2>Pit checklists (in order, every pit visit)</h2>
+            <span class="header-spacer"></span>
+            <button v-if="sequence.checklists.length" class="add-link" @click="setAllOpen(sequence.checklists, !allOpen(sequence.checklists))">
+              {{ allOpen(sequence.checklists) ? 'Collapse all' : 'Expand all' }}
+            </button>
             <AutosaveStatus v-if="canEdit" :state="sequenceSave.state.value" :error="sequenceSave.error.value" />
           </header>
           <ChecklistEditor
@@ -234,12 +259,14 @@ const sequenceAutoLink = (index: number) =>
             :can-edit="canEdit"
             :auto-link-label="sequenceAutoLink(ci)"
             in-sequence
+            :collapsed="!openIds.has(checklist.id)"
+            @toggle="toggleOpen(checklist.id)"
             @move="(delta) => move(sequence.checklists, ci, delta)"
             @remove="removeFrom(sequence.checklists, ci)"
             @prematch="(on) => setPrematch(ci, on)"
           />
           <p v-if="!sequence.checklists.length" class="hint">No checklists yet. When the robot arrives it will go straight to Robot Ready.</p>
-          <button v-if="canEdit" class="add-link" @click="sequence.checklists.push(blankChecklist())">+ Add checklist</button>
+          <button v-if="canEdit" class="add-link" @click="addChecklist(sequence.checklists)">+ Add checklist</button>
         </section>
 
         <!-- The checklists the flow runs at fixed points -->
@@ -269,6 +296,8 @@ const sequenceAutoLink = (index: number) =>
         <section class="panel">
           <header class="panel-header">
             <h2>Other checklists (started when needed)</h2>
+            <span class="header-spacer"></span>
+            <button v-if="adhoc.length" class="add-link" @click="setAllOpen(adhoc, !allOpen(adhoc))">{{ allOpen(adhoc) ? 'Collapse all' : 'Expand all' }}</button>
             <AutosaveStatus v-if="canEdit" :state="adhocSave.state.value" :error="adhocSave.error.value" />
           </header>
           <ChecklistEditor
@@ -280,12 +309,14 @@ const sequenceAutoLink = (index: number) =>
             :roles="roles"
             :can-edit="canEdit"
             auto-link-label="Automatic: no match"
+            :collapsed="!openIds.has(checklist.id)"
+            @toggle="toggleOpen(checklist.id)"
             @move="(delta) => move(adhoc, ci, delta)"
             @remove="removeFrom(adhoc, ci)"
           />
           <p v-if="!adhoc.length" class="hint">None yet. These are for things like start of day, a bumper swap, or a subsystem deep dive.</p>
           <div v-if="canEdit" class="add-row">
-            <button class="add-link" @click="adhoc.push(blankChecklist())">+ Add checklist</button>
+            <button class="add-link" @click="addChecklist(adhoc)">+ Add checklist</button>
             <button v-if="!adhoc.length" class="add-link" @click="loadDefaultAdhoc">+ Add the suggested ones (start of day, bumper swap, deep dive)</button>
           </div>
         </section>
@@ -352,6 +383,15 @@ const sequenceAutoLink = (index: number) =>
   display: flex;
   flex-wrap: wrap;
   gap: 6px 20px;
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.panel-header .add-link {
+  align-self: center;
+  font-size: 0.9rem;
 }
 
 .add-link {

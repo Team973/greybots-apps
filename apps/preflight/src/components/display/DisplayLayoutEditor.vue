@@ -18,7 +18,7 @@ import { useLiveQuery } from '@/lib/live-query';
 import { phaseLabels } from '@/lib/schedule/types';
 import { useSessionStore } from '@/stores/session-store';
 
-// Chooses what the pit display shows under the robot status, per event phase
+// Chooses what the pit display shows above the robot status, per event phase
 // (issue #90). Saved automatically as a shared setting.
 defineProps<{ canEdit: boolean }>();
 const session = useSessionStore();
@@ -69,7 +69,7 @@ function move(index: number, delta: number) {
       <AutosaveStatus v-if="canEdit" :state="autosave.state.value" :error="autosave.error.value" />
     </header>
     <p class="hint">
-      The big screen always shows the robot status. Choose what goes under it in each phase of the event.
+      The big screen always shows the robot status along the bottom. Choose what goes above it in each phase of the event.
       <RouterLink to="/display" class="panel-link">Open the pit display →</RouterLink>
     </p>
 

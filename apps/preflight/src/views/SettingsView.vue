@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import UserManagement from '@greybots/common/components/UserManagement.vue';
+import { useViewModeStore, type ThemePreference } from '@greybots/common/stores/view-mode-store';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import CrewManager from '@/components/CrewManager.vue';
@@ -16,6 +17,14 @@ import { useSyncStore } from '@/stores/sync-store';
 const device = useDeviceStore();
 const session = useSessionStore();
 const sync = useSyncStore();
+
+// Light or dark, per device. "System" follows the device's own setting.
+const viewMode = useViewModeStore();
+const themes: { value: ThemePreference; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' }
+];
 
 // On a kiosk only admins may change device settings; on a personal device
 // the signed-in owner can.
@@ -47,6 +56,22 @@ async function reset() {
 </script>
 
 <template>
+  <div class="card">
+    <h2>Appearance</h2>
+    <p class="hint">Applies to this device only. The pit display is always dark.</p>
+    <div class="theme-toggle" role="group" aria-label="Theme">
+      <button
+        v-for="theme in themes"
+        :key="theme.value"
+        :class="{ on: viewMode.themePreference === theme.value }"
+        :aria-pressed="viewMode.themePreference === theme.value"
+        @click="viewMode.setThemePreference(theme.value)"
+      >
+        {{ theme.label }}
+      </button>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Device</h2>
     <dl class="detail-list">
@@ -93,3 +118,28 @@ async function reset() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.theme-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--header-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.theme-toggle button {
+  padding: 8px 18px;
+  border: none;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  cursor: pointer;
+}
+
+.theme-toggle button.on {
+  background: var(--header-color);
+  color: var(--header-text-color);
+  font-weight: 600;
+}
+</style>
