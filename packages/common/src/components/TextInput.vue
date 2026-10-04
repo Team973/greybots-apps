@@ -1,8 +1,3 @@
-<script setup lang="ts">
-// @ts-nocheck
-import "@material/web/textfield/outlined-text-field";
-</script>
-
 <template>
     <md-outlined-text-field ref="field" v-on:input="updateText" v-on:change="updateText" :type="type"
         v-bind:value="modelValue" :label="label" :name="name" :autocomplete="autocomplete" :required="required"
@@ -10,6 +5,11 @@ import "@material/web/textfield/outlined-text-field";
 </template>
 
 <script lang="ts">
+// @ts-nocheck
+import "@material/web/textfield/outlined-text-field";
+
+// Deliberately not <script setup>: that closes a component, hiding its methods
+// from a parent's template ref, and forms call readValue() through one.
 export default {
     props: {
         modelValue: {
