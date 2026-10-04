@@ -83,16 +83,26 @@ data.
 - After that, the Supabase session persisted by `supabase-js` plus a cached
   profile (name and role, from the shared `User` table) let the user keep
   working offline. The profile refreshes whenever the app starts online.
-- Preflight doesn't provision `User` rows. Accounts without one are treated
-  as `observer`. GreyScout owns account provisioning.
+- **Registering** (`/register`, personal devices only) is the same in every
+  greybots app: the shared `RegisterForm` and `lib/account.ts` in
+  `@greybots/common`. One account works in all of them. The account's `User`
+  row is created the first time any app sees it signed in
+  (`ensureUserProfile`).
+- A new account is **pending**: it has no role in any app, and gets only the
+  "Waiting for approval" page (`/pending`) until a lead or admin gives it a
+  role. A **deactivated** account gets the same page, saying so.
+- The sign-in form reads its fields when it's submitted (`TextInput`'s
+  `readValue()`), because autofill and password managers can fill a field
+  without the form hearing about it.
 
 ### Roles
 
 Both modes use the same `admin > lead > member > observer` ladder
 (`src/lib/roles.ts`). Use `session.hasRole('lead')` in components and
-`meta.minRole` on routes.
+`meta.minRole` on routes. Below observer are `pending` and `deactivated`,
+which have no access at all (web accounts only; kiosk crew never have them).
 
-- **Observers** (accounts not yet made members) can open only the pit
+- **Observers** (accounts approved, but not made members) can open only the pit
   display; every other route sends them there, and it offers Sign out
   instead of Exit. So the display has something to show, the tables it reads
   are readable by any signed-in account. Tasks and notes aren't.
@@ -105,16 +115,29 @@ Both modes use the same `admin > lead > member > observer` ladder
 someone can be a scouting lead and only an observer in the pit. Preflight
 reads `preflight_role`, and its database policies check it.
 
-Both apps show the same People table (`UserManagement` in
-`@greybots/common`, with the rules in `lib/user-roles.ts`): everyone with an
-account and their role in each app, each changeable from either app. A role
-is changed by someone with enough authority *in the app the role is for*:
-promote up to your own level anyone below you, and only admins demote. The
-database enforces this (`enforce_user_profile_update`); the dropdowns only
-offer what it will accept. In Preflight it's under Settings and needs a
-connection and a server session; on a kiosk that's the linked account, so
-only kiosk admins see it. Kiosk crew members (local PIN users) are separate
-and still managed under Crew.
+Both apps have the same People page (`UserManagement` in `@greybots/common`,
+with the rules in `lib/user-roles.ts`; `/people` here, `/users` in
+GreyScout), using the full width of the page. It has three collapsible
+sections:
+
+- **Pending:** new accounts, with no role in any app. Picking a role for
+  someone in an app approves them for it; only leads and admins of that app
+  can.
+- **Active:** everyone with a role in at least one app, and their role in
+  each, each changeable from either app. A role is changed by someone with
+  enough authority *in the app the role is for*: promote up to your own level
+  anyone below you, and only admins demote.
+- **Deactivated:** accounts an admin switched off. An admin (of any app) can
+  deactivate anyone who isn't an admin, with a second press to confirm, and
+  restore them later; restoring puts back the roles they had. Deactivating
+  sets the role in every app to `deactivated`, so every role check turns the
+  account away.
+
+Admins (of any app) can also rename anyone. The database enforces all of
+this (`enforce_user_profile_update`); the controls only offer what it will
+accept. In Preflight the page needs a connection and a server session; on a
+kiosk that's the linked account, so only kiosk admins get it. Kiosk crew
+members (local PIN users) are separate and still managed under Crew.
 
 ### Theme
 

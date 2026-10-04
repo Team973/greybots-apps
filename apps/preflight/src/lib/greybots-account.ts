@@ -1,9 +1,8 @@
+import type { User } from '@supabase/supabase-js';
+import { ensureUserProfile } from '@greybots/common/lib/account';
 import { supabase, supabasePublicKey, supabaseUrl } from '@greybots/common/supabase/client';
 import { reachabilityTimeoutMs } from './constants';
 import type { Role } from './roles';
-
-// Shared greybots-apps account table (same one GreyScout uses).
-const userTable = 'User';
 
 export interface AccountProfile {
     id: string;
@@ -15,24 +14,24 @@ export interface AccountProfile {
 // Look up the display name and Preflight role for a signed-in greybots-apps
 // account. Roles are per app: `preflight_role` is this app's, and `role` is
 // the scouting one (used only as a fallback against a database that doesn't
-// have the Preflight column yet). Accounts without a profile row yet are
-// treated as observers — GreyScout owns provisioning that row, so Preflight
-// doesn't create it.
-export async function fetchAccountProfile(userId: string, email: string | null): Promise<AccountProfile> {
-    const { data, error } = await supabase.from(userTable).select('*').eq('user_id', userId).maybeSingle();
-    if (error) throw new Error(error.message);
+// have the Preflight column yet). The profile row is created the first time
+// the account is seen, by whichever app sees it first; a new account is
+// pending until a lead or admin gives it a role.
+export async function fetchAccountProfile(user: User): Promise<AccountProfile> {
+    const data = await ensureUserProfile(user);
+    const email = user.email ?? null;
     return {
-        id: userId,
+        id: user.id,
         email,
         name: data?.name || email || 'Unknown user',
-        role: ((data?.preflight_role ?? data?.role) as Role) ?? 'observer'
+        role: ((data?.preflight_role ?? data?.role) as Role | undefined) ?? 'pending'
     };
 }
 
 export async function signInAccount(email: string, password: string): Promise<AccountProfile> {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
-    return fetchAccountProfile(data.user.id, data.user.email ?? null);
+    return fetchAccountProfile(data.user);
 }
 
 // Local-scope sign out only clears this device's session, so it works offline.

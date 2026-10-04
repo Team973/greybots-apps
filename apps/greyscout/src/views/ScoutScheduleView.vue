@@ -162,7 +162,7 @@ export default {
         },
         assignableUsers() {
             return this.people
-                .filter((person) => person.role !== 'observer')
+                .filter((person) => ['member', 'lead', 'admin'].includes(person.role))
                 .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         },
         // Includes the "Unassigned" option as a real choice (key '', matching

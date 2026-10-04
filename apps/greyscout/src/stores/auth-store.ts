@@ -2,12 +2,17 @@
 
 import { defineStore } from 'pinia';
 import { supabase } from '@greybots/common/supabase/client';
-import { userTable } from '@/lib/constants';
+import { ensureUserProfile } from '@greybots/common/lib/account';
+import { hasAppAccess } from '@greybots/common/lib/user-roles';
 import { isSiteReadPrivate, isSiteWritePrivate } from '@/lib/constants';
 
-export type UserRole = 'admin' | 'lead' | 'member' | 'observer' | null;
+// 'pending' (a new account nobody has approved yet) and 'deactivated' have no
+// access to the app at all.
+export type UserRole = 'admin' | 'lead' | 'member' | 'observer' | 'pending' | 'deactivated' | null;
 
 export const roleRank: Record<Exclude<UserRole, null>, number> = {
+    deactivated: -2,
+    pending: -1,
     observer: 0,
     member: 1,
     lead: 2,
@@ -50,6 +55,13 @@ export const useAuthStore = defineStore('auth', {
         isObserver(): boolean {
             return this.role === 'observer';
         },
+        // Signed in with a role in this app (not pending or deactivated).
+        hasAccess(): boolean {
+            return this.isLoggedIn && hasAppAccess(this.role);
+        },
+        isDeactivated(): boolean {
+            return this.role === 'deactivated';
+        },
         currentUserId(): string | null {
             return this.userId;
         },
@@ -74,42 +86,29 @@ export const useAuthStore = defineStore('auth', {
 
             this.userId = user.id;
 
-            const dbResponse = await supabase
-                .from(userTable)
-                .select()
-                .eq('user_id', user.id);
-
-            let dbData = dbResponse?.data;
-            const dbError = dbResponse?.error;
-
-            if (dbError) {
+            // The profile row, provisioned the first time this user is seen
+            // (shared with the other greybots apps). New accounts always
+            // start out pending: a lead or admin has to give them a role.
+            let profile = null;
+            try {
+                profile = await ensureUserProfile(user);
+            } catch {
                 this.role = 'observer';
                 this.userName = null;
                 this.isUpdated = true;
                 return;
             }
 
-            // First time this user has been seen — provision their profile row.
-            // New accounts always start out as Observers.
-            if (!dbData || dbData.length === 0) {
-                const provisionedName = user.user_metadata?.name ?? null;
-                const { data: insertedData } = await supabase
-                    .from(userTable)
-                    .insert({ user_id: user.id, name: provisionedName, role: 'observer' })
-                    .select();
-                dbData = insertedData;
-            }
-
-            if (!dbData || dbData.length === 0) {
+            if (!profile) {
                 // Insert failed (e.g. no active session yet while awaiting email confirmation).
-                this.role = 'observer';
+                this.role = 'pending';
                 this.userName = user.user_metadata?.name ?? null;
                 this.isUpdated = true;
                 return;
             }
 
-            this.userName = dbData[0].name ?? null;
-            this.role = dbData[0].role as UserRole;
+            this.userName = profile.name ?? null;
+            this.role = profile.role as UserRole;
 
             this.isUpdated = true;
         }
