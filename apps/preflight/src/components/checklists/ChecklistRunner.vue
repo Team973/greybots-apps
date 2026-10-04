@@ -113,11 +113,11 @@ async function act(action: () => Promise<unknown>) {
 const text = ref('');
 const batteryId = ref('');
 const scanOpen = ref(false);
-const { loaded: batteriesLoaded, batteries, readings, uses } = useBatteries();
+const { loaded: batteriesLoaded, batteries, readings, uses, setInUse } = useBatteries();
 const usable = computed(() => batteries.value.filter((b) => b.status !== 'retired'));
 const chosenBattery = computed(() => usable.value.find((b) => b.id === batteryId.value) ?? null);
 // The next battery in the rotation after the one installed most recently.
-const recommended = computed(() => recommendBattery(batteries.value, uses.value));
+const recommended = computed(() => recommendBattery(batteries.value, uses.value, setInUse.value));
 const lastInstalled = computed(() => batteries.value.find((b) => b.id === uses.value[0]?.battery_id) ?? null);
 // What the recommendation was when this step came up. It's kept for the whole
 // step, since installing a battery moves the rotation on.

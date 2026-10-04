@@ -9,13 +9,14 @@ import { useSessionStore } from '@/stores/session-store';
 
 // Register a battery. "Add and next" keeps the dialog open on the next
 // number, for entering a whole set at the start of a season.
-const props = defineProps<{ open: boolean; nextNumber: number }>();
+const props = defineProps<{ open: boolean; nextNumber: number; sets: string[]; defaultSet: string | null }>();
 const emit = defineEmits<{ close: [] }>();
 const session = useSessionStore();
 
 const number = ref<number | ''>('');
 const label = ref('');
 const purchaseDate = ref('');
+const setName = ref('');
 const error = ref<string | null>(null);
 const busy = ref(false);
 
@@ -25,6 +26,7 @@ watch(
     if (!open) return;
     number.value = props.nextNumber;
     label.value = '';
+    setName.value = props.defaultSet ?? '';
     error.value = null;
   },
   { immediate: true }
@@ -34,9 +36,9 @@ async function add(keepOpen: boolean) {
   error.value = null;
   busy.value = true;
   try {
-    await registerBattery(Number(number.value), { label: label.value, purchase_date: purchaseDate.value || null }, session.user?.name ?? null);
+    await registerBattery(Number(number.value), { label: label.value, purchase_date: purchaseDate.value || null, set_name: setName.value }, session.user?.name ?? null);
     if (!keepOpen) return emit('close');
-    // Same purchase date for the next one: sets are usually bought together.
+    // Same set and purchase date for the next one: sets are usually bought together.
     number.value = Number(number.value) + 1;
     label.value = '';
   } catch (e) {
@@ -53,7 +55,14 @@ async function add(keepOpen: boolean) {
       <label class="field number"><span>Number</span><input v-model.number="number" type="number" min="1" step="1" /></label>
       <label class="field"><span>Label (optional)</span><input v-model="label" placeholder="e.g. MK ES17-12, 2026 set" /></label>
     </div>
-    <label class="field"><span>Purchase date (optional)</span><input v-model="purchaseDate" type="date" /></label>
+    <div class="form-row">
+      <label class="field">
+        <span>Set (optional)</span>
+        <input v-model="setName" list="battery-sets-add" placeholder="e.g. Season, Championship" />
+        <datalist id="battery-sets-add"><option v-for="s in sets" :key="s" :value="s"></option></datalist>
+      </label>
+      <label class="field"><span>Purchase date (optional)</span><input v-model="purchaseDate" type="date" /></label>
+    </div>
     <p v-if="error" class="error-text">{{ error }}</p>
     <template #actions>
       <span class="actions-spacer"></span>

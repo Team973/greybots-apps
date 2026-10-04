@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { formatClock, formatElapsed } from '@greybots/common/lib/now';
 import { formatReading } from '@/lib/batteries/batteries';
+import PitTimer from '@/components/timer/PitTimer.vue';
 import { useBatteries } from '@/lib/batteries/use-batteries';
 import { listChecks, type ChecklistCheck } from '@/lib/checklists/checks';
 import { sequenceMatchLink } from '@/lib/checklists/config';
@@ -23,8 +24,8 @@ import { useSessionStore } from '@/stores/session-store';
 import { useSyncStore } from '@/stores/sync-store';
 
 // The pit display (issue #90): a full-screen, read-only summary meant to be
-// read from across the pit on a TV. The robot status fills the top; below it
-// are the widgets configured for the current event phase (Pit setup).
+// read from across the pit on a TV. The widgets configured for the current
+// event phase (Pit setup) are on top; the robot status fills the bottom.
 // Everything comes from the local database, so it keeps running through
 // reloads and network drops, and it never auto-locks (see App.vue).
 const sync = useSyncStore();
@@ -32,6 +33,9 @@ const session = useSessionStore();
 const router = useRouter();
 // An observer has nowhere else to go, so they get Sign out instead of Exit.
 const observerOnly = computed(() => session.isSignedIn && !session.hasRole('member'));
+// The one thing on the display that can be operated: the pit timer, by the
+// pit crew (not observers, and not a locked kiosk).
+const canRunTimer = computed(() => session.isSignedIn && session.hasRole('member'));
 async function signOut() {
   await session.signOut();
   router.push({ name: 'login' });
@@ -53,7 +57,7 @@ const colors = computed(() => robotStatusColors[status.value]);
 const config = useLiveQuery<DisplayConfig>(getDisplayConfig, defaultDisplayConfig());
 const phase = computed(() => currentPhase(items.value, now.value));
 const layout = computed(() => activeLayout(config.value, phase.value));
-// Rows of widgets under the status (three across, two for 2 or 4 widgets).
+// Rows of widgets above the status (three across, two for 2 or 4 widgets).
 // More rows means less height each, so the type scales down with it.
 const widgetRows = computed(() => {
   const count = layout.value.widgets.length;
@@ -128,6 +132,8 @@ const currentMatch = computed(() => {
   if (status.value === 'away' && flow.effective.value.match) return flow.effective.value.match;
   return matches.value.find((m) => Date.parse(m.start_at) <= now.value && now.value < Date.parse(m.end_at)) ?? null;
 });
+// The match the robot needs its bumpers for: the first one not yet over.
+const bumperMatch = computed(() => matches.value.find((m) => Date.parse(m.end_at) > now.value) ?? null);
 const prep = useLiveQuery<MatchPrep>(getMatchPrep, defaultMatchPrep);
 const deadlines = computed(() => (nextMatch.value ? matchDeadlines(nextMatch.value, prep.value) : null));
 // Counts down to queue time, then to the match.
@@ -175,13 +181,18 @@ function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
   else document.documentElement.requestFullscreen?.().catch(() => undefined);
 }
+// The pit timer is usually set on another device. Pull more often than the
+// app's normal once a minute while the display is up, so it shows promptly.
+let fastSync: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
+  fastSync = setInterval(() => sync.syncNow(), 15_000);
   keepAwake();
   // The lock is dropped when the tab is hidden; take it again on return.
   document.addEventListener('visibilitychange', keepAwake);
   document.addEventListener('fullscreenchange', onFullscreenChange);
 });
 onBeforeUnmount(() => {
+  if (fastSync) clearInterval(fastSync);
   document.removeEventListener('visibilitychange', keepAwake);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
   wakeLock?.release().catch(() => undefined);
@@ -196,14 +207,6 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <section class="status" :style="flow.loaded.value ? { background: colors.bg, color: colors.fg } : {}">
-        <h1>{{ flow.loaded.value ? headline : '…' }}</h1>
-        <p v-if="flow.loaded.value" class="status-sub">
-          <template v-if="status === 'pending' && pitLink.label">{{ pitLink.label }} · </template>
-          <template v-if="elapsed">{{ elapsed }}</template>
-        </p>
-      </section>
-
       <div class="widgets" :class="[`count-${Math.min(layout.widgets.length, 6)}`, `rows-${Math.min(widgetRows, 4)}`]">
         <template v-for="widget in layout.widgets" :key="widget">
           <section v-if="widget === 'next_match'" class="widget">
@@ -311,8 +314,24 @@ onBeforeUnmount(() => {
             <p v-for="m in milestonesNow.slice(0, 2)" :key="m.id" class="line">Now: {{ m.title }}</p>
             <p v-if="nextMilestone" class="line">Next: {{ nextMilestone.title }} at {{ formatTime(nextMilestone.start_at) }}</p>
           </section>
+
+          <section v-else-if="widget === 'timer'" class="widget">
+            <h2>Timer</h2>
+            <PitTimer variant="display" :readonly="!canRunTimer" />
+          </section>
         </template>
       </div>
+
+      <section class="status" :style="flow.loaded.value ? { background: colors.bg, color: colors.fg } : {}">
+        <h1>{{ flow.loaded.value ? headline : '…' }}</h1>
+        <p v-if="flow.loaded.value" class="status-sub">
+          <template v-if="status === 'pending' && pitLink.label">{{ pitLink.label }} · </template>
+          <template v-if="elapsed">{{ elapsed }}</template>
+          <span v-if="bumperMatch && allianceName(bumperMatch)" class="bumpers" :style="{ background: matchColor(bumperMatch.match_info?.alliance) }">
+            {{ allianceName(bumperMatch) }} bumpers · {{ bumperMatch.title }}
+          </span>
+        </p>
+      </section>
     </template>
 
     <footer class="footer">
@@ -379,6 +398,17 @@ onBeforeUnmount(() => {
   font-size: min(5vh, 4vw);
   font-variant-numeric: tabular-nums;
   opacity: 0.9;
+}
+
+.bumpers {
+  display: inline-block;
+  margin-left: 1.5vw;
+  padding: 0.2vh 1.6vw;
+  border-radius: 999px;
+  border: 0.3vh solid #fff;
+  color: #fff;
+  font-weight: 700;
+  vertical-align: middle;
 }
 
 .widgets {

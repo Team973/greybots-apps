@@ -4,8 +4,9 @@ import { RouterLink } from 'vue-router';
 import { batteryStatusLabels, formatReading, type Battery, type BatteryReadings } from '@/lib/batteries/batteries';
 
 // One battery on the Batteries page (Batteries mockup): its number, and the
-// latest state of charge, internal resistance, resting voltage, and capacity.
-const props = defineProps<{ battery: Battery; readings: BatteryReadings | null; installed: boolean; matches: number }>();
+// latest state of charge, internal resistance, and resting voltage, plus the
+// running total of energy discharged over all its uses.
+const props = defineProps<{ battery: Battery; readings: BatteryReadings | null; installed: boolean; matches: number; whTotal: number | null }>();
 
 const r = computed(
   () => props.readings ?? { resting_voltage: null, internal_resistance_mohm: null, state_of_charge: null, capacity_wh: null, measured_at: null }
@@ -23,11 +24,12 @@ const r = computed(
         <span class="reading">{{ formatReading(r.state_of_charge, 0) }}<small>%</small></span>
         <span class="reading">{{ formatReading(r.internal_resistance_mohm) }}<small>mΩ</small></span>
         <span class="reading">{{ formatReading(r.resting_voltage, 2) }}<small>V</small></span>
-        <span class="reading">{{ formatReading(r.capacity_wh, 0) }}<small>Wh</small></span>
+        <span class="reading" title="Total Wh discharged over all uses">{{ formatReading(whTotal, 0) }}<small>Wh used</small></span>
       </div>
       <div class="tags">
         <span v-if="installed" class="tag installed-tag">In robot</span>
         <span v-if="battery.status !== 'active'" class="tag" :class="battery.status">{{ batteryStatusLabels[battery.status] }}</span>
+        <span v-if="battery.set_name" class="label">{{ battery.set_name }}</span>
         <span v-if="battery.label" class="label">{{ battery.label }}</span>
         <span class="uses">{{ matches }} match{{ matches === 1 ? '' : 'es' }}</span>
       </div>
@@ -88,10 +90,11 @@ const r = computed(
   width: 18px;
   height: 8px;
   border-radius: 3px 3px 0 0;
-  background: #7a8087;
+  background: #1a1a1a;
 }
 
-.terminals i:last-child {
+/* Red (positive) on the left. */
+.terminals i:first-child {
   background: #c62828;
 }
 

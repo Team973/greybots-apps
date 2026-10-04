@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { formatClock } from '@greybots/common/lib/now';
+import BumperChip from './BumperChip.vue';
 import NextMatchLine from './NextMatchLine.vue';
 import InstalledBatteryChip from '@/components/batteries/InstalledBatteryChip.vue';
 import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
@@ -83,6 +84,7 @@ const subtitle = computed(() => {
     </div>
     <div v-if="!dayEnded" class="chips">
       <InstalledBatteryChip />
+      <BumperChip :match="nextMatch" />
       <ActiveRepairChip :repairs="repairs" />
     </div>
     <template v-if="canAct">

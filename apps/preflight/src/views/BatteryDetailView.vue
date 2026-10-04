@@ -8,6 +8,7 @@ import BatteryQr from '@/components/batteries/BatteryQr.vue';
 import { useAutosave } from '@/lib/autosave';
 import {
   addMeasurement,
+  batterySets,
   batteryStatusLabels,
   batteryStatuses,
   deleteBattery,
@@ -17,6 +18,8 @@ import {
   installBattery,
   registerBattery,
   removeBattery,
+  setUseWh,
+  totalWhDischarged,
   updateBattery,
   useCounts,
   type BatteryStatus,
@@ -47,6 +50,9 @@ const measurements = computed(() => measurementsByBattery.value.get(batteryKey.v
 const uses = computed(() => usesByBattery.value.get(batteryKey.value) ?? []);
 const latest = computed(() => readings.value.get(batteryKey.value) ?? null);
 const counts = computed(() => useCounts(uses.value));
+// Running total of energy discharged over every use.
+const whTotal = computed(() => totalWhDischarged(uses.value));
+const sets = computed(() => batterySets(batteries.value));
 const isInstalled = computed(() => !!battery.value && installed.value?.battery_id === battery.value.id);
 
 const activeEvent = useLiveQuery<ActiveEvent | null>(getActiveEvent, null);
@@ -74,8 +80,15 @@ async function act(action: () => Promise<unknown>) {
 const label = ref('');
 const purchaseDate = ref('');
 const status = ref<BatteryStatus>('active');
+const setName = ref('');
 const notes = ref('');
-const details = () => ({ label: label.value, purchase_date: purchaseDate.value || null, status: status.value, notes: notes.value });
+const details = () => ({
+  label: label.value,
+  purchase_date: purchaseDate.value || null,
+  status: status.value,
+  set_name: setName.value,
+  notes: notes.value
+});
 const autosave = useAutosave(details, (value) => updateBattery(batteryKey.value, value, editor()), {
   enabled: () => canEdit.value && !!battery.value
 });
@@ -85,6 +98,7 @@ watch(
     label.value = battery.value?.label ?? '';
     purchaseDate.value = battery.value?.purchase_date ?? '';
     status.value = battery.value?.status ?? 'active';
+    setName.value = battery.value?.set_name ?? '';
     notes.value = battery.value?.notes ?? '';
     autosave.reset();
   },
@@ -116,6 +130,14 @@ function install() {
 
 const openUse = computed(() => uses.value.find((u) => !u.removed_at) ?? null);
 const takeOut = () => openUse.value && act(() => removeBattery(openUse.value!, editor()));
+
+// Wh discharged in one use, entered after the match or test.
+function saveUseWh(use: BatteryUse, event: Event) {
+  const raw = (event.target as HTMLInputElement).value.trim();
+  const wh = raw === '' ? null : Number(raw);
+  if (wh === (use.wh_discharged ?? null)) return;
+  return act(() => setUseWh(use.id, wh, editor()));
+}
 
 function useLine(use: BatteryUse): string {
   const day = new Date(use.installed_at).toLocaleDateString([], { month: 'numeric', day: 'numeric' });
@@ -181,7 +203,7 @@ const register = () => act(() => registerBattery(number.value, {}, editor()));
         <span v-if="battery.status !== 'active'" class="tag" :class="battery.status">{{ batteryStatusLabels[battery.status] }}</span>
         <span class="summary">
           {{ formatReading(latest?.state_of_charge ?? null, 0) }}% · {{ formatReading(latest?.resting_voltage ?? null, 2) }} V ·
-          {{ formatReading(latest?.internal_resistance_mohm ?? null) }} mΩ · {{ formatReading(latest?.capacity_wh ?? null, 0) }} Wh
+          {{ formatReading(latest?.internal_resistance_mohm ?? null) }} mΩ · {{ formatReading(whTotal, 0) }} Wh used
         </span>
       </header>
       <p v-if="error" class="error-text">{{ error }}</p>
@@ -228,6 +250,17 @@ const register = () => act(() => registerBattery(number.value, {}, editor()));
               </label>
               <label class="field"><span>Purchased</span><input v-model="purchaseDate" type="date" :readonly="!canEdit" /></label>
             </div>
+            <div class="form-row">
+              <label class="field">
+                <span>Set</span>
+                <input v-model="setName" list="battery-sets" :readonly="!canEdit" placeholder="e.g. Season, Championship" />
+                <datalist id="battery-sets"><option v-for="s in sets" :key="s" :value="s"></option></datalist>
+              </label>
+              <md-outlined-button v-if="canEdit && !isInstalled" class="row-button" @click="status = status === 'retired' ? 'active' : 'retired'">
+                {{ status === 'retired' ? 'Return to service' : 'Retire battery' }}
+              </md-outlined-button>
+            </div>
+            <p v-if="status === 'retired'" class="hint">Retired: hidden from All batteries and the rotation. Its history is kept.</p>
             <label class="field"><span>Notes</span><textarea v-model="notes" rows="2" :readonly="!canEdit"></textarea></label>
             <div class="label-row">
               <BatteryQr :number="battery.number" :size="96" />
@@ -246,7 +279,7 @@ const register = () => act(() => registerBattery(number.value, {}, editor()));
             <form v-if="canEdit" class="measure" @submit.prevent="saveMeasurement">
               <label class="field"><span>Resting V</span><input v-model.number="voltage" type="number" step="0.01" min="0" inputmode="decimal" /></label>
               <label class="field"><span>Resistance mΩ</span><input v-model.number="resistance" type="number" step="0.1" min="0" inputmode="decimal" /></label>
-              <label class="field"><span>Charge %</span><input v-model.number="charge" type="number" step="1" min="0" max="100" inputmode="numeric" /></label>
+              <label class="field"><span>Charge %</span><input v-model.number="charge" type="number" step="1" min="0" inputmode="numeric" /></label>
               <label class="field"><span>Capacity Wh</span><input v-model.number="capacity" type="number" step="1" min="0" inputmode="numeric" /></label>
               <label class="field wide"><span>Observations</span><input v-model="observations" placeholder="e.g. swollen case, loose terminal" /></label>
               <button type="submit" class="record" :disabled="busy">Record</button>
@@ -271,12 +304,26 @@ const register = () => act(() => registerBattery(number.value, {}, editor()));
           <section class="panel">
             <header class="panel-header">
               <h2>Usage history</h2>
-              <span class="hint">{{ counts.matches }} match{{ counts.matches === 1 ? '' : 'es' }} · {{ counts.tests }} test{{ counts.tests === 1 ? '' : 's' }}</span>
+              <span class="hint">{{ counts.matches }} match{{ counts.matches === 1 ? '' : 'es' }} · {{ counts.tests }} test{{ counts.tests === 1 ? '' : 's' }} · {{ formatReading(whTotal, 0) }} Wh used</span>
             </header>
             <ul class="history">
               <li v-for="use in uses" :key="use.id">
                 <span class="values"><strong>{{ use.label ?? use.kind }}</strong></span>
                 <span class="when">{{ useLine(use) }}</span>
+                <label class="use-wh" title="Wh discharged in this use">
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    inputmode="decimal"
+                    placeholder="—"
+                    :value="use.wh_discharged ?? ''"
+                    :readonly="!canEdit"
+                    aria-label="Wh discharged in this use"
+                    @change="saveUseWh(use, $event)"
+                  />
+                  <span>Wh</span>
+                </label>
                 <button v-if="canEdit" class="icon-small" aria-label="Delete this use" @click="act(() => deleteBatteryUse(use.id))">✕</button>
               </li>
             </ul>
@@ -445,6 +492,25 @@ const register = () => act(() => registerBattery(number.value, {}, editor()));
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.use-wh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.use-wh input {
+  width: 64px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-color);
+  background: var(--tile-background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+  text-align: right;
 }
 
 .values em {

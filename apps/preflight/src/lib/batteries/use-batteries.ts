@@ -1,6 +1,7 @@
 import { computed } from 'vue';
 import { useLiveQuery } from '@/lib/live-query';
 import {
+    getBatterySetInUse,
     installedUse,
     latestReadings,
     listBatteries,
@@ -20,6 +21,8 @@ export function useBatteries() {
     const batteryRows = useLiveQuery<Battery[] | null>(listBatteries, null);
     const measurementRows = useLiveQuery<BatteryMeasurement[] | null>(() => listMeasurements(), null);
     const useRows = useLiveQuery<BatteryUse[] | null>(() => listBatteryUses(), null);
+    // The set in use (null = every set).
+    const setInUse = useLiveQuery<string | null>(getBatterySetInUse, null);
     const loaded = computed(() => batteryRows.value !== null && measurementRows.value !== null && useRows.value !== null);
     const batteries = computed(() => batteryRows.value ?? []);
     const measurements = computed(() => measurementRows.value ?? []);
@@ -44,5 +47,5 @@ export function useBatteries() {
     const installed = computed(() => installedUse(uses.value));
     const installedBattery = computed(() => batteries.value.find((b) => b.id === installed.value?.battery_id) ?? null);
 
-    return { loaded, batteries, measurements, uses, measurementsByBattery, usesByBattery, readings, installed, installedBattery };
+    return { loaded, setInUse, batteries, measurements, uses, measurementsByBattery, usesByBattery, readings, installed, installedBattery };
 }

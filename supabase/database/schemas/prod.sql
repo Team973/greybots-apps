@@ -670,6 +670,7 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightBattery" (
     "deleted" boolean DEFAULT false NOT NULL,
     "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
     "updated_by_name" "text",
+    "set_name" "text",
     CONSTRAINT "PreflightBattery_status_check" CHECK (("status" = ANY (ARRAY['active'::"text", 'suspect'::"text", 'retired'::"text"])))
 );
 
@@ -714,11 +715,29 @@ CREATE TABLE IF NOT EXISTS "public"."PreflightBatteryUse" (
     "deleted" boolean DEFAULT false NOT NULL,
     "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
     "updated_by_name" "text",
+    "wh_discharged" numeric,
     CONSTRAINT "PreflightBatteryUse_kind_check" CHECK (("kind" = ANY (ARRAY['match'::"text", 'test'::"text", 'other'::"text"])))
 );
 
 
 ALTER TABLE "public"."PreflightBatteryUse" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."PreflightTimer" (
+    "id" "uuid" NOT NULL,
+    "key" "text" NOT NULL,
+    "set_digits" "text" DEFAULT '0500'::"text" NOT NULL,
+    "ends_at" timestamp with time zone,
+    "paused_ms" integer,
+    "updated_at" timestamp with time zone NOT NULL,
+    "deleted" boolean DEFAULT false NOT NULL,
+    "synced_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "updated_by_name" "text",
+    CONSTRAINT "PreflightTimer_set_digits_check" CHECK (("set_digits" ~ '^[0-9]{4}$'::"text"))
+);
+
+
+ALTER TABLE "public"."PreflightTimer" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."StrategyBoard" (
@@ -815,6 +834,10 @@ CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "publi
 
 
 CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightBatteryUse" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
+
+
+
+CREATE OR REPLACE TRIGGER "preflight_sync_row" BEFORE INSERT OR UPDATE ON "public"."PreflightTimer" FOR EACH ROW EXECUTE FUNCTION "public"."preflight_sync_row"();
 
 
 ALTER TABLE ONLY "public"."Event"
@@ -952,6 +975,11 @@ ALTER TABLE ONLY "public"."PreflightBatteryUse"
 
 
 
+ALTER TABLE ONLY "public"."PreflightTimer"
+    ADD CONSTRAINT "PreflightTimer_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."RobotPhoto"
     ADD CONSTRAINT "RobotPhoto_pkey" PRIMARY KEY ("team_number");
 
@@ -1041,6 +1069,10 @@ CREATE INDEX "preflight_battery_measurement_synced_at_idx" ON "public"."Prefligh
 
 
 CREATE INDEX "preflight_battery_use_synced_at_idx" ON "public"."PreflightBatteryUse" USING "btree" ("synced_at");
+
+
+
+CREATE INDEX "preflight_timer_synced_at_idx" ON "public"."PreflightTimer" USING "btree" ("synced_at");
 
 
 
@@ -1422,6 +1454,18 @@ CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightBat
 
 
 
+CREATE POLICY "Enable read access for logged in users" ON "public"."PreflightTimer" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "Enable insert for members" ON "public"."PreflightTimer" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."preflight_role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
+CREATE POLICY "Enable update for members" ON "public"."PreflightTimer" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."preflight_role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."preflight_role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
+
+
+
 CREATE POLICY "Enable insert for members" ON "public"."PreflightBatteryUse" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."preflight_role" = ANY (ARRAY['member'::"text", 'lead'::"text", 'admin'::"text"]))))));
 
 
@@ -1513,6 +1557,9 @@ ALTER TABLE "public"."PreflightBatteryMeasurement" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."PreflightBatteryUse" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PreflightTimer" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -1901,6 +1948,12 @@ GRANT ALL ON TABLE "public"."PreflightBatteryMeasurement" TO "service_role";
 GRANT ALL ON TABLE "public"."PreflightBatteryUse" TO "anon";
 GRANT ALL ON TABLE "public"."PreflightBatteryUse" TO "authenticated";
 GRANT ALL ON TABLE "public"."PreflightBatteryUse" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PreflightTimer" TO "anon";
+GRANT ALL ON TABLE "public"."PreflightTimer" TO "authenticated";
+GRANT ALL ON TABLE "public"."PreflightTimer" TO "service_role";
 
 
 

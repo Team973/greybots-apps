@@ -28,8 +28,11 @@ const props = defineProps<{
   // A built-in checklist (the practice field one): it can't be moved,
   // removed, or tied to a match.
   fixed?: boolean;
+  // Collapsed to its header row (name and step count), so a long page of
+  // checklists is easy to get around.
+  collapsed?: boolean;
 }>();
-const emit = defineEmits<{ move: [delta: number]; remove: []; prematch: [on: boolean] }>();
+const emit = defineEmits<{ move: [delta: number]; remove: []; prematch: [on: boolean]; toggle: [] }>();
 
 const conditions = Object.entries(stepConditionLabels) as [StepCondition, string][];
 const links = Object.entries(matchLinkLabels) as [MatchLink, string][];
@@ -54,16 +57,29 @@ function setLink(value: string) {
 </script>
 
 <template>
-  <article class="checklist">
+  <article class="checklist" :class="{ collapsed }">
     <div class="checklist-head">
+      <button
+        class="icon-small collapse"
+        :aria-expanded="!collapsed"
+        :aria-label="`${collapsed ? 'Expand' : 'Collapse'} ${checklist.name || 'checklist'}`"
+        @click="emit('toggle')"
+      >
+        {{ collapsed ? '▸' : '▾' }}
+      </button>
       <span v-if="inSequence" class="badge">{{ index + 1 }}</span>
-      <input v-model="checklist.name" class="checklist-name" :readonly="!canEdit" placeholder="Checklist name" aria-label="Checklist name" />
+      <button v-if="collapsed" class="collapsed-name" @click="emit('toggle')">
+        <strong>{{ checklist.name || 'Untitled checklist' }}</strong>
+        <span>{{ checklist.steps.length }} step{{ checklist.steps.length === 1 ? '' : 's' }}<template v-if="checklist.prematch"> · pre-match</template></span>
+      </button>
+      <input v-else v-model="checklist.name" class="checklist-name" :readonly="!canEdit" placeholder="Checklist name" aria-label="Checklist name" />
       <template v-if="canEdit && !fixed">
         <button class="icon-small" :disabled="index === 0" aria-label="Move checklist up" @click="emit('move', -1)">↑</button>
         <button class="icon-small" :disabled="index === count - 1" aria-label="Move checklist down" @click="emit('move', 1)">↓</button>
         <button class="icon-small" aria-label="Delete checklist" @click="emit('remove')">✕</button>
       </template>
     </div>
+    <template v-if="!collapsed">
     <div class="checklist-options">
       <label v-if="inSequence" class="prematch-flag" title="After repairs, the pit can jump straight to this checklist">
         <input type="checkbox" :checked="!!checklist.prematch" :disabled="!canEdit" @change="emit('prematch', ($event.target as HTMLInputElement).checked)" />
@@ -122,6 +138,7 @@ function setLink(value: string) {
       </li>
     </ol>
     <button v-if="canEdit" class="add-link" @click="checklist.steps.push(newStep())">+ Add step</button>
+    </template>
   </article>
 </template>
 
@@ -141,6 +158,38 @@ function setLink(value: string) {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.collapse {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* The header of a collapsed checklist: its name and how long it is. */
+.collapsed-name {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+  padding: 6px 2px;
+  border: none;
+  background: none;
+  color: var(--primary-text-color);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsed-name strong {
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.collapsed-name span {
+  font-size: 0.85rem;
+  opacity: 0.7;
 }
 
 .badge {

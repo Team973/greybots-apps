@@ -14,5 +14,6 @@ export const syncedTables: SyncedTableDef[] = [
     { table: 'repairs', remote: 'PreflightRepair', indexes: ['event_key'] },
     { table: 'batteries', remote: 'PreflightBattery', indexes: ['number'] },
     { table: 'batteryMeasurements', remote: 'PreflightBatteryMeasurement', indexes: ['battery_id'] },
-    { table: 'batteryUses', remote: 'PreflightBatteryUse', indexes: ['battery_id'] }
+    { table: 'batteryUses', remote: 'PreflightBatteryUse', indexes: ['battery_id'] },
+    { table: 'timers', remote: 'PreflightTimer', indexes: ['key'] }
 ];

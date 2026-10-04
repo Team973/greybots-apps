@@ -2,7 +2,7 @@ import { milestonePhases, type MilestonePhase } from '@/lib/schedule/types';
 import { getSetting, saveSetting } from '@/lib/settings';
 
 // Pit display configuration (issue #90): which widgets the big screen shows
-// under the robot status, per event phase. Stored as a shared setting, so a
+// above the robot status, per event phase. Stored as a shared setting, so a
 // lead can change it from any device and the screen follows.
 
 export type DisplayWidget =
@@ -14,7 +14,8 @@ export type DisplayWidget =
     | 'repair'
     | 'battery'
     | 'roles'
-    | 'phase';
+    | 'phase'
+    | 'timer';
 
 // In the order they're offered in the editor.
 export const displayWidgets: DisplayWidget[] = [
@@ -26,7 +27,8 @@ export const displayWidgets: DisplayWidget[] = [
     'repair',
     'battery',
     'roles',
-    'phase'
+    'phase',
+    'timer'
 ];
 
 export const displayWidgetLabels: Record<DisplayWidget, string> = {
@@ -38,7 +40,8 @@ export const displayWidgetLabels: Record<DisplayWidget, string> = {
     repair: 'Active repair',
     battery: 'Battery installed',
     roles: 'Pit responsibilities',
-    phase: 'Event phase'
+    phase: 'Event phase',
+    timer: 'Timer (the pit timer from the Overview)'
 };
 
 // A layout per event phase, plus 'default' for when the phase isn't known
@@ -50,9 +53,14 @@ export interface DisplayConfig {
     layouts: Record<DisplayPhase, DisplayWidget[]>;
     // Show this phase's layout instead of following the timeline.
     phase_override: DisplayPhase | null;
+    // Bumped when a widget is added to the default layouts, so a config saved
+    // before then picks it up once (see getDisplayConfig).
+    version?: number;
 }
 
-const matchDay: DisplayWidget[] = ['next_match', 'countdown', 'readiness', 'checklist', 'repair', 'battery'];
+const configVersion = 2;
+
+const matchDay: DisplayWidget[] = ['next_match', 'countdown', 'readiness', 'checklist', 'repair', 'battery', 'timer'];
 
 export function defaultDisplayConfig(): DisplayConfig {
     return {
@@ -60,10 +68,11 @@ export function defaultDisplayConfig(): DisplayConfig {
             default: [...matchDay],
             prep: ['phase', 'checklist', 'repair', 'roles', 'battery'],
             competition: [...matchDay],
-            elimination: ['current_match', 'next_match', 'countdown', 'readiness', 'checklist', 'repair', 'battery'],
+            elimination: ['current_match', 'next_match', 'countdown', 'readiness', 'checklist', 'repair', 'battery', 'timer'],
             closeout: ['phase', 'roles', 'repair']
         },
-        phase_override: null
+        phase_override: null,
+        version: configVersion
     };
 }
 
@@ -76,9 +85,15 @@ export async function getDisplayConfig(): Promise<DisplayConfig> {
     const layouts = { ...defaults.layouts };
     for (const phase of displayPhases) {
         const list = saved?.layouts?.[phase];
-        if (Array.isArray(list)) layouts[phase] = list.filter((w) => displayWidgets.includes(w));
+        if (!Array.isArray(list)) continue;
+        layouts[phase] = list.filter((w) => displayWidgets.includes(w));
+        // Version 2 added the timer: a layout saved before then gets it where
+        // the default has it. After that, removing it sticks.
+        if ((saved?.version ?? 1) < 2 && defaults.layouts[phase].includes('timer') && !layouts[phase].includes('timer')) {
+            layouts[phase] = [...layouts[phase], 'timer'];
+        }
     }
-    return { layouts, phase_override: saved?.phase_override ?? null };
+    return { layouts, phase_override: saved?.phase_override ?? null, version: configVersion };
 }
 
 export function saveDisplayConfig(config: DisplayConfig, editorName: string | null) {

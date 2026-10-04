@@ -216,8 +216,8 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
           <button :class="{ on: mode === 'timeline' }" :aria-pressed="mode === 'timeline'" @click="mode = 'timeline'">Timeline</button>
         </div>
         <div class="filters" role="group" aria-label="Show event types">
-          <label v-for="c in categories" :key="c" class="filter">
-            <input v-model="visibleCategories" type="checkbox" :value="c" :style="{ accentColor: filterColors[c] }" />
+          <label v-for="c in categories" :key="c" class="filter" :class="{ on: visibleCategories.includes(c) }" :style="{ '--filter-color': filterColors[c] }">
+            <input v-model="visibleCategories" type="checkbox" :value="c" />
             {{ filterLabels[c] }}
           </label>
         </div>
@@ -351,15 +351,24 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
   gap: 6px;
   padding: 4px 10px 4px 6px;
   border-radius: 999px;
-  border: 1px solid var(--accent-color);
+  border: 2px solid var(--filter-color);
   cursor: pointer;
   user-select: none;
+}
+
+/* Shown types fill the whole pill with their color; hidden ones keep only
+   the outline. */
+.filter.on {
+  background: var(--filter-color);
+  color: #fff;
+  font-weight: 600;
 }
 
 .filter input {
   width: 16px;
   height: 16px;
   margin: 0;
+  accent-color: #fff;
 }
 
 .actions {

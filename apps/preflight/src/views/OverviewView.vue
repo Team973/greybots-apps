@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import ChecklistRunner from '@/components/checklists/ChecklistRunner.vue';
+import BumperChip from '@/components/overview/BumperChip.vue';
 import NextMatchLine from '@/components/overview/NextMatchLine.vue';
 import RepairPanel from '@/components/overview/RepairPanel.vue';
 import ScheduleStrip from '@/components/overview/ScheduleStrip.vue';
@@ -11,6 +12,7 @@ import ActiveRepairChip from '@/components/repairs/ActiveRepairChip.vue';
 import RepairList from '@/components/repairs/RepairList.vue';
 import RobotStatusDialog from '@/components/robot-status/RobotStatusDialog.vue';
 import TaskList from '@/components/tasks/TaskList.vue';
+import PitTimer from '@/components/timer/PitTimer.vue';
 import { sequenceMatchLink } from '@/lib/checklists/config';
 import { matchContext, resolveMatchLink } from '@/lib/checklists/instances';
 import { useLiveQuery } from '@/lib/live-query';
@@ -228,6 +230,7 @@ const historyOpen = ref(false);
         <button v-if="isMember && canBreak" class="bar-button" :disabled="busy" @click="onBreak">Take a break</button>
         <button v-if="isMember && canEnd" class="bar-button" :disabled="busy" @click="onEndDay">End the day</button>
         <InstalledBatteryChip />
+        <BumperChip :match="departingFor" />
         <ActiveRepairChip :repairs="repairsInProgress" />
         <span class="bar-spacer"></span>
         <NextMatchLine :match="departingFor" :prep="prep" :now="flow.now.value" />
@@ -265,7 +268,10 @@ const historyOpen = ref(false);
           </ol>
         </template>
       </ChecklistRunner>
-      <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
+      <div class="area-tasks side-stack">
+        <section class="panel timer-panel"><PitTimer :readonly="!isMember" /></section>
+        <TaskList class="stack-fill" :event-key="eventKey" :matches="matches" />
+      </div>
     </template>
 
     <template v-else-if="status === 'repair' && flow.latest.value">
@@ -292,7 +298,10 @@ const historyOpen = ref(false);
         :origin="{ source: 'checklist', run_id: flow.latest.value.run_id }"
         :default-match-key="lastMatch?.match_key ?? null"
       />
-      <TaskList class="area-schedule" :event-key="eventKey" :matches="matches" quick-add />
+      <div class="area-schedule side-stack">
+        <section class="panel timer-panel"><PitTimer :readonly="!isMember" /></section>
+        <TaskList class="stack-fill" :event-key="eventKey" :matches="matches" quick-add />
+      </div>
     </template>
 
     <template v-else>
@@ -318,7 +327,10 @@ const historyOpen = ref(false);
         @match-over="onMatchOver"
         @history="historyOpen = true"
       />
-      <TaskList class="area-tasks" :event-key="eventKey" :matches="matches" />
+      <div class="area-tasks side-stack">
+        <section class="panel timer-panel"><PitTimer :readonly="!isMember" /></section>
+        <TaskList class="stack-fill" :event-key="eventKey" :matches="matches" />
+      </div>
       <ScheduleStrip class="area-schedule" :event-key="eventKey" :items="items" />
     </template>
 
@@ -393,6 +405,24 @@ const historyOpen = ref(false);
     'notice notice'
     'hero hero'
     'schedule tasks';
+}
+
+/* The pit timer sits on top of the task list, in the same grid area. */
+.side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.timer-panel {
+  flex: none;
+}
+
+.stack-fill {
+  flex: 1;
+  overflow-y: auto;
 }
 
 .progress {
