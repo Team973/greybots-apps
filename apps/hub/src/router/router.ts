@@ -9,6 +9,8 @@ import ResetPasswordView from '@/views/ResetPasswordView.vue';
 declare module 'vue-router' {
   interface RouteMeta {
     title?: string;
+    // Needs a signed-in account.
+    requiresSignIn?: boolean;
     // Needs a signed-in account with a role in at least one app.
     requiresAccess?: boolean;
     // Only for people who aren't signed in.
@@ -19,9 +21,9 @@ declare module 'vue-router' {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // The launcher is open to everyone: the point of the hub is finding the
-    // apps, and each app has its own sign-in anyway.
-    { path: '/', name: 'home', component: HomeView, meta: { title: 'Home' } },
+    // The launcher is behind the sign-in: the apps aren't shown to anyone
+    // without an account.
+    { path: '/', name: 'home', component: HomeView, meta: { title: 'Home', requiresSignIn: true } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', guestOnly: true } },
     { path: '/register', name: 'register', component: RegisterView, meta: { title: 'Register', guestOnly: true } },
     // Reached from the link in a password reset email, which signs the person
@@ -37,8 +39,11 @@ router.beforeEach(async (to) => {
   if (!auth.loaded) await auth.refresh();
 
   if (to.meta.guestOnly && auth.isSignedIn) return { name: 'home' };
+  if ((to.meta.requiresSignIn || to.meta.requiresAccess) && !auth.isSignedIn) {
+    // Plain /login for the home page; anywhere else comes back after sign-in.
+    return to.name === 'home' ? { name: 'login' } : { name: 'login', query: { redirect: to.fullPath } };
+  }
   if (to.meta.requiresAccess) {
-    if (!auth.isSignedIn) return { name: 'login', query: { redirect: to.fullPath } };
     // Pending and deactivated accounts get the home page, which tells them
     // where they stand.
     if (!auth.hasAccess) return { name: 'home' };

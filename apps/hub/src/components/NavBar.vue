@@ -10,7 +10,7 @@ const toggleTheme = () => viewMode.setThemePreference(viewMode.isDarkMode ? 'lig
 
 async function signOut() {
   await auth.signOut();
-  router.push({ name: 'home' });
+  router.push({ name: 'login' });
 }
 </script>
 
