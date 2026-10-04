@@ -4,9 +4,9 @@ The one address to remember: a landing page with a big button for each
 greybots app (GreyScout, Preflight), plus the shared sign-in, registration,
 and People page.
 
-- **Launcher** (`/`): open to everyone. Signed in, it also shows your role in
-  each app and a People button. An account that's still waiting for approval
-  (or was deactivated) is told so here.
+- **Launcher** (`/`): behind the sign-in. It shows a button per app with your
+  role in it, and a People button. An account that's still waiting for
+  approval (or was deactivated) is told so here instead of seeing the apps.
 - **Sign in / register / reset password**: the same greybots-apps account and
   the same shared components (`@greybots/common`) as the apps. Each app is its
   own site, so signing in here doesn't sign you in there.

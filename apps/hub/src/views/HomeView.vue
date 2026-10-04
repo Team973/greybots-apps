@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 import AccountPending from '@greybots/common/components/AccountPending.vue';
 import { hasAppAccess, roleLabels, type AppRole } from '@greybots/common/lib/user-roles';
 import { hubApps, type HubApp } from '@/lib/apps';
 import { useAuthStore } from '@/stores/auth-store';
 
-// The launcher: one big button per greybots app. Open to everyone, since
-// finding the apps is the point; a signed-in person also sees their role in
-// each app.
+// The launcher: one big button per greybots app, each with this person's role
+// in it. Only for signed-in accounts (the router sends everyone else to the
+// sign-in), and the buttons only for an account with a role somewhere.
 const auth = useAuthStore();
+const router = useRouter();
 
 function roleIn(app: HubApp): AppRole | null {
-  if (!auth.isSignedIn || !auth.profile) return null;
+  if (!auth.profile) return null;
   return auth.profile[app.roleColumn] ?? 'pending';
 }
 
@@ -28,8 +29,8 @@ const apps = computed(() =>
   })
 );
 
-// A signed-in account with no role anywhere: say so, above the buttons.
-const waiting = computed(() => auth.isSignedIn && !auth.hasAccess);
+// An account with no role anywhere: say so, in place of the buttons.
+const waiting = computed(() => !auth.hasAccess);
 const checking = ref(false);
 async function refresh() {
   checking.value = true;
@@ -39,20 +40,25 @@ async function refresh() {
     checking.value = false;
   }
 }
+
+async function signOut() {
+  await auth.signOut();
+  router.push({ name: 'login' });
+}
 </script>
 
 <template>
   <div class="home">
     <header class="welcome">
       <h1>{{ auth.hasAccess ? `Hi, ${auth.name}` : 'Greybots apps' }}</h1>
-      <p class="hint">Team 973's apps, in one place. Pick the one you need.</p>
+      <p v-if="!waiting" class="hint">Team 973's apps, in one place. Pick the one you need.</p>
     </header>
 
     <div v-if="waiting" class="card notice">
-      <AccountPending app-name="the greybots apps" :name="auth.profile?.name" :deactivated="auth.status === 'deactivated'" :checking="checking" @refresh="refresh" @sign-out="auth.signOut()" />
+      <AccountPending app-name="the greybots apps" :name="auth.profile?.name" :deactivated="auth.status === 'deactivated'" :checking="checking" @refresh="refresh" @sign-out="signOut" />
     </div>
 
-    <nav class="apps" aria-label="Apps">
+    <nav v-else class="apps" aria-label="Apps">
       <component
         :is="app.url ? 'a' : 'div'"
         v-for="app in apps"
@@ -67,16 +73,12 @@ async function refresh() {
         <span v-else-if="app.access" class="app-access">{{ app.access }}</span>
       </component>
 
-      <RouterLink v-if="auth.hasAccess" to="/people" class="app-button people">
+      <RouterLink to="/people" class="app-button people">
         <span class="app-name">People</span>
         <span class="app-description">Approve new accounts and set everyone's role in each app</span>
       </RouterLink>
     </nav>
 
-    <p v-if="auth.loaded && !auth.isSignedIn" class="hint account-links">
-      <RouterLink to="/login" class="text-link">Sign in</RouterLink> to see your roles and manage people, or
-      <RouterLink to="/register" class="text-link">register</RouterLink> for an account. One account works in every app.
-    </p>
   </div>
 </template>
 
@@ -179,9 +181,5 @@ async function refresh() {
   filter: grayscale(1);
   opacity: 0.6;
   cursor: default;
-}
-
-.account-links {
-  text-align: center;
 }
 </style>
