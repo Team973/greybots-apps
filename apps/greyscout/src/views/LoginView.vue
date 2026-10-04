@@ -4,7 +4,8 @@
 
 import "@material/web/button/filled-button";
 import "@material/web/button/text-button";
-import TextInput from '@greybots/common/components/TextInput.vue';
+import AuthInput from '@greybots/common/components/AuthInput.vue';
+import { readFormValues } from '@greybots/common/lib/account';
 
 import { supabase } from "@greybots/common/supabase/client";
 
@@ -13,39 +14,37 @@ import { useAuthStore } from "@/stores/auth-store";
 
 <template>
     <div class="main-content">
-        <div class="login-tile" v-if="!showForgotPassword">
+        <!-- Real forms with native inputs, so autofill and password managers
+             work; the values are read from the form when it's submitted. -->
+        <form class="login-tile" v-if="!showForgotPassword" @submit.prevent="logInUser($event)">
             <h1 class="login-tile-element">Log in</h1>
-            <div class="login-tile-element">
-                <TextInput ref="emailField" :model-value="userEmail" @update:modelValue="updateEmail" label="Email"
-                    required="true" :error="emailError" type="email" name="email" autocomplete="username">
-                </TextInput>
+            <div class="login-tile-element login-field">
+                <AuthInput :model-value="userEmail" @update:modelValue="updateEmail" label="Email" :error="emailError"
+                    type="email" name="email" autocomplete="username" />
             </div>
-            <div class="login-tile-element">
-                <TextInput ref="passwordField" :model-value="userPassword" @update:modelValue="updatePassword"
-                    @keyup.enter="logInUser" label="Password" required="true" :error="passwordError" type="password"
-                    name="password" autocomplete="current-password">
-                </TextInput>
+            <div class="login-tile-element login-field">
+                <AuthInput :model-value="userPassword" @update:modelValue="updatePassword" label="Password"
+                    :error="passwordError" type="password" name="password" autocomplete="current-password" />
             </div>
             <div class="login-tile-element" v-if="formError">
                 <p class="form-error">{{ formError }}</p>
             </div>
             <div class="login-tile-element">
-                <md-filled-button v-on:click="logInUser()" class="load-button">Log in</md-filled-button>
+                <md-filled-button type="submit" class="load-button">Log in</md-filled-button>
             </div>
             <div class="login-tile-element">
-                <md-text-button v-on:click="showForgotPassword = true">Forgot password?</md-text-button>
+                <md-text-button type="button" v-on:click="showForgotPassword = true">Forgot password?</md-text-button>
             </div>
             <div class="login-tile-element">
-                <md-text-button v-on:click="$router.push('/register')">Need an account? Register</md-text-button>
+                <md-text-button type="button" v-on:click="$router.push('/register')">Need an account? Register</md-text-button>
             </div>
-        </div>
+        </form>
 
-        <div class="login-tile" v-else>
+        <form class="login-tile" v-else @submit.prevent="sendPasswordReset($event)">
             <h1 class="login-tile-element">Reset password</h1>
-            <div class="login-tile-element">
-                <TextInput :model-value="resetEmail" @update:modelValue="updateResetEmail" @keyup.enter="sendPasswordReset"
-                    label="Email" required="true" :error="resetEmailError">
-                </TextInput>
+            <div class="login-tile-element login-field">
+                <AuthInput :model-value="resetEmail" @update:modelValue="updateResetEmail" label="Email"
+                    :error="resetEmailError" type="email" name="email" autocomplete="username" />
             </div>
             <div class="login-tile-element" v-if="resetError">
                 <p class="form-error">{{ resetError }}</p>
@@ -54,13 +53,12 @@ import { useAuthStore } from "@/stores/auth-store";
                 <p class="form-success">{{ resetSuccess }}</p>
             </div>
             <div class="login-tile-element">
-                <md-filled-button v-on:click="sendPasswordReset()" class="load-button">Send reset
-                    email</md-filled-button>
+                <md-filled-button type="submit" class="load-button">Send reset email</md-filled-button>
             </div>
             <div class="login-tile-element">
-                <md-text-button v-on:click="showForgotPassword = false">Back to log in</md-text-button>
+                <md-text-button type="button" v-on:click="showForgotPassword = false">Back to log in</md-text-button>
             </div>
-        </div>
+        </form>
     </div>
 </template>
 
@@ -94,13 +92,16 @@ export default {
             this.resetEmail = text;
             this.resetEmailError = (this.resetEmail == "");
         },
-        async logInUser() {
+        async logInUser(event) {
             this.formError = "";
-            // Read the fields themselves: autofill and password managers can
-            // fill them without the form hearing about it, which used to
+            // Read the fields from the form itself: autofill and password
+            // managers can fill them without an input event, which used to
             // leave them "required" while visibly filled in.
-            this.userEmail = this.$refs.emailField?.readValue() ?? this.userEmail;
-            this.userPassword = this.$refs.passwordField?.readValue() ?? this.userPassword;
+            if (event?.target instanceof HTMLFormElement) {
+                const values = readFormValues(event.target);
+                this.userEmail = values.email ?? this.userEmail;
+                this.userPassword = values.password ?? this.userPassword;
+            }
             this.emailError = (this.userEmail == "");
             this.passwordError = (this.userPassword == "");
             if (this.emailError || this.passwordError) {
@@ -120,9 +121,12 @@ export default {
             await this.authStore.checkUser();
             this.$router.push(this.authStore.role === 'member' ? '/schedule' : '/picklist');
         },
-        async sendPasswordReset() {
+        async sendPasswordReset(event) {
             this.resetError = "";
             this.resetSuccess = "";
+            if (event?.target instanceof HTMLFormElement) {
+                this.resetEmail = readFormValues(event.target).email ?? this.resetEmail;
+            }
             this.resetEmailError = (this.resetEmail == "");
             if (this.resetEmailError) {
                 return;
@@ -173,6 +177,12 @@ export default {
 <style scoped>
 .login-tile-element {
     padding: 15px;
+}
+
+.login-field {
+    width: 100%;
+    max-width: 360px;
+    box-sizing: border-box;
 }
 
 .form-error {
