@@ -15,7 +15,7 @@ import { useOfflineQueueStore } from "@/stores/offline-queue-store";
 <template>
     <!-- Nav bar is always a hamburger menu, mobile or not — the links live
          entirely inside the menu-content slot regardless of viewport width. -->
-    <div class="nav" :class="{ 'nav--hidden': navHidden }" v-if="isLoggedIn">
+    <div class="nav" :class="{ 'nav--hidden': navHidden }" v-if="isLoggedIn && hasAccess">
         <HamburgerMenu>
             <template v-slot:menu-title>
                 {{ eventName }}
@@ -37,6 +37,7 @@ import { useOfflineQueueStore } from "@/stores/offline-queue-store";
                 <RouterLink v-if="isMember" to="/schedule" class="nav-link nav-link-mobile">Schedule</RouterLink>
                 <RouterLink to="/data-status" class="nav-link nav-link-mobile">Data Status</RouterLink>
                 <RouterLink v-if="isLead" to="/strategy" class="nav-link nav-link-mobile">Match Strategy</RouterLink>
+                <RouterLink v-if="isLead" to="/users" class="nav-link nav-link-mobile">People</RouterLink>
 
                 <button v-if="isMember" type="button" class="nav-group-label" @click.stop="toggleGroup('scouting')">
                     <span class="nav-group-chevron" :class="{ 'nav-group-chevron--open': expandedGroup === 'scouting' }">▾</span>
@@ -150,6 +151,11 @@ export default {
         },
         isLoggedIn() {
             return this.authStore?.isUserLoggedIn;
+        },
+        // False for an account still waiting for approval (or deactivated),
+        // which gets no menu: there's nowhere for it to go.
+        hasAccess() {
+            return this.authStore?.hasAccess;
         },
         isWriteAccess() {
             return this.authStore?.isWriteAuthorized;

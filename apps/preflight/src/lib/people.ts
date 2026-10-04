@@ -1,4 +1,5 @@
 import { computed } from 'vue';
+import { accountStatus, type UserAccount } from '@greybots/common/lib/user-roles';
 import { supabase } from '@greybots/common/supabase/client';
 import { getMeta, setMeta } from '@/lib/db';
 import { listKioskUsers } from '@/lib/kiosk-users';
@@ -33,9 +34,12 @@ export async function refreshAccountDirectory(force = false): Promise<void> {
     const saved = await getAccountDirectory();
     if (!force && saved && Date.now() - Date.parse(saved.fetched_at) < refreshEveryMs) return;
 
-    const { data, error } = await supabase.from(userTable).select('name');
+    const { data, error } = await supabase.from(userTable).select('*');
     if (error) throw new Error(`Reading the account directory failed: ${error.message}`);
-    const names = [...new Set(((data ?? []) as { name: string | null }[]).map((u) => u.name?.trim() ?? '').filter(Boolean))];
+    // Only people who can use an app: not accounts still waiting for approval,
+    // and not deactivated ones.
+    const accounts = ((data ?? []) as UserAccount[]).filter((u) => accountStatus(u) === 'active');
+    const names = [...new Set(accounts.map((u) => u.name?.trim() ?? '').filter(Boolean))];
     await setMeta<AccountDirectory>(directoryKey, { names, fetched_at: new Date().toISOString() });
 }
 

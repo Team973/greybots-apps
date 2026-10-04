@@ -16,13 +16,14 @@ import { useAuthStore } from "@/stores/auth-store";
         <div class="login-tile" v-if="!showForgotPassword">
             <h1 class="login-tile-element">Log in</h1>
             <div class="login-tile-element">
-                <TextInput :model-value="userEmail" @update:modelValue="updateEmail" label="Email" required="true"
-                    :error="emailError">
+                <TextInput ref="emailField" :model-value="userEmail" @update:modelValue="updateEmail" label="Email"
+                    required="true" :error="emailError" type="email" name="email" autocomplete="username">
                 </TextInput>
             </div>
             <div class="login-tile-element">
-                <TextInput :model-value="userPassword" @update:modelValue="updatePassword" @keyup.enter="logInUser"
-                    label="Password" required="true" :error="passwordError" type="password">
+                <TextInput ref="passwordField" :model-value="userPassword" @update:modelValue="updatePassword"
+                    @keyup.enter="logInUser" label="Password" required="true" :error="passwordError" type="password"
+                    name="password" autocomplete="current-password">
                 </TextInput>
             </div>
             <div class="login-tile-element" v-if="formError">
@@ -95,6 +96,11 @@ export default {
         },
         async logInUser() {
             this.formError = "";
+            // Read the fields themselves: autofill and password managers can
+            // fill them without the form hearing about it, which used to
+            // leave them "required" while visibly filled in.
+            this.userEmail = this.$refs.emailField?.readValue() ?? this.userEmail;
+            this.userPassword = this.$refs.passwordField?.readValue() ?? this.userPassword;
             this.emailError = (this.userEmail == "");
             this.passwordError = (this.userPassword == "");
             if (this.emailError || this.passwordError) {

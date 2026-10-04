@@ -4,8 +4,9 @@ import "@material/web/textfield/outlined-text-field";
 </script>
 
 <template>
-    <md-outlined-text-field v-on:input="updateText" :type="type" v-bind:value="modelValue" :label="label"
-        :required="required" :error="error" error-text="This field is required"></md-outlined-text-field>
+    <md-outlined-text-field ref="field" v-on:input="updateText" v-on:change="updateText" :type="type"
+        v-bind:value="modelValue" :label="label" :name="name" :autocomplete="autocomplete" :required="required"
+        :error="error" error-text="This field is required"></md-outlined-text-field>
 </template>
 
 <script lang="ts">
@@ -25,6 +26,16 @@ export default {
         },
         type: {
             default: "text"
+        },
+        // Passed to the field so browsers and password managers know what
+        // to fill in (e.g. "email", "current-password").
+        name: {
+            type: String,
+            default: undefined
+        },
+        autocomplete: {
+            type: String,
+            default: undefined
         }
     },
     computed: {
@@ -35,6 +46,18 @@ export default {
     methods: {
         updateText(event) {
             this.$emit('update:modelValue', event.target.value);
+        },
+        // What's in the field right now, read from the page rather than from
+        // the last input event. Autofill and password managers (Firefox's in
+        // particular) can fill a field without firing one, which leaves the
+        // bound value empty while the field shows text. Forms call this when
+        // they're submitted.
+        readValue() {
+            const field = this.$refs.field;
+            const inner = field?.shadowRoot?.querySelector('input, textarea');
+            const value = inner?.value || field?.value || this.modelValue || '';
+            if (value !== this.modelValue) this.$emit('update:modelValue', value);
+            return value;
         }
     }
 }

@@ -58,7 +58,7 @@ export const useSessionStore = defineStore('session', {
                 const cached = await getMeta<AccountProfile>(webProfileKey);
                 this.user = cached?.id === authUser.id
                     ? fromProfile(cached)
-                    : { id: authUser.id, name: authUser.email ?? 'Unknown user', role: 'observer', source: 'web' };
+                    : { id: authUser.id, name: authUser.email ?? 'Unknown user', role: 'pending', source: 'web' };
                 // Pick up name/role changes when we're online; ignore failures offline.
                 this.refreshWebProfile().catch(() => undefined);
             }
@@ -69,7 +69,18 @@ export const useSessionStore = defineStore('session', {
             const { data } = await supabase.auth.getSession();
             const authUser = data.session?.user;
             if (!authUser) return;
-            const profile = await fetchAccountProfile(authUser.id, authUser.email ?? null);
+            const profile = await fetchAccountProfile(authUser);
+            await setMeta(webProfileKey, profile);
+            this.user = fromProfile(profile);
+        },
+
+        // Take up the server session that's already on this device (someone
+        // who just registered and was signed in straight away).
+        async adoptWebSession() {
+            const { data } = await supabase.auth.getSession();
+            const authUser = data.session?.user;
+            if (!authUser) return;
+            const profile = await fetchAccountProfile(authUser);
             await setMeta(webProfileKey, profile);
             this.user = fromProfile(profile);
         },

@@ -3,7 +3,6 @@
 // @ts-nocheck
 
 import "@material/web/button/filled-button";
-import UserManagement from '@greybots/common/components/UserManagement.vue';
 
 import { supabase } from "@greybots/common/supabase/client";
 
@@ -32,8 +31,8 @@ import { refreshEventSchedule } from "@/lib/tba-query";
 
         <div class="user-tile">
             <h1>People</h1>
-            <!-- Shared with Preflight: everyone's role in each app. -->
-            <UserManagement />
+            <p>Everyone with an account, and their role in each greybots app.</p>
+            <md-filled-button v-on:click="$router.push('/users')" class="load-button">Manage people</md-filled-button>
         </div>
 
         <div class="user-tile">

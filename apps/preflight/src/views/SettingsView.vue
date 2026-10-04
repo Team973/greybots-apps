@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import TextInput from '@greybots/common/components/TextInput.vue';
-import UserManagement from '@greybots/common/components/UserManagement.vue';
 import { useViewModeStore, type ThemePreference } from '@greybots/common/stores/view-mode-store';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
@@ -30,12 +30,9 @@ const themes: { value: ThemePreference; label: string }[] = [
 // the signed-in owner can.
 const canManageDevice = computed(() => !device.isKiosk || session.hasRole('admin'));
 
-// Accounts and their per-app roles live on the server, so the People table
-// needs a connection and a server session. On a kiosk that session is the
-// linked account's, so only the kiosk's admins get to act as it.
-const canSeePeople = computed(() => sync.online && sync.hasServerSession && (!device.isKiosk || session.hasRole('admin')));
-// Our own role may be what changed.
-const onRolesChanged = () => session.refreshWebProfile().catch(() => undefined);
+// The People page acts as the device's server account. On a kiosk that's the
+// linked account, so only the kiosk's admins get to it.
+const canSeePeople = computed(() => !device.isKiosk || session.hasRole('admin'));
 
 const deviceName = ref(device.deviceName);
 const idleLockMinutes = ref(String(device.config?.idleLockMinutes ?? 0));
@@ -97,13 +94,10 @@ async function reset() {
 
   <SyncPanel />
 
-  <div v-if="canSeePeople" class="card people-card">
+  <div v-if="canSeePeople" class="card">
     <h2>People</h2>
-    <p class="hint">
-      Everyone with a greybots-apps account, and their role in each app. Shared with GreyScout: a change here shows up there.
-      <template v-if="device.isKiosk"> Changes are made as this kiosk's linked account.</template>
-    </p>
-    <UserManagement @changed="onRolesChanged" />
+    <p class="hint">Everyone with a greybots-apps account: approve new accounts, and set each person's role in each app.</p>
+    <RouterLink to="/people" class="panel-link">Open the People page →</RouterLink>
   </div>
 
   <CrewManager v-if="device.isKiosk && session.hasRole('admin')" />

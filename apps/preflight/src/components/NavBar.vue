@@ -24,7 +24,7 @@ async function signOut() {
 
 // The page links, shown as a strip when they all fit and as a hamburger menu
 // when they don't.
-const pages: { to: string; label: string; minRole?: Role }[] = [
+const pages: { to: string; label: string; minRole?: Role; kioskRole?: Role }[] = [
   { to: '/', label: 'Overview', minRole: 'member' },
   { to: '/schedule', label: 'Schedule', minRole: 'member' },
   { to: '/checklists', label: 'Checklists', minRole: 'member' },
@@ -35,9 +35,14 @@ const pages: { to: string; label: string; minRole?: Role }[] = [
   { to: '/display', label: 'Display' },
   { to: '/script', label: 'Script', minRole: 'lead' },
   { to: '/pit-setup', label: 'Pit setup', minRole: 'lead' },
+  // Acts as the device's server account; on a kiosk that's the linked
+  // account, so only the kiosk's admins get it.
+  { to: '/people', label: 'People', minRole: 'lead', kioskRole: 'admin' },
   { to: '/settings', label: 'Settings', minRole: 'member' }
 ];
-const links = computed(() => pages.filter((page) => !page.minRole || session.hasRole(page.minRole)));
+const links = computed(() =>
+  pages.filter((page) => (!page.minRole || session.hasRole(page.minRole)) && (!device.isKiosk || !page.kioskRole || session.hasRole(page.kioskRole)))
+);
 // Overview is "/", which every path starts with, so it only matches exactly.
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path === to || route.path.startsWith(`${to}/`));
 

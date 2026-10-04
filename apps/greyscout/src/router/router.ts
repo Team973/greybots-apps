@@ -18,6 +18,8 @@ import LoginView from "@/views/LoginView.vue";
 import RegisterView from "@/views/RegisterView.vue";
 import ResetPasswordView from "@/views/ResetPasswordView.vue";
 import AccountView from "@/views/AccountView.vue";
+import PendingView from "@/views/PendingView.vue";
+import UserManagementView from "@/views/UserManagementView.vue";
 import PicklistView from "@/views/PicklistView.vue";
 import PickEmView from "@/views/PickEmView.vue";
 import PlayoffsView from "@/views/PlayoffsView.vue";
@@ -157,6 +159,29 @@ const router = createRouter({
       }
     },
     {
+      // Where a signed-in account with no role here lands: a new account
+      // waiting for approval, or a deactivated one (issue #112).
+      path: "/pending",
+      name: "Waiting for approval | GreyScout",
+      component: PendingView,
+      meta: {
+        requiresAuth: true,
+        noAccessOk: true
+      }
+    },
+    {
+      // Everyone with an account and their role in each greybots app
+      // (issue #112). Anyone with access can look; what they can change
+      // follows their role.
+      path: "/users",
+      name: "People | GreyScout",
+      component: UserManagementView,
+      meta: {
+        requiresAuth: true,
+        minRole: 'observer'
+      }
+    },
+    {
       path: "/picklist",
       name: "Pick List | GreyScout",
       component: PicklistView,
@@ -217,8 +242,27 @@ router.beforeEach(async (to, from, next) => {
     return;
   }
 
+  // Someone who's already logged in has no use for the login form (the home
+  // page is one too): send them to their schedule. The checks below then pass
+  // them on if that's not a page they can open.
+  if (authStore.isUserLoggedIn && (to.path === '/' || to.path === '/login' || to.path === '/register')) {
+    next('/schedule');
+    return;
+  }
+
+  // A signed-in account with no role here (pending or deactivated) gets the
+  // waiting page and nothing else.
+  if (authStore.isUserLoggedIn && !authStore.hasAccess && to.meta.requiresAuth !== undefined && !to.meta.noAccessOk) {
+    next('/pending');
+    return;
+  }
+  if (to.path === '/pending' && authStore.hasAccess) {
+    next('/schedule');
+    return;
+  }
+
   if (to.meta.minRole) {
-    const rank = authStore.role ? roleRank[authStore.role] : -1;
+    const rank = authStore.role ? roleRank[authStore.role] : -Infinity;
     if (rank < roleRank[to.meta.minRole]) {
       // Every role can reach Data Status — redirecting there (rather than
       // "/", which renders a login form even for an already-logged-in user)
