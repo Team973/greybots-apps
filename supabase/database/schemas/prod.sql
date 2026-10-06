@@ -233,6 +233,53 @@ END $$;
 ALTER FUNCTION "public"."preflight_sync_row"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."preflight_wipe_event"("p_event_key" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  table_name text;
+  removed bigint;
+  counts jsonb := '{}'::jsonb;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM "public"."User" u
+    WHERE u."user_id" = auth.uid() AND NOT u."deactivated" AND u."preflight_role" = 'admin'
+  ) THEN
+    RAISE EXCEPTION 'Only Preflight admins can wipe an event''s data' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_event_key IS NULL OR btrim(p_event_key) = '' THEN
+    RAISE EXCEPTION 'An event key is required';
+  END IF;
+
+  FOREACH table_name IN ARRAY ARRAY[
+    'PreflightScheduleItem',
+    'PreflightTask',
+    'PreflightRobotStatusLog',
+    'PreflightChecklistCheck',
+    'PreflightChecklistRun',
+    'PreflightNote',
+    'PreflightRepair'
+  ] LOOP
+    EXECUTE format('DELETE FROM "public".%I WHERE "event_key" = $1', table_name) USING p_event_key;
+    GET DIAGNOSTICS removed = ROW_COUNT;
+    counts := counts || jsonb_build_object(table_name, removed);
+  END LOOP;
+
+  RETURN counts;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."preflight_wipe_event"("p_event_key" "text") OWNER TO "postgres";
+
+REVOKE ALL ON FUNCTION "public"."preflight_wipe_event"("p_event_key" "text") FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."preflight_wipe_event"("p_event_key" "text") FROM "anon";
+GRANT EXECUTE ON FUNCTION "public"."preflight_wipe_event"("p_event_key" "text") TO "authenticated";
+GRANT EXECUTE ON FUNCTION "public"."preflight_wipe_event"("p_event_key" "text") TO "service_role";
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";

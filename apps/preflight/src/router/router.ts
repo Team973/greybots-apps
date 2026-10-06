@@ -6,6 +6,7 @@ import BatteriesView from '@/views/BatteriesView.vue';
 import BatteryDetailView from '@/views/BatteryDetailView.vue';
 import BatteryLabelsView from '@/views/BatteryLabelsView.vue';
 import ChecklistsView from '@/views/ChecklistsView.vue';
+import EventReportView from '@/views/EventReportView.vue';
 import EventScriptView from '@/views/EventScriptView.vue';
 import LoginView from '@/views/LoginView.vue';
 import NotesView from '@/views/NotesView.vue';
@@ -63,6 +64,9 @@ const router = createRouter({
     { path: '/stats', name: 'stats', component: StatsView, meta: { title: 'Stats', minRole: 'member' } },
     // The printable event script, for leads and admins.
     { path: '/script', name: 'script', component: EventScriptView, meta: { title: 'Event script', minRole: 'lead' } },
+    // The printable event report, the data export, and wiping the event's
+    // data afterwards: admins only.
+    { path: '/report', name: 'report', component: EventReportView, meta: { title: 'Event report', minRole: 'admin' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings', minRole: 'member' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]
