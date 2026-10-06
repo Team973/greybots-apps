@@ -34,6 +34,7 @@ const pages: { to: string; label: string; minRole?: Role; kioskRole?: Role }[] =
   { to: '/stats', label: 'Stats', minRole: 'member' },
   { to: '/display', label: 'Display' },
   { to: '/script', label: 'Script', minRole: 'lead' },
+  { to: '/report', label: 'Report', minRole: 'admin' },
   { to: '/pit-setup', label: 'Pit setup', minRole: 'lead' },
   // Acts as the device's server account; on a kiosk that's the linked
   // account, so only the kiosk's admins get it.

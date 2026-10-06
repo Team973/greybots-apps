@@ -2,6 +2,7 @@ import { supabase } from '@greybots/common/supabase/client';
 import { db, getMeta, setMeta } from '@/lib/db';
 import { syncedTables } from './registry';
 import type { SyncedRecord, SyncedTableDef } from './types';
+import { applyEventWipes } from './wipes';
 
 const pushBatchSize = 200;
 const pullPageSize = 500;
@@ -102,6 +103,9 @@ export async function syncAll(): Promise<SyncResult> {
     for (const def of syncedTables) {
         result.pushed += await pushTable(def);
         result.pulled += await pullTable(def);
+        // Settings come first in the registry. Once they're in, drop any event
+        // that was wiped elsewhere before this device pushes its rows back up.
+        if (def.table === 'settings') await applyEventWipes();
     }
     return result;
 }

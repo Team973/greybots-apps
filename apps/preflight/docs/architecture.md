@@ -172,6 +172,7 @@ status and Lock / Sign out are always on the bar itself.
   push, the server trigger (below) ignores an incoming row older than what
   the server already has, and the next pull brings the newer row down.
 - **Deletes** are soft (`deleted = true`) so they propagate to other devices.
+  The one exception is wiping a whole event (see Event report).
 - Sync only runs with a Supabase session: the web user's own session, or a
   kiosk's linked account. Otherwise the status chip shows "Not linked".
 
@@ -520,6 +521,47 @@ rest of the event on paper, for people who'd rather work from a printout.
   on white whatever the app theme). Steps that record something get a place
   to write it. It's built from what's on the device, so it works offline.
 - Times are a snapshot: they're the estimates at the moment of printing.
+
+## Event report, data export, and wipe
+
+`/report` (admins; `src/lib/report/`). Old events aren't kept in the database:
+once an event is over, an admin pulls its report and data, then wipes it.
+The report can be pulled at any time during the event too.
+
+- **Report:** five sections, each starting a new page: a summary (headline
+  numbers, highlights, areas of improvement, where the pit time went),
+  outstanding items (unfinished repairs, tasks, and checklists, and suspect
+  batteries, with a box to tick at the shop), pit performance (the Stats
+  charts plus time per checklist, slowest steps, how long the robot was ready
+  before each match, and steps per person), robot performance (repairs by
+  subsystem, the repair log, failed checks, batteries used), and the full
+  as-run notes (every status change, checked step, repair, task, note, battery
+  change, and match start, in order). `event-report.ts` works all of it out
+  from `loadEventData()`; nothing is stored.
+- **PDF:** like the event script, "Print / save as PDF" opens the browser's
+  print dialog. Only the report prints, black on white, with the light chart
+  palette whatever the app theme.
+- **Data export:** "Download data" builds a zip on the device (`export.ts`,
+  with a small store-only zip writer in `zip.ts`): one CSV per table as it's
+  stored, plus the turnarounds and the as-run log, and a README listing them.
+  Nested values are JSON; times are UTC.
+- Both are built from what's on the device, so sync first. The page says when
+  changes are waiting.
+- **Wipe:** offered only after the data has been downloaded on this device and
+  hasn't changed since, and takes two steps (confirm the report and data are
+  saved, then type the event key). `wipeEvent()` syncs, calls the
+  `preflight_wipe_event` database function (admins only; it deletes the
+  event's rows from the schedule, status log, checks, checklist runs, tasks,
+  repairs, and notes), then records the wipe in the `event_wipes` setting.
+  Every device applies that setting right after pulling settings and before
+  pushing anything else (`src/lib/sync/wipes.ts`): it drops its own rows for
+  the event from before the wipe, unpushed edits included. Batteries (and
+  their uses and measurements), pit setup, settings, and the timer belong to
+  the team and are kept. It needs a connection and an admin server account
+  (on a kiosk, the linked account).
+- Diagnostics data will join the robot performance section with the
+  diagnostics integration (#103), and the outstanding items are meant to feed
+  the workshop app as tasks.
 
 ## Pit display
 
