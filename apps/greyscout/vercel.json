@@ -1,6 +1,9 @@
 {
-    "rewrites":  [
-      {"source": "/(.*)", "destination": "/"}
-    ]
-  }
-  
+  "ignoreCommand": "bash ../../scripts/vercel-ignore-build.sh apps/greyscout packages/common package.json package-lock.json scripts/vercel-ignore-build.sh",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
+  ]
+}
