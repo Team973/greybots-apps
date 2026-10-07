@@ -17,13 +17,14 @@ import {
     parseTeamTiers,
     fetchTeamMatchStats,
     fetchTeamMatchSummaries,
+    fetchTeamPitSummaries,
     fetchTeamComments,
     TIERS,
     TIER_GROUPS,
     ARCHETYPES,
     DEFAULT_ARCHETYPE
 } from '@/lib/picklist-query';
-import type { Tier, TierGroup, TeamTierStats, TeamMatchSummary, Archetype } from '@/lib/picklist-query';
+import type { Tier, TierGroup, TeamTierStats, TeamMatchSummary, TeamPitSummary, Archetype } from '@/lib/picklist-query';
 import { defenseThresholdPercent } from '@/lib/constants';
 export type { Archetype };
 
@@ -128,6 +129,7 @@ export const usePicklistStore = defineStore('picklist', {
             viewedPastEventTierSections: emptyTierSections() as Record<TierGroup, number[]>,
             viewedPastEventTierStats: {} as Record<number, TeamTierStats>,
             viewedPastEventTeamMatchSummaries: {} as Record<number, TeamMatchSummary>,
+            viewedPastEventTeamPitSummaries: {} as Record<number, TeamPitSummary>,
             viewedPastEventListLoading: false,
 
             // Team (lead) list — tier-grouped team numbers per archetype
@@ -154,6 +156,9 @@ export const usePicklistStore = defineStore('picklist', {
             // matches — loaded up front so card status can show on the collapsed
             // row without expanding.
             teamMatchSummaries: {} as Record<number, TeamMatchSummary>,
+
+            // Per-team weight and vibe check from pit scouting (issue #123).
+            teamPitSummaries: {} as Record<number, TeamPitSummary>,
 
             // Save status
             isSaving: false,
@@ -211,6 +216,26 @@ export const usePicklistStore = defineStore('picklist', {
                     return this.viewedPastEventTeamMatchSummaries[teamNumber]?.worstCard ?? null;
                 }
                 return this.teamMatchSummaries[teamNumber]?.worstCard ?? null;
+            };
+        },
+
+        /** The match summary for whichever event is on screen (a viewed past event's, when one is active). */
+        activeMatchSummaryFor(): (teamNumber: number) => TeamMatchSummary | null {
+            return (teamNumber: number) => {
+                if (this.viewingPastEventId && this.activeTab !== 'personal') {
+                    return this.viewedPastEventTeamMatchSummaries[teamNumber] ?? null;
+                }
+                return this.teamMatchSummaries[teamNumber] ?? null;
+            };
+        },
+
+        /** Same, for the pit summary (weight and vibe check). */
+        activePitSummaryFor(): (teamNumber: number) => TeamPitSummary | null {
+            return (teamNumber: number) => {
+                if (this.viewingPastEventId && this.activeTab !== 'personal') {
+                    return this.viewedPastEventTeamPitSummaries[teamNumber] ?? null;
+                }
+                return this.teamPitSummaries[teamNumber] ?? null;
             };
         },
 
@@ -285,7 +310,12 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         async loadTeamMatchSummaries(eventId: string) {
-            this.teamMatchSummaries = await fetchTeamMatchSummaries(eventId);
+            const [matchSummaries, pitSummaries] = await Promise.all([
+                fetchTeamMatchSummaries(eventId),
+                fetchTeamPitSummaries(eventId)
+            ]);
+            this.teamMatchSummaries = matchSummaries;
+            this.teamPitSummaries = pitSummaries;
         },
 
         async loadTeams(eventId: string) {
@@ -404,11 +434,13 @@ export const usePicklistStore = defineStore('picklist', {
             this.viewedPastEventListLoading = true;
             const pastEventId = this.viewingPastEventId;
 
-            const [teams, allLists, matchSummaries] = await Promise.all([
+            const [teams, allLists, matchSummaries, pitSummaries] = await Promise.all([
                 fetchTeamsForPicklist(pastEventId),
                 fetchAllPersonalPicklists(pastEventId, archetype),
-                fetchTeamMatchSummaries(pastEventId)
+                fetchTeamMatchSummaries(pastEventId),
+                fetchTeamPitSummaries(pastEventId)
             ]);
+            this.viewedPastEventTeamPitSummaries = pitSummaries;
             this.viewedPastEventTeams = teams;
             this.viewedPastEventTierStats = computeTeamTierStats(allLists);
             this.viewedPastEventTeamMatchSummaries = matchSummaries;
@@ -437,6 +469,7 @@ export const usePicklistStore = defineStore('picklist', {
             this.viewedPastEventTierSections = emptyTierSections();
             this.viewedPastEventTierStats = {};
             this.viewedPastEventTeamMatchSummaries = {};
+            this.viewedPastEventTeamPitSummaries = {};
         },
 
         async loadPickedTeams(eventId: string) {

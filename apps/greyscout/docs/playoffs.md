@@ -18,6 +18,24 @@ Drag teams by their **⠿ handle** (the rest of a team card scrolls the page ins
 
 Every change saves immediately — there is no Save button. If a save fails, a message with a **Retry** button appears and the on-screen state is kept.
 
+You can also fill alliances without dragging: set **Enter teams by** to **Type team numbers**, then click an open spot on an alliance (Captain, Pick 1, …), type a team number, and press Enter (✕ on a team removes it). The team takes the alliance's first open spot, and the cursor moves to the next one. The choice is remembered on the device, and can also be set under **Account → Preferences**.
+
+### Ordering the available teams ([issue #123](https://github.com/Team973/greybots-apps/issues/123))
+
+**Order by** above the pool chooses how Available Teams is sorted; each tile shows its position (`#3` = TBA rank, `P3` = pick list position).
+
+| Order | What it does |
+|---|---|
+| TBA ranking | Current qualification rank from The Blue Alliance. |
+| Team pick list / My pick list | Pick list order (Scorer, ranked tiers only), then TBA rank for teams not on it. Leads and admins get the team list; members get their own list, since they can't see the team list; observers don't get this option. |
+| Smart | The teams in line to be alliance captains first (with N alliances still lacking a captain, the N highest-ranked available teams, outlined), then the rest in pick list order. |
+
+**↻ Refresh** reloads the alliances and results and pulls the current TBA rankings and pick list again. Rankings come through the `tba-proxy` Edge Function's `get_rankings` action and are cached on the device; before TBA has rankings for the event, teams are in team-number order.
+
+### My prediction
+
+The **Team / My prediction** switch at the top swaps the real alliance selection for your own prediction of it: the same alliances and bracket, but private to you, editable by any role, and with no effect on which teams are marked picked. Ordering and Refresh work the same way in both.
+
 ### Recording results
 
 Click an alliance in a bracket match to mark it the winner; click it again to clear. A match can only be decided once both alliances are known. Winners and losers advance automatically per the bracket below, and changing an earlier result clears any downstream results that depended on it.
@@ -73,6 +91,10 @@ The route allows every role; editing is gated in the UI (`authStore.isLead`) and
 
 RLS: any authenticated user can read; only `lead`/`admin` (checked against `"User".role`) can insert/update.
 
+### `PlayoffsPrediction` table (one row per user per event)
+
+Same `alliances` / `match_winners` shape as `Playoffs`, keyed by `(event_id, user_id)`. RLS: a user reads and writes only their own row.
+
 ## Source Files
 
 | File | Purpose |
@@ -82,6 +104,8 @@ RLS: any authenticated user can read; only `lead`/`admin` (checked against `"Use
 | `src/components/PlayoffsTeamChip.vue` | Condensed team card (photo + number) |
 | `src/lib/playoffs-bracket.ts` | Bracket topology and the pure logic deriving matchups from recorded winners |
 | `src/lib/playoffs-query.ts` | Supabase read/upsert |
-| `src/stores/playoffs-store.ts` | State, saving, picked-list sync |
+| `src/stores/playoffs-store.ts` | State, saving, picked-list sync, team/personal mode, pool ordering |
+| `src/lib/preferences.ts` | Per-device preferences (entry method, pool order) |
+| `src/lib/tba-cache.ts` | Cached TBA rankings |
 | `src/lib/drag-autoscroll.ts` | Drag autoscroll (same approach as the pick list; see its comment) |
 | `supabase/migrations/20260918120000_add_playoffs.sql` | Table + RLS |

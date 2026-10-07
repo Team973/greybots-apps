@@ -117,10 +117,11 @@ import { minWidthForDesktop } from "@/lib/constants";
                             <div class="comment-meta">
                                 <span class="comment-author">{{ comment.author }}</span>
                                 <span class="comment-source-badge">{{ comment.source }}</span>
-                                <span class="comment-match" v-if="comment.match_number != null">Match
-                                    {{ comment.match_number }}</span>
+                                <span class="comment-match" v-if="comment.match_label">{{ comment.match_label }}</span>
+                                <span v-if="comment.card" class="comment-flag" :class="`comment-flag--${comment.card}`">{{ comment.card === 'red' ? 'Red card' : 'Yellow card' }}</span>
+                                <span v-if="comment.noShow" class="comment-flag comment-flag--noshow">No show</span>
                             </div>
-                            <p class="comment-text">{{ comment.comment }}</p>
+                            <p v-if="comment.comment" class="comment-text">{{ comment.comment }}</p>
                         </li>
                     </ul>
                 </div>
@@ -740,6 +741,30 @@ export default {
     font-size: 11px;
     color: rgba(128, 128, 128, 0.6);
     margin-left: auto;
+}
+
+/* Card / no-show tags on a match entry (issue #123). */
+.comment-flag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+.comment-flag--yellow {
+    background: #f5c518;
+    color: #1a1a1a;
+}
+
+.comment-flag--red {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.comment-flag--noshow {
+    background: rgba(128, 128, 128, 0.25);
+    color: var(--primary-text-color);
 }
 
 .comment-text {

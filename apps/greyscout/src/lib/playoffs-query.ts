@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import { supabase } from '@greybots/common/supabase/client';
-import { playoffsTable } from '@/lib/constants';
+import { playoffsTable, playoffsPredictionTable } from '@/lib/constants';
 import { normalizeAlliances, normalizeWinners } from '@/lib/playoffs-bracket';
 import type { MatchWinners } from '@/lib/playoffs-bracket';
 
@@ -47,5 +47,43 @@ export async function upsertPlayoffs(eventId: string, alliances: number[][], win
             match_winners: winners,
             updated_at: new Date().toISOString()
         }, { onConflict: 'event_id' });
+    return error;
+}
+
+/**
+ * Fetch one user's personal prediction for an event (issue #123): the same
+ * alliances/results shape as the real thing, but private to that user and
+ * with no effect on the pick list. Null if the fetch failed.
+ */
+export async function fetchPlayoffsPrediction(eventId: string, userId: string): Promise<PlayoffsData | null> {
+    const { data, error } = await supabase
+        .from(playoffsPredictionTable)
+        .select('alliances, match_winners')
+        .eq('event_id', eventId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (error) {
+        console.error('fetchPlayoffsPrediction error:', error);
+        return null;
+    }
+
+    return {
+        alliances: normalizeAlliances(data?.alliances),
+        winners: normalizeWinners(data?.match_winners)
+    };
+}
+
+/** Save the signed-in user's prediction. Returns the error object or null on success. */
+export async function upsertPlayoffsPrediction(eventId: string, userId: string, alliances: number[][], winners: MatchWinners) {
+    const { error } = await supabase
+        .from(playoffsPredictionTable)
+        .upsert({
+            event_id: eventId,
+            user_id: userId,
+            alliances,
+            match_winners: winners,
+            updated_at: new Date().toISOString()
+        }, { onConflict: 'event_id,user_id' });
     return error;
 }

@@ -81,6 +81,8 @@ export interface TeamMatchSummary {
     diedCount: number;
     beachedCount: number;
     defenseCount: number;
+    autoFailCount: number;
+    noShowCount: number;
     /** defenseCount / matches * 100 — used to pre-filter Pick'em's Defender pool (issue #27). */
     defensePercent: number;
     /** Worst card seen across this team's matches at the event, or null if none. */
@@ -97,7 +99,7 @@ export interface TeamMatchSummary {
 export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<number, TeamMatchSummary>> {
     const { data, error } = await supabase
         .from(matchScoutTable)
-        .select('prematch_team_number, postmatch_broke, postmatch_died, postmatch_beached, postmatch_played_defense, postmatch_cards')
+        .select('prematch_team_number, prematch_noshow, auto_failed, postmatch_broke, postmatch_died, postmatch_beached, postmatch_played_defense, postmatch_cards')
         .eq('event', eventId);
 
     if (error) {
@@ -111,13 +113,16 @@ export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<n
         if (teamNumber == null) return;
 
         const summary = summaries[teamNumber] ?? {
-            matches: 0, brokeCount: 0, diedCount: 0, beachedCount: 0, defenseCount: 0, defensePercent: 0, worstCard: null
+            matches: 0, brokeCount: 0, diedCount: 0, beachedCount: 0, defenseCount: 0, autoFailCount: 0, noShowCount: 0,
+            defensePercent: 0, worstCard: null
         };
         summary.matches += 1;
         if (row.postmatch_broke) summary.brokeCount += 1;
         if (row.postmatch_died) summary.diedCount += 1;
         if (row.postmatch_beached) summary.beachedCount += 1;
         if (row.postmatch_played_defense) summary.defenseCount += 1;
+        if (row.auto_failed) summary.autoFailCount += 1;
+        if (row.prematch_noshow) summary.noShowCount += 1;
         if (row.postmatch_cards === 'red') summary.worstCard = 'red';
         else if (row.postmatch_cards === 'yellow' && summary.worstCard !== 'red') summary.worstCard = 'yellow';
 
@@ -128,6 +133,37 @@ export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<n
         summary.defensePercent = summary.matches > 0 ? (summary.defenseCount / summary.matches) * 100 : 0;
     });
 
+    return summaries;
+}
+
+export interface TeamPitSummary {
+    /** Pounds, without bumpers or battery. */
+    weight: number | null;
+    /** 1-5. */
+    vibe: number | null;
+}
+
+/**
+ * Fetch each team's weight and vibe check from pit scouting, in one query
+ * (issue #123). The newest submission wins when a team has several.
+ */
+export async function fetchTeamPitSummaries(eventId: string): Promise<Record<number, TeamPitSummary>> {
+    const { data, error } = await supabase
+        .from(pitScoutTable)
+        .select('pit_team_number, pit_weight, pit_vibe_check, created_at')
+        .eq('event', eventId)
+        .order('created_at', { ascending: true });
+
+    if (error) {
+        console.error('fetchTeamPitSummaries error:', error);
+        return {};
+    }
+
+    const summaries: Record<number, TeamPitSummary> = {};
+    (data ?? []).forEach((row) => {
+        if (row.pit_team_number == null) return;
+        summaries[row.pit_team_number] = { weight: row.pit_weight ?? null, vibe: row.pit_vibe_check ?? null };
+    });
     return summaries;
 }
 
@@ -220,19 +256,33 @@ export async function fetchMatchDataById(id: number) {
 }
 
 /**
+ * "Match 12", "Practice 3", or "Playoff 2" for a MatchData row (issue #123).
+ * Rows from before the match type existed are qualification matches.
+ */
+export function matchLabel(matchNumber: number | null, matchType: string | null | undefined) {
+    if (matchNumber == null) return null;
+    if (matchType === 'practice') return `Practice ${matchNumber}`;
+    if (matchType === 'playoff') return `Playoff ${matchNumber}`;
+    return `Match ${matchNumber}`;
+}
+
+/**
  * Fetch match- and pit-scouting comments for a team, attributed to their author.
- * Returns array of { source, author, comment, match_number, created_at }, newest first.
+ * Returns array of { source, author, comment, match_number, match_label,
+ * card, noShow, created_at }, newest first. A match entry with a card or a
+ * no-show is included even without a comment, so those always show up in
+ * the comments section (issue #123).
  */
 export async function fetchTeamComments(teamNumber: number, eventId: string) {
     // Match scout comments — scout identity is resolved via the submitting user's
     // account (scouted_by -> User.user_id) rather than a free-text name field.
+    // Every column is selected so this keeps working whether or not the
+    // match-type column exists yet.
     const { data: matchData } = await supabase
         .from(matchScoutTable)
-        .select(`prematch_match_number, postmatch_comments, created_at, ${userTable}(name)`)
+        .select(`*, ${userTable}(name)`)
         .eq('event', eventId)
-        .eq('prematch_team_number', teamNumber)
-        .not('postmatch_comments', 'is', null)
-        .not('postmatch_comments', 'eq', '');
+        .eq('prematch_team_number', teamNumber);
 
     // Pit scout comments — same account-based attribution as match comments.
     const { data: pitData } = await supabase
@@ -246,16 +296,22 @@ export async function fetchTeamComments(teamNumber: number, eventId: string) {
     const matchComments = (matchData ?? []).map((row) => ({
         source: 'Match',
         author: row[userTable]?.name ?? 'Unknown',
-        comment: row.postmatch_comments,
+        comment: row.postmatch_comments ?? '',
         match_number: row.prematch_match_number ?? null,
+        match_label: matchLabel(row.prematch_match_number ?? null, row.prematch_match_type),
+        card: row.postmatch_cards === 'red' || row.postmatch_cards === 'yellow' ? row.postmatch_cards : null,
+        noShow: !!row.prematch_noshow,
         created_at: row.created_at
-    }));
+    })).filter((entry) => entry.comment !== '' || entry.card || entry.noShow);
 
     const pitComments = (pitData ?? []).map((row) => ({
         source: 'Pit',
         author: row[userTable]?.name ?? 'Unknown',
         comment: row.pit_comments,
         match_number: null,
+        match_label: null,
+        card: null,
+        noShow: false,
         created_at: row.created_at
     }));
 

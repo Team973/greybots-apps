@@ -315,6 +315,8 @@ CREATE TABLE IF NOT EXISTS "public"."MatchData" (
     "auto_failed" boolean DEFAULT false NOT NULL,
     "postmatch_played_defense" boolean DEFAULT false NOT NULL,
     "postmatch_defense_impact" "text",
+    "prematch_match_type" "text" DEFAULT 'qual'::"text" NOT NULL,
+    CONSTRAINT "MatchData_match_type_check" CHECK (("prematch_match_type" = ANY (ARRAY['practice'::"text", 'qual'::"text", 'playoff'::"text"]))),
     CONSTRAINT "MatchData_defense_impact_check" CHECK (("postmatch_defense_impact" IS NULL) OR ("postmatch_defense_impact" = ANY (ARRAY['none'::"text", 'good'::"text", 'minimal'::"text", 'ineffective'::"text"])))
 );
 
@@ -601,6 +603,30 @@ CREATE TABLE IF NOT EXISTS "public"."Playoffs" (
 
 
 ALTER TABLE "public"."Playoffs" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."PlayoffsPrediction" (
+    "event_id" "text" NOT NULL,
+    "user_id" "uuid" DEFAULT "auth"."uid"() NOT NULL,
+    "alliances" "jsonb" DEFAULT '[[],[],[],[],[],[],[],[]]'::"jsonb" NOT NULL,
+    "match_winners" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."PlayoffsPrediction" OWNER TO "postgres";
+
+
+ALTER TABLE ONLY "public"."PlayoffsPrediction"
+    ADD CONSTRAINT "PlayoffsPrediction_pkey" PRIMARY KEY ("event_id", "user_id");
+
+
+ALTER TABLE ONLY "public"."PlayoffsPrediction"
+    ADD CONSTRAINT "PlayoffsPrediction_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "public"."Event"("event_id");
+
+
+ALTER TABLE ONLY "public"."PlayoffsPrediction"
+    ADD CONSTRAINT "PlayoffsPrediction_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."User"("user_id");
 
 
 CREATE TABLE IF NOT EXISTS "public"."ScoutAssignment" (
@@ -1455,6 +1481,18 @@ CREATE POLICY "Enable read access for logged in users" ON "public"."Playoffs" FO
 
 
 
+CREATE POLICY "Enable read access for own prediction" ON "public"."PlayoffsPrediction" FOR SELECT TO "authenticated" USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "Enable insert for own prediction" ON "public"."PlayoffsPrediction" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "Enable update for own prediction" ON "public"."PlayoffsPrediction" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
 CREATE POLICY "Enable insert for leads and admins" ON "public"."Playoffs" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
 
 
@@ -1791,6 +1829,15 @@ CREATE POLICY "Require scouting access to update" ON "public"."Watchlist" AS RES
 CREATE POLICY "Require scouting access to delete" ON "public"."Watchlist" AS RESTRICTIVE FOR DELETE TO "authenticated" USING (( SELECT "public"."has_app_access"('scouting'::"text") AS "has_app_access"));
 
 
+CREATE POLICY "Require an approved account to read" ON "public"."PlayoffsPrediction" AS RESTRICTIVE FOR SELECT TO "authenticated" USING (( SELECT "public"."has_app_access"('any'::"text") AS "has_app_access"));
+
+
+CREATE POLICY "Require scouting access to insert" ON "public"."PlayoffsPrediction" AS RESTRICTIVE FOR INSERT TO "authenticated" WITH CHECK (( SELECT "public"."has_app_access"('scouting'::"text") AS "has_app_access"));
+
+
+CREATE POLICY "Require scouting access to update" ON "public"."PlayoffsPrediction" AS RESTRICTIVE FOR UPDATE TO "authenticated" USING (( SELECT "public"."has_app_access"('scouting'::"text") AS "has_app_access"));
+
+
 CREATE POLICY "Require an approved account to read" ON "public"."Playoffs" AS RESTRICTIVE FOR SELECT TO "authenticated" USING (( SELECT "public"."has_app_access"('any'::"text") AS "has_app_access"));
 
 
@@ -1900,6 +1947,9 @@ ALTER TABLE "public"."Watchlist" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."Playoffs" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."PlayoffsPrediction" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."ScoutAssignment" ENABLE ROW LEVEL SECURITY;
@@ -2261,6 +2311,11 @@ GRANT ALL ON TABLE "public"."PickList" TO "service_role";
 GRANT ALL ON TABLE "public"."Playoffs" TO "anon";
 GRANT ALL ON TABLE "public"."Playoffs" TO "authenticated";
 GRANT ALL ON TABLE "public"."Playoffs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."PlayoffsPrediction" TO "authenticated";
+GRANT ALL ON TABLE "public"."PlayoffsPrediction" TO "service_role";
 
 
 

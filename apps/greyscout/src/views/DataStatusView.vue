@@ -3,9 +3,11 @@
 
 import { RouterLink } from 'vue-router';
 import CollapsibleSection from "@greybots/common/components/CollapsibleSection.vue";
+import SearchableDropdown from "@greybots/common/components/SearchableDropdown.vue";
 
 import { useEventStore } from "@/stores/event-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useWatchlistStore } from "@/stores/watchlist-store";
 import { queryEventMatchSchedule, queryEventData, queryEventPitData, queryEventPrescoutData, queryTeamNumbers } from "@/lib/data-query";
 import { matchNumberColumn, teamNumberColumn } from "@/lib/constants";
 </script>
@@ -20,6 +22,61 @@ import { matchNumberColumn, teamNumberColumn } from "@/lib/constants";
         </div>
 
         <div v-if="loaded">
+            <CollapsibleSection title="Starred Teams">
+                <p>{{ starredRows.length }} starred team{{ starredRows.length === 1 ? '' : 's' }}, with everything
+                    collected on each so far. Stars are shared by the whole team<template v-if="!isLead">; leads
+                        and admins can change them</template>.</p>
+
+                <div v-if="isLead" class="star-add">
+                    <SearchableDropdown :choices="starChoices" model-value="" placeholder="Star a team…"
+                        @update:modelValue="addStar"></SearchableDropdown>
+                </div>
+                <p v-if="starError" class="star-error">{{ starError }}</p>
+
+                <p v-if="starredRows.length === 0">No teams are starred yet.</p>
+                <div v-else class="schedule-table-wrap">
+                    <table class="starred-table">
+                        <thead>
+                            <tr>
+                                <th>Team</th>
+                                <th>Prescout</th>
+                                <th>Pit</th>
+                                <th>Matches scouted</th>
+                                <th>No-shows</th>
+                                <th>Cards</th>
+                                <th v-if="isLead"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="row in starredRows" :key="row.teamNumber">
+                                <td>
+                                    <RouterLink :to="`/team/${row.teamNumber}`" class="team-link">
+                                        <span class="star-mark">★</span> {{ row.teamNumber }}
+                                        <span v-if="row.name" class="star-team-name">{{ row.name }}</span>
+                                    </RouterLink>
+                                </td>
+                                <td><span class="status-dot" :class="row.prescouted ? 'status-scouted' : 'status-missing'"></span>
+                                    {{ row.prescouted ? 'Done' : 'Missing' }}</td>
+                                <td><span class="status-dot" :class="row.pitScouted ? 'status-scouted' : 'status-missing'"></span>
+                                    {{ row.pitScouted ? 'Done' : 'Missing' }}</td>
+                                <td>{{ row.scouted }} / {{ row.scheduled }}<template v-if="row.otherMatches"> (+{{ row.otherMatches }}
+                                        practice / playoff)</template></td>
+                                <td>{{ row.noShows || '—' }}</td>
+                                <td>
+                                    <span v-if="row.yellow" class="card-tag card-tag--yellow">{{ row.yellow }} yellow</span>
+                                    <span v-if="row.red" class="card-tag card-tag--red">{{ row.red }} red</span>
+                                    <template v-if="!row.yellow && !row.red">—</template>
+                                </td>
+                                <td v-if="isLead">
+                                    <button type="button" class="star-remove" :title="`Unstar ${row.teamNumber}`"
+                                        @click="removeStar(row.teamNumber)">✕</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </CollapsibleSection>
+
             <CollapsibleSection title="Prescouting">
                 <p>{{ prescoutStats.scoutedTeams }} / {{ prescoutStats.totalTeams }} teams pre-scouted
                     ({{ prescoutStats.percent }}%).</p>
@@ -75,6 +132,8 @@ import { matchNumberColumn, teamNumberColumn } from "@/lib/constants";
                     <span class="legend-item"><span class="status-dot status-scouted"></span> Scouted</span>
                     <span class="legend-item"><span class="status-dot status-noshow"></span> No-show recorded</span>
                     <span class="legend-item"><span class="status-dot status-missing"></span> Not yet scouted</span>
+                    <span class="legend-item"><span class="card-mark card-mark--yellow"></span> Yellow card</span>
+                    <span class="legend-item"><span class="card-mark card-mark--red"></span> Red card</span>
                 </div>
                 <p class="hint">Only qualification matches are shown — match numbers repeat across playoff levels,
                     so scouting entries can't be matched back to a specific playoff match.</p>
@@ -102,6 +161,9 @@ import { matchNumberColumn, teamNumberColumn } from "@/lib/constants";
                                         <RouterLink :to="`/team/${match[slotKey]}`" class="team-link">
                                             <span class="status-dot" :class="statusDotClass(match.match_number, match[slotKey])"></span>
                                             {{ match[slotKey] }}
+                                            <span v-if="cardFor(match, slotKey)" class="card-mark"
+                                                :class="`card-mark--${cardFor(match, slotKey)}`"
+                                                :title="cardFor(match, slotKey) === 'red' ? 'Red card' : 'Yellow card'"></span>
                                         </RouterLink>
                                         <button v-if="isLead && scoutedEntryFor(match, slotKey)" type="button" class="edit-pencil"
                                             title="Edit match submission" @click="goToMatchEdit(match, slotKey)">✎</button>
@@ -120,15 +182,20 @@ import { matchNumberColumn, teamNumberColumn } from "@/lib/constants";
 const SLOT_KEYS = ['red1', 'red2', 'red3', 'blue1', 'blue2', 'blue3'];
 
 export default {
-    components: { CollapsibleSection },
+    components: { CollapsibleSection, SearchableDropdown },
     data() {
         return {
             eventStore: null,
             authStore: null,
+            watchlistStore: null,
+            starError: '',
+            // team_number -> { scouted, noShows, yellow, red, otherMatches },
+            // counted over every match entry for the team (issue #123).
+            teamTotals: {},
             loaded: false,
             schedule: [],
             teams: [],
-            // `${match_number}|${team_number}` -> { count, noShow, id }
+            // `${match_number}|${team_number}` -> { count, noShow, card, id } (qualification matches)
             scoutedByKey: {},
             // team_number -> { id }
             pitScoutedTeams: {},
@@ -143,6 +210,40 @@ export default {
         },
         qualMatches() {
             return this.schedule.filter(m => m.comp_level === 'qm');
+        },
+        // One row per starred team: what's been collected on it so far.
+        starredRows() {
+            const names = {};
+            this.teams.forEach((team) => { names[team.team_number] = team.name; });
+
+            const scheduled = {};
+            this.qualMatches.forEach((match) => {
+                SLOT_KEYS.forEach((slotKey) => {
+                    const teamNumber = match[slotKey];
+                    if (teamNumber) scheduled[teamNumber] = (scheduled[teamNumber] ?? 0) + 1;
+                });
+            });
+
+            return [...(this.watchlistStore?.watchedTeamNumbers ?? [])]
+                .sort((a, b) => a - b)
+                .map((teamNumber) => {
+                    const totals = this.teamTotals[teamNumber] ?? { scouted: 0, noShows: 0, yellow: 0, red: 0, otherMatches: 0 };
+                    return {
+                        teamNumber,
+                        name: names[teamNumber] ?? '',
+                        prescouted: !!this.prescoutedTeams[teamNumber],
+                        pitScouted: !!this.pitScoutedTeams[teamNumber],
+                        scheduled: scheduled[teamNumber] ?? 0,
+                        ...totals
+                    };
+                });
+        },
+        // Teams that can still be starred.
+        starChoices() {
+            const starred = new Set(this.watchlistStore?.watchedTeamNumbers ?? []);
+            return this.teams
+                .filter((team) => !starred.has(team.team_number))
+                .map((team) => ({ key: team.team_number, text: `${team.team_number}${team.name ? ' - ' + team.name : ''}` }));
         },
         completionStats() {
             let totalSlots = 0;
@@ -185,7 +286,8 @@ export default {
                 queryEventData(eventId),
                 queryEventPitData(eventId),
                 queryEventPrescoutData(eventId),
-                queryTeamNumbers(eventId)
+                queryTeamNumbers(eventId),
+                this.watchlistStore.loadWatchlist(eventId)
             ]);
 
             this.schedule = schedule;
@@ -193,14 +295,34 @@ export default {
             this.teams = [...teams].sort((a, b) => a.team_number - b.team_number);
 
             this.scoutedByKey = {};
+            this.teamTotals = {};
             matchData.forEach((row) => {
+                // Practice and playoff entries reuse qualification match
+                // numbers, so they stay out of the qualification grid; rows
+                // from before the match type existed are qualifications.
+                const isQual = !row.prematch_match_type || row.prematch_match_type === 'qual';
+
                 const key = `${row[matchNumberColumn]}|${row[teamNumberColumn]}`;
+                const isFirstForSlot = isQual && !this.scoutedByKey[key];
+
+                const totals = this.teamTotals[row[teamNumberColumn]]
+                    ?? (this.teamTotals[row[teamNumberColumn]] = { scouted: 0, noShows: 0, yellow: 0, red: 0, otherMatches: 0 });
+                if (isFirstForSlot) totals.scouted += 1;
+                if (!isQual) totals.otherMatches += 1;
+                if (row.prematch_noshow) totals.noShows += 1;
+                if (row.postmatch_cards === 'yellow') totals.yellow += 1;
+                if (row.postmatch_cards === 'red') totals.red += 1;
+
+                if (!isQual) return;
+
                 if (!this.scoutedByKey[key]) {
-                    this.scoutedByKey[key] = { count: 0, noShow: false, id: row.id, createdAt: row.created_at };
+                    this.scoutedByKey[key] = { count: 0, noShow: false, card: null, id: row.id, createdAt: row.created_at };
                 }
                 const entry = this.scoutedByKey[key];
                 entry.count += 1;
                 entry.noShow = entry.noShow || !!row.prematch_noshow;
+                if (row.postmatch_cards === 'red') entry.card = 'red';
+                else if (row.postmatch_cards === 'yellow' && entry.card !== 'red') entry.card = 'yellow';
                 // If a slot somehow has more than one submission, edit links
                 // should point at the most recent one.
                 if (row.created_at > entry.createdAt) {
@@ -241,6 +363,24 @@ export default {
             if (!teamNumber) return [alliance];
             return [alliance, `cell-${this.statusFor(match.match_number, teamNumber)}`];
         },
+        // The card recorded for a team in a match, if any (issue #123).
+        cardFor(match, slotKey) {
+            return this.scoutedByKey[`${match.match_number}|${match[slotKey]}`]?.card ?? null;
+        },
+        // Starring is shared with the pick list and match scouting (the
+        // watchlist), and is for leads and admins.
+        async addStar(teamNumber) {
+            if (!teamNumber || !this.isLead) return;
+            this.starError = '';
+            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, Number(teamNumber));
+            if (error) this.starError = `Couldn't star ${teamNumber}: ${error.message ?? 'unknown error'}`;
+        },
+        async removeStar(teamNumber) {
+            if (!this.isLead) return;
+            this.starError = '';
+            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, Number(teamNumber));
+            if (error) this.starError = `Couldn't unstar ${teamNumber}: ${error.message ?? 'unknown error'}`;
+        },
         // Leads/admins clicking an already-scouted slot go straight to
         // editing that submission (issue #31); everyone else, and unscouted
         // slots, keep the original team-analysis link.
@@ -269,6 +409,7 @@ export default {
     created() {
         this.eventStore = useEventStore();
         this.authStore = useAuthStore();
+        this.watchlistStore = useWatchlistStore();
         this.authStore.checkUser();
         this.loadData();
     }
@@ -338,6 +479,79 @@ export default {
 
 .status-missing {
     background-color: #e05050;
+}
+
+/* A card recorded for a team in a match (issue #123): a small card shape. */
+.card-mark {
+    display: inline-block;
+    width: 9px;
+    height: 13px;
+    border-radius: 2px;
+    flex-shrink: 0;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.card-mark--yellow,
+.card-tag--yellow {
+    background-color: #f5c518;
+    color: #1a1a1a;
+}
+
+.card-mark--red,
+.card-tag--red {
+    background-color: #d32f2f;
+    color: #fff;
+}
+
+.card-tag {
+    display: inline-block;
+    font-size: 0.8em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+/* ── Starred teams ── */
+.star-add {
+    max-width: 320px;
+    margin: 8px 0;
+}
+
+.star-error {
+    color: #d32f2f;
+}
+
+.star-mark {
+    color: #f5c518;
+}
+
+.star-team-name {
+    opacity: 0.7;
+    font-weight: 400;
+}
+
+.starred-table td {
+    white-space: nowrap;
+}
+
+.star-remove {
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    color: rgba(128, 128, 128, 0.8);
+    border-radius: 6px;
+    min-width: 44px;
+    min-height: 44px;
+}
+
+.star-remove:hover {
+    color: #d32f2f;
+    background: rgba(211, 47, 47, 0.12);
 }
 
 .schedule-table-wrap {

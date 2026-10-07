@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // @ts-nocheck
 import type { TeamEntry } from '@/stores/picklist-store';
-import type { TeamTierStats } from '@/lib/picklist-query';
-import { computeBasicStats, computeFlagStats, computeTbaStats } from '@/lib/picklist-stats';
+import type { TeamTierStats, TeamMatchSummary, TeamPitSummary } from '@/lib/picklist-query';
+import { computeBasicStats, computeFlagStats, computeTbaStats, computePitStats, computeInlineStats } from '@/lib/picklist-stats';
 
 defineProps<{
     rowId: string;
@@ -21,6 +21,12 @@ defineProps<{
     expanded: boolean;
     expandedData: { stats: unknown[]; comments: unknown[] } | null;
     expandedLoading: boolean;
+    // Weight and vibe check from pit scouting, and the per-match counts
+    // behind the inline stats (issue #123).
+    pitSummary: TeamPitSummary | null;
+    matchSummary: TeamMatchSummary | null;
+    // Show the stats on the collapsed row, so teams compare at a glance.
+    showInlineStats: boolean;
 }>();
 
 const emit = defineEmits(['toggle-expand', 'toggle-picked', 'toggle-watch']);
@@ -81,6 +87,13 @@ function formatAvgRank(avgRank: number) {
             </div>
         </div>
 
+        <div v-if="showInlineStats && !expanded" class="picklist-inline-stats" @click="emit('toggle-expand')">
+            <span v-for="chip in computeInlineStats(eventId, team.team_number, matchSummary, pitSummary)" :key="chip.label"
+                class="inline-stat" :class="{ 'inline-stat--warn': chip.warn }">
+                <span class="inline-stat-label">{{ chip.label }}</span> {{ chip.value }}
+            </span>
+        </div>
+
         <!-- Expanded detail -->
         <transition name="expand">
             <div v-if="expanded" class="picklist-row-detail">
@@ -100,6 +113,18 @@ function formatAvgRank(avgRank: number) {
                         <div class="picklist-stats-grid">
                             <div v-for="stat in computeTbaStats(eventId, team.team_number)" :key="stat.label"
                                 class="picklist-stat-card">
+                                <div class="stat-label">{{ stat.label }}</div>
+                                <div class="stat-avg">{{ stat.avg }}</div>
+                                <div class="stat-sub">{{ stat.sub }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Weight and vibe check from pit scouting (issue #123) -->
+                    <div class="picklist-detail-section" v-if="computePitStats(pitSummary).length > 0">
+                        <h3 class="picklist-detail-heading">Pit Stats</h3>
+                        <div class="picklist-stats-grid">
+                            <div v-for="stat in computePitStats(pitSummary)" :key="stat.label" class="picklist-stat-card">
                                 <div class="stat-label">{{ stat.label }}</div>
                                 <div class="stat-avg">{{ stat.avg }}</div>
                                 <div class="stat-sub">{{ stat.sub }}</div>
@@ -136,10 +161,11 @@ function formatAvgRank(avgRank: number) {
                                 <div class="comment-meta">
                                     <span class="comment-author">{{ comment.author }}</span>
                                     <span class="comment-source-badge">{{ comment.source }}</span>
-                                    <span class="comment-match" v-if="comment.match_number != null">Match
-                                        {{ comment.match_number }}</span>
+                                    <span class="comment-match" v-if="comment.match_label">{{ comment.match_label }}</span>
+                                    <span v-if="comment.card" class="comment-flag" :class="`comment-flag--${comment.card}`">{{ comment.card === 'red' ? 'Red card' : 'Yellow card' }}</span>
+                                    <span v-if="comment.noShow" class="comment-flag comment-flag--noshow">No show</span>
                                 </div>
-                                <p class="comment-text">{{ comment.comment }}</p>
+                                <p v-if="comment.comment" class="comment-text">{{ comment.comment }}</p>
                             </li>
                         </ul>
                     </div>
@@ -347,6 +373,59 @@ function formatAvgRank(avgRank: number) {
     color: rgba(128, 128, 128, 0.6);
     font-style: italic;
     white-space: nowrap;
+}
+
+/* ── Inline stats (issue #123) ── */
+.picklist-inline-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    padding: 0 14px 10px;
+    cursor: pointer;
+}
+
+.inline-stat {
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(128, 128, 128, 0.12);
+    color: var(--primary-text-color);
+    white-space: nowrap;
+}
+
+.inline-stat-label {
+    font-weight: 500;
+    color: rgba(128, 128, 128, 0.9);
+}
+
+.inline-stat--warn {
+    background: rgba(211, 47, 47, 0.14);
+}
+
+/* Card / no-show tags on a match entry (issue #123). */
+.comment-flag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+.comment-flag--yellow {
+    background: #f5c518;
+    color: #1a1a1a;
+}
+
+.comment-flag--red {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.comment-flag--noshow {
+    background: rgba(128, 128, 128, 0.25);
+    color: var(--primary-text-color);
 }
 
 /* ── Picked checkbox ── */

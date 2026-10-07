@@ -6,7 +6,7 @@ import FormSection from "@greybots/common/components/FormSection.vue";
 import { matchScoutTable } from "@/lib/constants";
 import { buildTeamRowSchema } from "@/lib/2026/match-scouting-form";
 import { validateForm, parseScoutData, updateScoutData, deleteScoutData } from "@/lib/data-submission";
-import { fetchMatchDataById } from "@/lib/picklist-query";
+import { fetchMatchDataById, matchLabel } from "@/lib/picklist-query";
 import { useOfflineQueueStore } from "@/stores/offline-queue-store";
 
 import "@material/web/button/filled-button";
@@ -25,7 +25,7 @@ import "@material/web/button/filled-button";
 
         <template v-else>
             <div class="data-tile match-context">
-                Match {{ matchRow.prematch_match_number }} — Team {{ matchRow.prematch_team_number }}
+                {{ matchLabel(matchRow.prematch_match_number, matchRow.prematch_match_type) }} — Team {{ matchRow.prematch_team_number }}
                 ({{ matchRow.prematch_alliance }})
             </div>
 

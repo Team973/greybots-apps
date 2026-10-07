@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // @ts-nocheck
 import type { TeamEntry } from '@/stores/picklist-store';
-import { computeBasicStats, computeFlagStats } from '@/lib/picklist-stats';
+import type { TeamPitSummary } from '@/lib/picklist-query';
+import { computeBasicStats, computeFlagStats, computePitStats } from '@/lib/picklist-stats';
 
 defineProps<{
     rowId: string;
@@ -11,6 +12,8 @@ defineProps<{
     expanded: boolean;
     expandedData: { stats: unknown[]; comments: unknown[] } | null;
     expandedLoading: boolean;
+    // Weight and vibe check from pit scouting (issue #123).
+    pitSummary: TeamPitSummary | null;
 }>();
 
 const emit = defineEmits(['toggle-watch', 'toggle-expand']);
@@ -61,6 +64,12 @@ const emit = defineEmits(['toggle-watch', 'toggle-expand']);
                 <div class="unranked-card-spinner"></div> Loading data…
             </div>
             <div v-else-if="expandedData" class="unranked-card-detail-content" @click.stop>
+                <div v-if="computePitStats(pitSummary).length > 0" class="unranked-card-stats-grid">
+                    <div v-for="stat in computePitStats(pitSummary)" :key="stat.label" class="unranked-card-stat">
+                        <div class="stat-label">{{ stat.label }}</div>
+                        <div class="stat-avg">{{ stat.avg }}</div>
+                    </div>
+                </div>
                 <div v-if="expandedData.stats.length > 0" class="unranked-card-stats-grid">
                     <div v-for="stat in computeFlagStats(expandedData.stats)" :key="stat.label"
                         class="unranked-card-stat">
@@ -80,8 +89,11 @@ const emit = defineEmits(['toggle-watch', 'toggle-expand']);
                         <div class="comment-meta">
                             <span class="comment-author">{{ comment.author }}</span>
                             <span class="comment-source-badge">{{ comment.source }}</span>
+                            <span v-if="comment.match_label" class="comment-match">{{ comment.match_label }}</span>
+                            <span v-if="comment.card" class="comment-flag" :class="`comment-flag--${comment.card}`">{{ comment.card === 'red' ? 'Red card' : 'Yellow card' }}</span>
+                            <span v-if="comment.noShow" class="comment-flag comment-flag--noshow">No show</span>
                         </div>
-                        <p class="comment-text">{{ comment.comment }}</p>
+                        <p v-if="comment.comment" class="comment-text">{{ comment.comment }}</p>
                     </li>
                 </ul>
             </div>
@@ -372,5 +384,33 @@ const emit = defineEmits(['toggle-watch', 'toggle-expand']);
     color: var(--primary-text-color);
     line-height: 1.5;
     margin: 0;
+}
+/* Card / no-show tags on a match entry (issue #123). */
+.comment-flag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+.comment-flag--yellow {
+    background: #f5c518;
+    color: #1a1a1a;
+}
+
+.comment-flag--red {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.comment-flag--noshow {
+    background: rgba(128, 128, 128, 0.25);
+    color: var(--primary-text-color);
+}
+
+.comment-match {
+    font-size: 11px;
+    color: rgba(128, 128, 128, 0.8);
 }
 </style>

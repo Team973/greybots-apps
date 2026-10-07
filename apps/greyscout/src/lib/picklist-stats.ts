@@ -5,6 +5,48 @@
 
 import { getTeamTbaStats } from '@/lib/tba-cache';
 
+const formatWeight = (weight: number) => `${Number(weight.toFixed(1))} lbs`;
+
+// Weight and vibe check from pit scouting (issue #123), for the expanded
+// view. Empty until the team has been pit scouted.
+export function computePitStats(pit) {
+    if (!pit) return [];
+    const entries = [];
+    if (pit.weight != null) entries.push({ label: 'Weight', avg: formatWeight(pit.weight), sub: 'no bumpers / battery' });
+    if (pit.vibe != null) entries.push({ label: 'Vibe', avg: `${pit.vibe} / 5`, sub: 'pit vibe check' });
+    return entries;
+}
+
+// The stats shown inline on a ranked row when the pick list's "Show stats"
+// switch is on (issue #123), so teams can be compared without expanding
+// each one. `summary` is a TeamMatchSummary, `pit` a TeamPitSummary; both
+// can be missing. `warn` marks a figure worth a second look.
+export function computeInlineStats(eventId: string, teamNumber: number, summary, pit) {
+    const chips = [];
+    const tba = getTeamTbaStats(eventId, teamNumber);
+    if (tba?.opr != null) chips.push({ label: 'OPR', value: tba.opr.toFixed(1) });
+    if (tba?.dpr != null) chips.push({ label: 'DPR', value: tba.dpr.toFixed(1) });
+
+    if (summary?.matches) {
+        const pct = (count: number) => Math.round((count / summary.matches) * 100);
+        chips.push({ label: 'Matches', value: String(summary.matches) });
+        chips.push({ label: 'Def', value: `${pct(summary.defenseCount)}%` });
+        [
+            ['Auto fail', summary.autoFailCount],
+            ['Break', summary.brokeCount],
+            ['Die', summary.diedCount],
+            ['Beach', summary.beachedCount]
+        ].forEach(([label, count]) => chips.push({ label, value: `${pct(count)}%`, warn: count > 0 }));
+        if (summary.noShowCount) chips.push({ label: 'No show', value: String(summary.noShowCount), warn: true });
+    } else {
+        chips.push({ label: 'Matches', value: '0' });
+    }
+
+    if (pit?.weight != null) chips.push({ label: 'Weight', value: formatWeight(pit.weight) });
+    if (pit?.vibe != null) chips.push({ label: 'Vibe', value: `${pit.vibe}/5`, warn: pit.vibe <= 2 });
+    return chips;
+}
+
 export function computeBasicStats(matchData: unknown[]) {
     if (!matchData.length) return [];
 

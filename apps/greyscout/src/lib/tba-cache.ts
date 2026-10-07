@@ -5,8 +5,8 @@
 // TBA's oprs endpoint returns every team at an event in one call, so this
 // caches per-event rather than per-team to actually minimize TBA requests.
 
-import { tbaStatsCacheKey } from '@/lib/constants';
-import { fetchEventOprDpr } from '@/lib/tba-query';
+import { tbaStatsCacheKey, tbaRankingsCacheKey } from '@/lib/constants';
+import { fetchEventOprDpr, fetchEventRankings } from '@/lib/tba-query';
 
 function loadCache() {
     try {
@@ -50,4 +50,35 @@ export async function refreshTbaStats(eventId) {
     const { oprs, dprs } = await fetchEventOprDpr(eventId);
     setCachedTbaStats(eventId, { oprs, dprs });
     return { oprs, dprs };
+}
+
+// ── Rankings (issue #123) ──
+// Kept under their own key: setCachedTbaStats replaces an event's whole
+// OPR/DPR entry, which would drop rankings stored alongside it.
+
+function loadRankingsCache() {
+    try {
+        const raw = localStorage.getItem(tbaRankingsCacheKey);
+        return raw ? JSON.parse(raw) : {};
+    } catch {
+        return {};
+    }
+}
+
+// { fetchedAt, ranks: { [teamNumber]: rank } }, or null if never fetched.
+export function getCachedTbaRankings(eventId) {
+    return loadRankingsCache()[eventId] ?? null;
+}
+
+export async function refreshTbaRankings(eventId) {
+    const ranks = await fetchEventRankings(eventId);
+    const entry = { fetchedAt: Date.now(), ranks };
+    const cache = loadRankingsCache();
+    cache[eventId] = entry;
+    try {
+        localStorage.setItem(tbaRankingsCacheKey, JSON.stringify(cache));
+    } catch (e) {
+        console.warn('Failed to persist TBA rankings cache:', e);
+    }
+    return entry;
 }

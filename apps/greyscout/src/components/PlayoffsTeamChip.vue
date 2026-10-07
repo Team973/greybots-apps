@@ -13,7 +13,16 @@ defineProps<{
     // parent's draggable uses handle=".team-chip-handle"), so swiping
     // anywhere else on the chip still scrolls the page on touch screens.
     draggable?: boolean;
+    // A short label in the corner of a pool tile: the team's rank in
+    // whatever the pool is ordered by (issue #123).
+    badge?: string;
+    // Marks a team in line to be an alliance captain.
+    captain?: boolean;
+    // Shows a remove button, for entering alliances without dragging.
+    removable?: boolean;
 }>();
+
+const emit = defineEmits(['remove']);
 
 // Keep this template to a single root node: a comment (or second element)
 // before the root compiles to a fragment, which breaks vuedraggable — it
@@ -21,7 +30,7 @@ defineProps<{
 </script>
 
 <template>
-    <div class="team-chip" :class="`team-chip--${variant}`"
+    <div class="team-chip" :class="[`team-chip--${variant}`, { 'team-chip--captain': captain }]"
         :title="team?.name ? `${teamNumber} — ${team.name}` : String(teamNumber)">
         <div class="team-chip-photo">
             <img v-if="team?.photo_url" :src="team.photo_url" :alt="`Team ${teamNumber} robot`" loading="lazy"
@@ -29,7 +38,10 @@ defineProps<{
             <span v-else class="team-chip-placeholder">🤖</span>
         </div>
         <div class="team-chip-number">{{ teamNumber }}</div>
+        <div v-if="badge" class="team-chip-badge">{{ badge }}</div>
         <div v-if="draggable" class="team-chip-handle" title="Drag to move" @contextmenu.prevent>⠿</div>
+        <button v-if="removable" type="button" class="team-chip-remove" :title="`Remove ${teamNumber}`"
+            :aria-label="`Remove team ${teamNumber}`" @click="emit('remove')">✕</button>
     </div>
 </template>
 
@@ -75,6 +87,45 @@ defineProps<{
     line-height: 1;
     cursor: grab;
     touch-action: none;
+}
+
+/* Rank in the pool's current order (issue #123). */
+.team-chip-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.team-chip--captain {
+    box-shadow: 0 0 0 2px #b05703;
+}
+
+.team-chip--captain .team-chip-badge {
+    background: #b05703;
+}
+
+.team-chip-remove {
+    align-self: stretch;
+    width: 36px;
+    flex-shrink: 0;
+    border: none;
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.team-chip-remove:hover {
+    background: rgba(211, 47, 47, 0.2);
+    color: #d32f2f;
 }
 
 /* ── Alliance slot: photo thumbnail + number in one row, handle on the right ── */
