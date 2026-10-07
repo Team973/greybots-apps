@@ -32,6 +32,26 @@ export async function refreshEventSchedule(eventId) {
     return { matchCount: data?.matchCount ?? 0, error: null };
 }
 
+// The event's current qualification rankings, as team number -> rank
+// (1 = first). Empty until TBA has rankings for the event.
+export async function fetchEventRankings(eventId) {
+    const { data, error } = await supabase.functions.invoke(tbaProxyFunction, {
+        body: { action: 'get_rankings', event_id: eventId }
+    });
+
+    if (error || data?.error) {
+        throw new Error(await describeFunctionError(error, data));
+    }
+
+    const ranks = {};
+    (data?.rankings ?? []).forEach((row) => {
+        const teamNumber = Number(row.team_number);
+        const rank = Number(row.rank);
+        if (Number.isFinite(teamNumber) && Number.isFinite(rank)) ranks[teamNumber] = rank;
+    });
+    return ranks;
+}
+
 export async function fetchEventOprDpr(eventId) {
     const { data, error } = await supabase.functions.invoke(tbaProxyFunction, {
         body: { action: 'get_oprs', event_id: eventId }

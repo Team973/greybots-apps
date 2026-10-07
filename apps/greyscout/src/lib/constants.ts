@@ -19,6 +19,7 @@ export const autoPathTable = "AutoPath";
 export const strategyBoardTable = "StrategyBoard";
 export const watchlistTable = "Watchlist";
 export const playoffsTable = "Playoffs";
+export const playoffsPredictionTable = "PlayoffsPrediction";
 export const scoutAssignmentTable = "ScoutAssignment";
 
 // Picklist types
@@ -42,10 +43,21 @@ export const offlineQueueKey = "greyscout_offline_queue";
 // TBA integration
 export const tbaProxyFunction = "tba-proxy";
 export const tbaStatsCacheKey = "greyscout_tba_stats_cache";
+export const tbaRankingsCacheKey = "greyscout_tba_rankings_cache";
 
 // Database columns
 export const teamNumberColumn = "prematch_team_number";
 export const matchNumberColumn = "prematch_match_number";
+
+// Match types a scouting entry can be for (MatchData.prematch_match_type).
+// Practice and playoff matches reuse qualification match numbers, so the
+// type is what tells them apart.
+export const matchTypes = [
+    { key: "practice", text: "Practice" },
+    { key: "qual", text: "Qualification" },
+    { key: "playoff", text: "Playoff" }
+];
+export const defaultMatchType = "qual";
 
 // Storage buckets
 export const robotPhotoBucket = "robot-photos";
@@ -54,9 +66,9 @@ export const robotPhotoBucket = "robot-photos";
 export const defaultTeamNumber = 973;
 
 // Event information.
-export const defaultEventId = "2026catt";
+export const defaultEventId = "2026cc";
 // Flag to force override to the default event. Useful if you are playing two tournaments on the same day.
-export const useDefaultEvent = false;
+export const useDefaultEvent = true;
 
 
 // View mode options.

@@ -9,6 +9,7 @@ import { supabase } from "@greybots/common/supabase/client";
 import { useAuthStore } from "@/stores/auth-store";
 import { useEventStore } from "@/stores/event-store";
 import { refreshEventSchedule } from "@/lib/tba-query";
+import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/preferences";
 </script>
 
 <template>
@@ -27,6 +28,18 @@ import { refreshEventSchedule } from "@/lib/tba-query";
             </md-filled-button>
             <p v-if="eventRefreshMessage" class="event-refresh-message">{{ eventRefreshMessage }}</p>
             <p v-if="eventRefreshError" class="form-error">{{ eventRefreshError }}</p>
+        </div>
+
+        <div class="user-tile">
+            <h1>Preferences</h1>
+            <p>Remembered on this device.</p>
+            <label class="preference">
+                <span>Enter alliance teams on the Playoffs page by</span>
+                <select id="pref-alliance-entry" class="preference-select" :value="preferences.allianceEntry"
+                    @change="setAllianceEntry($event.target.value)">
+                    <option v-for="choice in allianceEntryChoices" :key="choice.key" :value="choice.key">{{ choice.text }}</option>
+                </select>
+            </label>
         </div>
 
         <div class="user-tile">
@@ -51,6 +64,8 @@ export default {
             eventRefreshing: false,
             eventRefreshMessage: "",
             eventRefreshError: "",
+            preferences: loadPreferences(),
+            allianceEntryChoices,
         }
     },
     methods: {
@@ -68,6 +83,9 @@ export default {
             }
 
             this.eventRefreshing = false;
+        },
+        setAllianceEntry(value) {
+            this.preferences = savePreferences({ allianceEntry: value });
         },
         async logOutUser() {
             const { error } = await supabase.auth.signOut();
@@ -93,6 +111,23 @@ export default {
 <style scoped>
 .user-tile {
     margin-bottom: 20px;
+}
+
+.preference {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.preference-select {
+    padding: 8px 10px;
+    min-height: 40px;
+    border-radius: 8px;
+    border: 1.5px solid rgba(128, 128, 128, 0.35);
+    background: var(--tile-background-color);
+    color: var(--primary-text-color);
+    font: inherit;
 }
 
 .form-error {

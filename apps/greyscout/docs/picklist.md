@@ -125,6 +125,12 @@ Tap or click any team row to expand it. The expanded view shows:
 - Aggregated match stats (averages and max values from scouting data)
 - All scout comments from both match scouting and pit scouting, each attributed to the scout who wrote it
 
+Pit scouting's **weight** and **vibe check** show under **Pit Stats**, and a match entry with a red/yellow card or a no-show is tagged in the comments (and listed even if the scout left no comment).
+
+### Stats on each team ([issue #123](https://github.com/Team973/greybots-apps/issues/123))
+
+**Show stats on each team** (under the page header) puts each ranked team's numbers on its collapsed row, so teams can be compared without expanding them one at a time: OPR/DPR (once TBA stats have been refreshed), matches scouted, defense / auto fail / break / die / beach percentages, no-shows, weight, and vibe. Figures worth a second look (any breakdown, a no-show, a vibe of 2 or less) are tinted red. The switch is remembered on the device.
+
 ### Saving
 
 Click the **Save List** button at the top-right of the list. If you are offline, the save is enqueued locally (see [Offline Behaviour](#offline-behaviour)).

@@ -6,6 +6,9 @@
 // Actions (POST body: { action, event_id, team_number? }):
 //   - get_oprs: any authenticated user. Passes through TBA's
 //     /event/{event_id}/oprs response verbatim (no DB write).
+//   - get_rankings: any authenticated user. The event's current
+//     qualification rankings from TBA's /event/{event_id}/rankings, trimmed
+//     to [{ team_number, rank }] (no DB write). Empty before rankings exist.
 //   - get_team_schedule: any authenticated user. Returns the event's
 //     name/dates/timezone and team_number's matches at the event, including
 //     scheduled/predicted/actual times (no DB write). Used by Preflight's
@@ -92,6 +95,22 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: `TBA request failed: ${response.status}` }, 502);
     }
     return jsonResponse(await response.json());
+  }
+
+  if (action === "get_rankings") {
+    const response = await tbaFetch(`/event/${eventId}/rankings`, tbaApiKey);
+    if (!response.ok) {
+      return jsonResponse({ error: `TBA request failed: ${response.status}` }, 502);
+    }
+    // TBA answers null (or an empty list) until the event has rankings.
+    const data = await response.json();
+    const rankings = (Array.isArray(data?.rankings) ? data.rankings : [])
+      .map((row: { team_key?: string; rank?: number }) => ({
+        team_number: teamNumberFromKey(row.team_key),
+        rank: row.rank,
+      }))
+      .filter((row: { team_number: number | null; rank?: number }) => row.team_number !== null && Number.isFinite(row.rank));
+    return jsonResponse({ rankings });
   }
 
   if (action === "get_team_schedule") {

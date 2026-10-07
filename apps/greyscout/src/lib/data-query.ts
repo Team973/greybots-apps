@@ -27,6 +27,16 @@ export async function queryMatchTeams(eventId, matchNumber) {
     return data.length > 0 ? data[0] : null;
 }
 
+// The teams in the Nth playoff match of an event (1 = the first playoff
+// match, counting through the bracket and then the finals), or null if the
+// playoff schedule hasn't been synced that far. Playoff match numbers on
+// the scouting form are this running count (issue #123).
+export async function queryPlayoffMatchTeams(eventId, playoffNumber) {
+    const schedule = await queryEventMatchSchedule(eventId);
+    const playoffs = schedule.filter((match) => match.comp_level !== QUALIFICATION_COMP_LEVEL);
+    return playoffs[playoffNumber - 1] ?? null;
+}
+
 // Ordering for comp levels within a schedule: qualifications first, then
 // playoffs in bracket order.
 const COMP_LEVEL_RANK = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };

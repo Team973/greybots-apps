@@ -275,6 +275,9 @@ async function refreshDemocratic() {
 // Read-only pull (no DB write), so available to everyone, not just leads.
 
 const isRefreshingTbaStats = ref(false);
+// Bumped after a refresh: the stats come from localStorage, which isn't
+// reactive, so the rows are re-keyed on this to pick up the new numbers.
+const tbaStatsVersion = ref(0);
 const tbaStatsError = ref('');
 
 async function refreshTbaStatsForEvent() {
@@ -282,6 +285,7 @@ async function refreshTbaStatsForEvent() {
     tbaStatsError.value = '';
     try {
         await refreshTbaStats(eventId.value);
+        tbaStatsVersion.value += 1;
     } catch (e) {
         tbaStatsError.value = e.message ?? String(e);
     }
@@ -368,6 +372,31 @@ function groupRankOffset(group: string) {
     return offset;
 }
 
+// ─── Inline stats (issue #123) ─────────────────────────────────────────────────
+// Shows each ranked team's stats on its collapsed row, so teams can be
+// compared at a glance instead of expanding them one at a time. Remembered
+// per device.
+const inlineStatsKey = 'greyscout_picklist_inline_stats';
+
+function loadInlineStatsPreference() {
+    try {
+        return localStorage.getItem(inlineStatsKey) === '1';
+    } catch {
+        return false;
+    }
+}
+
+const showInlineStats = ref(loadInlineStatsPreference());
+
+function toggleInlineStats() {
+    showInlineStats.value = !showInlineStats.value;
+    try {
+        localStorage.setItem(inlineStatsKey, showInlineStats.value ? '1' : '0');
+    } catch {
+        // Private browsing or blocked storage: the switch still works for this visit.
+    }
+}
+
 // ─── Collapsible tier sections ─────────────────────────────────────────────────
 // Collapsing tiers you're not actively sorting shortens the page, which makes
 // dragging a team from "Unranked" into a tier near the top much less of a
@@ -421,22 +450,29 @@ function toggleTierCollapse(group: string) {
                 </button>
             </div>
 
-            <!-- Tab bar -->
-            <div class="picklist-tabs" role="tablist">
-                <button id="tab-personal" class="picklist-tab" :class="{ 'picklist-tab--active': activeTab === 'personal' }"
-                    role="tab" :aria-selected="activeTab === 'personal'" @click="activeTab = 'personal'">
-                    My List
-                </button>
-                <button v-if="isLead" id="tab-democratic" class="picklist-tab"
-                    :class="{ 'picklist-tab--active': activeTab === 'democratic' }" role="tab"
-                    :aria-selected="activeTab === 'democratic'" @click="activeTab = 'democratic'">
-                    Democratic
-                </button>
-                <button v-if="isLead" id="tab-team" class="picklist-tab"
-                    :class="{ 'picklist-tab--active': activeTab === 'team' }" role="tab"
-                    :aria-selected="activeTab === 'team'" @click="activeTab = 'team'">
-                    Team List
-                </button>
+            <!-- Tab bar, with the inline stats toggle on its right -->
+            <div class="picklist-tab-bar">
+                <div class="picklist-tabs" role="tablist">
+                    <button id="tab-personal" class="picklist-tab" :class="{ 'picklist-tab--active': activeTab === 'personal' }"
+                        role="tab" :aria-selected="activeTab === 'personal'" @click="activeTab = 'personal'">
+                        My List
+                    </button>
+                    <button v-if="isLead" id="tab-democratic" class="picklist-tab"
+                        :class="{ 'picklist-tab--active': activeTab === 'democratic' }" role="tab"
+                        :aria-selected="activeTab === 'democratic'" @click="activeTab = 'democratic'">
+                        Democratic
+                    </button>
+                    <button v-if="isLead" id="tab-team" class="picklist-tab"
+                        :class="{ 'picklist-tab--active': activeTab === 'team' }" role="tab"
+                        :aria-selected="activeTab === 'team'" @click="activeTab = 'team'">
+                        Team List
+                    </button>
+                </div>
+                <label class="picklist-inline-toggle" title="Show each ranked team's stats on its row, without expanding it">
+                    <input id="toggle-inline-stats" type="checkbox" role="switch" :checked="showInlineStats"
+                        @change="toggleInlineStats" />
+                    Show stats on each team
+                </label>
             </div>
 
             <!-- Admin scout filter (issue #56) — pull up a read-only view of one
@@ -568,7 +604,7 @@ function toggleTierCollapse(group: string) {
                 <!-- Tier-grouped sections: ranked tiers on the left, the
                      Unranked pool (bigger grid squares — photo/number/watch
                      only) on the right on desktop, stacked below on mobile. -->
-                <div v-else class="picklist-columns">
+                <div v-else class="picklist-columns" :key="tbaStatsVersion">
                     <div class="tier-sections-ranked">
                         <div v-for="group in TIERS" :key="group" class="tier-section">
                             <div class="tier-section-header" :class="`tier-section-header--${group}`"
@@ -593,7 +629,7 @@ function toggleTierCollapse(group: string) {
                                         :can-toggle-picked="isLead && !picklistStore.viewingPastEventId" :card-status="picklistStore.activeCardStatusFor(teamNumber)"
                                         :watched="watchlistStore.isWatched(teamNumber)"
                                         :can-toggle-watch="isLead && !picklistStore.viewingPastEventId" :expanded="expandedTeam === teamNumber"
-                                        :expanded-data="expandedData" :expanded-loading="expandedLoading"
+                                        :expanded-data="expandedData" :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(teamNumber)" :match-summary="picklistStore.activeMatchSummaryFor(teamNumber)" :show-inline-stats="showInlineStats"
                                         @toggle-expand="toggleExpand(teamNumber)" @toggle-picked="togglePicked(teamNumber)"
                                         @toggle-watch="toggleWatch(teamNumber)" />
                                 </template>
@@ -610,7 +646,7 @@ function toggleTierCollapse(group: string) {
                                     :can-toggle-picked="isLead && !picklistStore.viewingPastEventId" :card-status="picklistStore.activeCardStatusFor(teamNumber)"
                                     :watched="watchlistStore.isWatched(teamNumber)"
                                     :can-toggle-watch="isLead && !picklistStore.viewingPastEventId" :expanded="expandedTeam === teamNumber"
-                                    :expanded-data="expandedData" :expanded-loading="expandedLoading"
+                                    :expanded-data="expandedData" :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(teamNumber)" :match-summary="picklistStore.activeMatchSummaryFor(teamNumber)" :show-inline-stats="showInlineStats"
                                     @toggle-expand="toggleExpand(teamNumber)" @toggle-picked="togglePicked(teamNumber)"
                                     @toggle-watch="toggleWatch(teamNumber)" />
                             </div>
@@ -646,7 +682,7 @@ function toggleTierCollapse(group: string) {
                                 <PicklistUnrankedCard :row-id="`picklist-unranked-${teamNumber}`" :team="picklistStore.activeTeamMap[teamNumber]"
                                     :watched="watchlistStore.isWatched(teamNumber)" :can-toggle-watch="isLead && !picklistStore.viewingPastEventId"
                                     :expanded="expandedTeam === teamNumber" :expanded-data="expandedData"
-                                    :expanded-loading="expandedLoading" @toggle-expand="toggleExpand(teamNumber)"
+                                    :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(teamNumber)" @toggle-expand="toggleExpand(teamNumber)"
                                     @toggle-watch="toggleWatch(teamNumber)" />
                             </template>
                         </draggable>
@@ -657,7 +693,7 @@ function toggleTierCollapse(group: string) {
                                 :row-id="`picklist-unranked-demo-${teamNumber}`" :team="picklistStore.activeTeamMap[teamNumber]"
                                 :watched="watchlistStore.isWatched(teamNumber)" :can-toggle-watch="isLead && !picklistStore.viewingPastEventId"
                                 :expanded="expandedTeam === teamNumber" :expanded-data="expandedData"
-                                :expanded-loading="expandedLoading" @toggle-expand="toggleExpand(teamNumber)"
+                                :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(teamNumber)" @toggle-expand="toggleExpand(teamNumber)"
                                 @toggle-watch="toggleWatch(teamNumber)" />
                         </div>
 
@@ -703,6 +739,26 @@ function toggleTierCollapse(group: string) {
     margin-left: auto;
 }
 
+.picklist-inline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    padding: 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    user-select: none;
+}
+
+.picklist-inline-toggle input {
+    width: 18px;
+    height: 18px;
+    accent-color: #b05703;
+    cursor: pointer;
+}
+
 .picklist-tba-error {
     color: #d32f2f;
     font-size: 13px;
@@ -738,11 +794,18 @@ function toggleTierCollapse(group: string) {
     color: #fff;
 }
 
+.picklist-tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    border-bottom: 2px solid rgba(128, 128, 128, 0.2);
+    margin-bottom: 4px;
+}
+
 .picklist-tabs {
     display: flex;
     gap: 4px;
-    border-bottom: 2px solid rgba(128, 128, 128, 0.2);
-    margin-bottom: 4px;
 }
 
 .picklist-tab {

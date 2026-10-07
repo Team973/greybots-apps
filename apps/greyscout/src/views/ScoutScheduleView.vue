@@ -160,9 +160,13 @@ export default {
         qualMatches() {
             return this.schedule.filter((m) => m.comp_level === 'qm');
         },
+        // Members and leads scout; observers can't, and admins aren't offered
+        // (issue #123). Someone already assigned at this event stays in the
+        // list whatever their role, so their existing slots still show.
         assignableUsers() {
+            const assigned = new Set(Object.values(this.assignedScoutByKey));
             return this.people
-                .filter((person) => ['member', 'lead', 'admin'].includes(person.role))
+                .filter((person) => ['member', 'lead'].includes(person.role) || assigned.has(person.user_id))
                 .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         },
         // Includes the "Unassigned" option as a real choice (key '', matching

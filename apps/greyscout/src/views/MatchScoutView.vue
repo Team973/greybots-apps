@@ -5,10 +5,10 @@ import Dropdown from "@greybots/common/components/Dropdown.vue";
 import NumberInput from "@greybots/common/components/Number.vue";
 import Switch from "@greybots/common/components/Switch.vue";
 
-import { matchScoutTable } from "@/lib/constants";
+import { matchScoutTable, matchTypes, defaultMatchType } from "@/lib/constants";
 import { buildTeamRowSchema } from "@/lib/2026/match-scouting-form";
 import { validateForm, parseScoutData, submitScoutData, getTeamInputElement } from "@/lib/data-submission";
-import { queryMatchTeams } from "@/lib/data-query";
+import { queryMatchTeams, queryPlayoffMatchTeams } from "@/lib/data-query";
 import { useEventStore } from "@/stores/event-store";
 import { useOfflineQueueStore } from "@/stores/offline-queue-store";
 import { useWatchlistStore } from "@/stores/watchlist-store";
@@ -21,19 +21,29 @@ import "@material/web/button/filled-button";
         <h1>Match Scouting</h1>
 
         <div v-if="formLoaded" class="data-tile">
+            <div class="match-type-toggle" role="radiogroup" aria-label="Match type">
+                <button v-for="type in matchTypes" :key="type.key" type="button" class="match-type-option"
+                    :class="{ 'match-type-option--active': matchType === type.key }" role="radio"
+                    :aria-checked="matchType === type.key" @click="onMatchTypeChange(type.key)">
+                    {{ type.text }}
+                </button>
+            </div>
             <div class="match-controls">
                 <div class="match-control">
-                    Match Number:
+                    {{ matchNumberLabel }}:
                     <NumberInput :model-value="matchNumber" @update:modelValue="onMatchNumberChange" label="">
                     </NumberInput>
                 </div>
-                <div class="match-control">
+                <div v-if="matchType !== 'practice'" class="match-control">
                     Manual Team Entry:
                     <Switch :model-value="manualEntry" @update:modelValue="onManualEntryChange"></Switch>
                 </div>
             </div>
-            <p v-if="scheduleLookupFailed && !manualEntry">No qualification schedule found for that match — assign
-                teams manually below.</p>
+            <p v-if="matchType === 'practice'">Practice matches have no schedule — assign teams below.</p>
+            <p v-else-if="scheduleLookupFailed && !manualEntry">No {{ matchType === 'playoff' ? 'playoff' : 'qualification' }}
+                schedule found for that match — assign teams manually below.</p>
+            <p v-if="matchType === 'playoff'" class="match-type-hint">Playoff matches are numbered in the order they're
+                played: 1 is the first playoff match, and the finals carry on from the bracket.</p>
         </div>
 
         <div v-if="formLoaded && showManualPicker" class="data-tile manual-assign-tile">
@@ -107,6 +117,9 @@ export default {
             watchlistStore: null,
             formLoaded: false,
             matchNumber: null,
+            // Practice / qualification / playoff (issue #123).
+            matchTypes,
+            matchType: defaultMatchType,
             manualEntry: false,
             scheduleLookupFailed: false,
             allTeamChoices: [],
@@ -185,18 +198,24 @@ export default {
             this.resetSuccess = false;
             this.formInvalid = false;
 
-            const syncKey = `${this.matchNumber}|${this.manualEntry}`;
+            const syncKey = `${this.matchType}|${this.matchNumber}|${this.manualEntry}`;
             if (syncKey === this.lastMatchSyncKey) return;
             this.lastMatchSyncKey = syncKey;
 
-            if (this.manualEntry || !this.matchNumber) {
+            // Practice matches aren't on any schedule, so their teams are
+            // always entered by hand.
+            if (this.manualEntry || !this.matchNumber || this.matchType === 'practice') {
                 this.scheduleLookupFailed = false;
                 this.slots.forEach((_, idx) => this.setSlotTeam(idx, null));
                 this.manualTeamIndices = [0, 0, 0, 0, 0, 0];
                 return;
             }
 
-            const matchTeams = await queryMatchTeams(this.eventStore.eventId, Number(this.matchNumber));
+            const matchTeams = this.matchType === 'playoff'
+                ? await queryPlayoffMatchTeams(this.eventStore.eventId, Number(this.matchNumber))
+                : await queryMatchTeams(this.eventStore.eventId, Number(this.matchNumber));
+            // The scout moved on (another match or type) while this was loading.
+            if (syncKey !== this.lastMatchSyncKey) return;
             if (matchTeams) {
                 this.scheduleLookupFailed = false;
                 SLOT_DEFS.forEach((def, idx) => this.setSlotTeam(idx, matchTeams[def.key] ?? null));
@@ -208,6 +227,11 @@ export default {
         },
         onMatchNumberChange(value) {
             this.matchNumber = value;
+            this.syncMatchTeams();
+        },
+        onMatchTypeChange(value) {
+            if (this.matchType === value) return;
+            this.matchType = value;
             this.syncMatchTeams();
         },
         onManualEntryChange(value) {
@@ -255,6 +279,9 @@ export default {
                 dbData.prematch_team_number = slot.teamNumber;
                 dbData.prematch_match_number = this.matchNumber;
                 dbData.prematch_alliance = slot.allianceColor === 'blue' ? 'Blue' : 'Red';
+                // Qualification is the column's default, so it's only sent
+                // for the other types.
+                if (this.matchType !== defaultMatchType) dbData.prematch_match_type = this.matchType;
 
                 const error = await submitScoutData(dbData, matchScoutTable);
 
@@ -287,7 +314,12 @@ export default {
     },
     computed: {
         showManualPicker() {
-            return this.manualEntry || this.scheduleLookupFailed;
+            return this.manualEntry || this.scheduleLookupFailed || this.matchType === 'practice';
+        },
+        matchNumberLabel() {
+            if (this.matchType === 'practice') return 'Practice Match Number';
+            if (this.matchType === 'playoff') return 'Playoff Match Number';
+            return 'Match Number';
         },
         hasDirtyIncludedRow() {
             return this.rows.some((row) => row.dirty && row.included);
@@ -335,6 +367,40 @@ p {
 .notification-tile {
     background-color: rgb(88, 88, 232);
     color: white
+}
+
+/* Practice / Qualification / Playoff (issue #123). */
+.match-type-toggle {
+    display: inline-flex;
+    margin-bottom: 14px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1.5px solid rgba(128, 128, 128, 0.35);
+}
+
+.match-type-option {
+    background: transparent;
+    border: none;
+    padding: 10px 16px;
+    min-height: 44px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.match-type-option + .match-type-option {
+    border-left: 1.5px solid rgba(128, 128, 128, 0.35);
+}
+
+.match-type-option--active {
+    background: #b05703;
+    color: #fff;
+}
+
+.match-type-hint {
+    font-size: 0.85em;
+    opacity: 0.75;
 }
 
 .match-controls {
