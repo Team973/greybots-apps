@@ -208,8 +208,9 @@ async function wipe() {
       <h2>Wipe this event's data</h2>
       <p class="hint">
         Once the report and the data are saved, the event's data can be removed for good, from the server and from every device: the schedule,
-        status history, checklists, repairs, tasks, and notes ({{ plural(recordCount, 'record') }}). Batteries, pit setup, and settings are
-        kept. This can't be undone.
+        status history, checklist history (the steps checked off and the runs started), repairs, tasks, and notes
+        ({{ plural(recordCount, 'record') }}). The checklists themselves, the rest of the pit setup, batteries, and settings are kept. This can't
+        be undone.
       </p>
       <p v-if="wipedMessage" class="success-text">{{ wipedMessage }}</p>
 

@@ -555,9 +555,12 @@ The report can be pulled at any time during the event too.
   repairs, and notes), then records the wipe in the `event_wipes` setting.
   Every device applies that setting right after pulling settings and before
   pushing anything else (`src/lib/sync/wipes.ts`): it drops its own rows for
-  the event from before the wipe, unpushed edits included. Batteries (and
-  their uses and measurements), pit setup, settings, and the timer belong to
-  the team and are kept. It needs a connection and an admin server account
+  the event from before the wipe, unpushed edits included. Only checklist
+  *history* goes (checked steps and runs): the checklist templates are shared
+  settings (`pit_roles`, `checklist_sequence`, `adhoc_checklists`, and the
+  flow checklists), which no wipe touches. Batteries (and their uses and
+  measurements), pit setup, settings, and the timer belong to the team and
+  are kept. It needs a connection and an admin server account
   (on a kiosk, the linked account).
 - Diagnostics data will join the robot performance section with the
   diagnostics integration (#103), and the outstanding items are meant to feed
