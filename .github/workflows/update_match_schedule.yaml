@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       event_id:
-        description: 'TBA event key to refresh the schedule for, e.g. 2026cc'
+        description: 'TBA event key to refresh the schedule for, e.g. 2026catt'
         required: true
-        default: '2026cc'
+        default: '2026catt'
 
 jobs:
   load_match_schedule:
