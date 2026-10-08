@@ -8,7 +8,7 @@ import { supabase } from "@greybots/common/supabase/client";
 
 import { useAuthStore } from "@/stores/auth-store";
 import { useEventStore } from "@/stores/event-store";
-import { refreshEventSchedule } from "@/lib/tba-query";
+import { refreshEventData } from "@/lib/tba-query";
 import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/preferences";
 </script>
 
@@ -23,11 +23,14 @@ import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/pr
         <div class="user-tile" v-if="authStore.isLead">
             <h1>Event Management</h1>
             <div>Current event: {{ eventStore.eventName || eventStore.eventId }}</div>
+            <p class="event-refresh-hint">Pulls the team list and match schedule from The Blue Alliance. A team that
+                has dropped out of the event is removed from the app.</p>
             <md-filled-button v-on:click="refreshEventData" :disabled="eventRefreshing" class="load-button">
                 {{ eventRefreshing ? 'Refreshing…' : 'Refresh Event Data' }}
             </md-filled-button>
             <p v-if="eventRefreshMessage" class="event-refresh-message">{{ eventRefreshMessage }}</p>
             <p v-if="eventRefreshError" class="form-error">{{ eventRefreshError }}</p>
+            <md-filled-button v-on:click="$router.push('/event-teams')" class="load-button">Event teams</md-filled-button>
         </div>
 
         <div class="user-tile">
@@ -74,12 +77,16 @@ export default {
             this.eventRefreshMessage = "";
             this.eventRefreshError = "";
 
-            const { matchCount, error } = await refreshEventSchedule(this.eventStore.eventId);
+            const { teamCount, removedTeams, matchCount, error } = await refreshEventData(this.eventStore.eventId);
 
             if (error) {
                 this.eventRefreshError = error.message;
             } else {
-                this.eventRefreshMessage = `Match schedule refreshed — ${matchCount} matches.`;
+                const teams = teamCount > 0
+                    ? `${teamCount} team${teamCount === 1 ? '' : 's'}`
+                    : "TBA has no team list yet, so the teams weren't changed";
+                const removed = removedTeams.length > 0 ? ` Removed (no longer at the event): ${removedTeams.join(', ')}.` : '';
+                this.eventRefreshMessage = `Event refreshed — ${teams}; ${matchCount} match${matchCount === 1 ? '' : 'es'}.${removed}`;
             }
 
             this.eventRefreshing = false;
@@ -132,6 +139,11 @@ export default {
 
 .form-error {
     color: #c0392b;
+}
+
+.event-refresh-hint {
+    font-size: 13px;
+    opacity: 0.8;
 }
 
 .event-refresh-message {

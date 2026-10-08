@@ -18,6 +18,7 @@ import LoginView from "@/views/LoginView.vue";
 import RegisterView from "@/views/RegisterView.vue";
 import ResetPasswordView from "@/views/ResetPasswordView.vue";
 import AccountView from "@/views/AccountView.vue";
+import EventTeamsView from "@/views/EventTeamsView.vue";
 import PendingView from "@/views/PendingView.vue";
 import UserManagementView from "@/views/UserManagementView.vue";
 import PicklistView from "@/views/PicklistView.vue";
@@ -149,6 +150,16 @@ const router = createRouter({
       path: "/reset-password",
       name: "Reset Password | GreyScout",
       component: ResetPasswordView,
+    },
+    {
+      // The event's team list, and adding custom teams (issue #127).
+      path: "/event-teams",
+      name: "Event Teams | GreyScout",
+      component: EventTeamsView,
+      meta: {
+        requiresAuth: true,
+        minRole: 'lead'
+      }
     },
     {
       path: "/account",

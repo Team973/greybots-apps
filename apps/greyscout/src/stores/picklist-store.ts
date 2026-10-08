@@ -71,7 +71,13 @@ function buildTierSections(
 ): Record<TierGroup, number[]> {
     const groups = emptyTierSections();
     const seen = new Set<number>();
-    const orderSource = teamNumbers.length ? teamNumbers : allTeams.map((t) => t.team_number);
+    // A saved list can still name a team that has since dropped out of the
+    // event (issue #127): only teams at the event are shown. If the team
+    // list itself didn't load, nothing is dropped, so a save can't wipe the
+    // list.
+    const atEvent = new Set(allTeams.map((t) => t.team_number));
+    const saved = atEvent.size ? teamNumbers.filter((num) => atEvent.has(Number(num))) : teamNumbers;
+    const orderSource = saved.length ? saved : allTeams.map((t) => t.team_number);
 
     const place = (num: number) => {
         if (seen.has(num)) return;

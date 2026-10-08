@@ -13,6 +13,11 @@
 //     name/dates/timezone and team_number's matches at the event, including
 //     scheduled/predicted/actual times (no DB write). Used by Preflight's
 //     schedule, which stores the result in its own synced tables.
+//   - refresh_event: lead/admin only. Refreshes the event's team list and
+//     then its match schedule (issue #127). Teams TBA lists are upserted
+//     into Team; a team TBA no longer lists is deleted, unless its row is
+//     marked custom (added by hand, not from TBA). Nothing is deleted when
+//     TBA returns no teams at all.
 //   - refresh_schedule: lead/admin only. Ports
 //     util/match_schedule.py's update_match_schedule_for_event — full
 //     delete+insert of the event's Match rows. ScoutAssignment isn't FK'd to
@@ -45,6 +50,129 @@ function tbaFetch(path: string, apiKey: string) {
   return fetch(`${TBA_BASE_URL}${path}`, {
     headers: { "X-TBA-Auth-Key": apiKey },
   });
+}
+
+type Failure = { error: string; status: number };
+
+// Full delete+insert of the event's Match rows from TBA.
+// deno-lint-ignore no-explicit-any
+async function refreshSchedule(adminClient: any, eventId: string, tbaApiKey: string): Promise<{ matchCount: number } | Failure> {
+  const response = await tbaFetch(`/event/${eventId}/matches/simple`, tbaApiKey);
+  if (!response.ok) {
+    return { error: `TBA request failed: ${response.status}`, status: 502 };
+  }
+
+  const matches = await response.json();
+  if (!Array.isArray(matches)) {
+    return { error: "Unexpected TBA response for match schedule.", status: 502 };
+  }
+
+  // deno-lint-ignore no-explicit-any
+  const rows = matches.map((match: any) => {
+    const redTeams = match.alliances?.red?.team_keys ?? [];
+    const blueTeams = match.alliances?.blue?.team_keys ?? [];
+    return {
+      key: match.key,
+      event_id: eventId,
+      comp_level: match.comp_level,
+      set_number: match.set_number,
+      match_number: match.match_number,
+      red1: teamNumberFromKey(redTeams[0]),
+      red2: teamNumberFromKey(redTeams[1]),
+      red3: teamNumberFromKey(redTeams[2]),
+      blue1: teamNumberFromKey(blueTeams[0]),
+      blue2: teamNumberFromKey(blueTeams[1]),
+      blue3: teamNumberFromKey(blueTeams[2]),
+    };
+  });
+
+  // Full replace rather than upsert: TBA regenerates an event's schedule
+  // (e.g. a new playoff bracket after tiebreakers), which can drop matches
+  // that existed under the old schedule.
+  const { error: deleteError } = await adminClient.from("Match").delete().eq("event_id", eventId);
+  if (deleteError) {
+    return { error: deleteError.message, status: 500 };
+  }
+
+  if (rows.length > 0) {
+    const { error: insertError } = await adminClient.from("Match").insert(rows);
+    if (insertError) {
+      return { error: insertError.message, status: 500 };
+    }
+  }
+
+  return { matchCount: rows.length };
+}
+
+// Brings the event's Team rows in line with TBA's team list: teams TBA
+// lists are added or renamed, and teams it no longer lists are removed,
+// except rows marked custom. Mirrors util/event_info.py.
+async function refreshTeams(
+  // deno-lint-ignore no-explicit-any
+  adminClient: any,
+  eventId: string,
+  tbaApiKey: string,
+): Promise<{ teamCount: number; removedTeams: number[] } | Failure> {
+  const response = await tbaFetch(`/event/${eventId}/teams/simple`, tbaApiKey);
+  if (!response.ok) {
+    return { error: `TBA request failed: ${response.status}`, status: 502 };
+  }
+
+  const teams = await response.json();
+  if (!Array.isArray(teams)) {
+    return { error: "Unexpected TBA response for the team list.", status: 502 };
+  }
+
+  const rows = teams
+    // deno-lint-ignore no-explicit-any
+    .filter((team: any) => Number.isInteger(team?.team_number))
+    // deno-lint-ignore no-explicit-any
+    .map((team: any) => ({
+      key: `${eventId}_${team.team_number}`,
+      event_id: eventId,
+      team_number: team.team_number,
+      name: team.nickname ?? "",
+    }));
+
+  // An empty list means TBA hasn't published the teams (or something is
+  // wrong), not that every team dropped: leave what's there alone.
+  if (rows.length === 0) {
+    return { teamCount: 0, removedTeams: [] };
+  }
+
+  // `custom` isn't in the rows, so an existing row keeps its value.
+  const { error: upsertError } = await adminClient.from("Team").upsert(rows, { onConflict: "key" });
+  if (upsertError) {
+    return { error: upsertError.message, status: 500 };
+  }
+
+  const { data: existing, error: existingError } = await adminClient
+    .from("Team")
+    .select("key, team_number")
+    .eq("event_id", eventId)
+    .eq("custom", false);
+  if (existingError) {
+    return { error: existingError.message, status: 500 };
+  }
+
+  const listed = new Set(rows.map((row: { key: string }) => row.key));
+  const dropped = (existing ?? []).filter((row: { key: string }) => !listed.has(row.key));
+  if (dropped.length > 0) {
+    const { error: deleteError } = await adminClient
+      .from("Team")
+      .delete()
+      .in("key", dropped.map((row: { key: string }) => row.key));
+    if (deleteError) {
+      return { error: deleteError.message, status: 500 };
+    }
+  }
+
+  return {
+    teamCount: rows.length,
+    removedTeams: dropped
+      .map((row: { team_number: number }) => row.team_number)
+      .sort((a: number, b: number) => a - b),
+  };
 }
 
 Deno.serve(async (req) => {
@@ -161,7 +289,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (action === "refresh_schedule") {
+  if (action === "refresh_schedule" || action === "refresh_event") {
     const { data: userRow, error: roleError } = await adminClient
       .from("User")
       .select("role")
@@ -169,53 +297,25 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (roleError || !userRow || (userRow.role !== "lead" && userRow.role !== "admin")) {
-      return jsonResponse({ error: "Only leads and admins can refresh the match schedule." }, 403);
+      return jsonResponse({ error: "Only leads and admins can refresh event data." }, 403);
     }
 
-    const response = await tbaFetch(`/event/${eventId}/matches/simple`, tbaApiKey);
-    if (!response.ok) {
-      return jsonResponse({ error: `TBA request failed: ${response.status}` }, 502);
+    if (action === "refresh_schedule") {
+      const schedule = await refreshSchedule(adminClient, eventId, tbaApiKey);
+      if ("error" in schedule) return jsonResponse({ error: schedule.error }, schedule.status);
+      return jsonResponse(schedule);
     }
 
-    const matches = await response.json();
-    if (!Array.isArray(matches)) {
-      return jsonResponse({ error: "Unexpected TBA response for match schedule." }, 502);
+    // Teams first, so a failure there leaves the schedule as it was too.
+    const teams = await refreshTeams(adminClient, eventId, tbaApiKey);
+    if ("error" in teams) return jsonResponse({ error: `Team list: ${teams.error}` }, teams.status);
+
+    const schedule = await refreshSchedule(adminClient, eventId, tbaApiKey);
+    if ("error" in schedule) {
+      return jsonResponse({ error: `The team list was refreshed, but the match schedule wasn't: ${schedule.error}` }, schedule.status);
     }
 
-    const rows = matches.map((match) => {
-      const redTeams = match.alliances?.red?.team_keys ?? [];
-      const blueTeams = match.alliances?.blue?.team_keys ?? [];
-      return {
-        key: match.key,
-        event_id: eventId,
-        comp_level: match.comp_level,
-        set_number: match.set_number,
-        match_number: match.match_number,
-        red1: teamNumberFromKey(redTeams[0]),
-        red2: teamNumberFromKey(redTeams[1]),
-        red3: teamNumberFromKey(redTeams[2]),
-        blue1: teamNumberFromKey(blueTeams[0]),
-        blue2: teamNumberFromKey(blueTeams[1]),
-        blue3: teamNumberFromKey(blueTeams[2]),
-      };
-    });
-
-    // Full replace rather than upsert: TBA regenerates an event's schedule
-    // (e.g. a new playoff bracket after tiebreakers), which can drop matches
-    // that existed under the old schedule.
-    const { error: deleteError } = await adminClient.from("Match").delete().eq("event_id", eventId);
-    if (deleteError) {
-      return jsonResponse({ error: deleteError.message }, 500);
-    }
-
-    if (rows.length > 0) {
-      const { error: insertError } = await adminClient.from("Match").insert(rows);
-      if (insertError) {
-        return jsonResponse({ error: insertError.message }, 500);
-      }
-    }
-
-    return jsonResponse({ matchCount: rows.length });
+    return jsonResponse({ ...teams, ...schedule });
   }
 
   return jsonResponse({ error: `Unknown action: ${action}` }, 400);

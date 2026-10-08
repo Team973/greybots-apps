@@ -224,7 +224,10 @@ export default {
                 });
             });
 
+            // A starred team that has since dropped out of the event isn't shown.
+            const atEvent = new Set(this.teams.map((team) => team.team_number));
             return [...(this.watchlistStore?.watchedTeamNumbers ?? [])]
+                .filter((teamNumber) => atEvent.size === 0 || atEvent.has(teamNumber))
                 .sort((a, b) => a - b)
                 .map((teamNumber) => {
                     const totals = this.teamTotals[teamNumber] ?? { scouted: 0, noShows: 0, yellow: 0, red: 0, otherMatches: 0 };

@@ -70,6 +70,34 @@ export async function queryTeamNumbers(eventId) {
     return data;
 }
 
+// Add a custom team to an event (issue #127): one The Blue Alliance doesn't
+// list, so refreshing the event data keeps it. Leads and admins only
+// (enforced by row-level security). Returns the error object or null.
+export async function addCustomTeam(eventId, teamNumber, name) {
+    const { error } = await supabase.from(teamInfoTable).insert({
+        key: `${eventId}_${teamNumber}`,
+        event_id: eventId,
+        team_number: teamNumber,
+        name,
+        custom: true
+    });
+
+    if (error?.code === '23505') return { message: `team ${teamNumber} is already at this event` };
+    return error;
+}
+
+// Remove a custom team by its row key. Only custom rows can be removed this
+// way; a blocked delete succeeds with zero rows, so the deleted row is asked
+// for to tell the two apart.
+export async function removeCustomTeam(key) {
+    const { data, error } = await supabase.from(teamInfoTable).delete().eq('key', key).eq('custom', true).select('key');
+
+    if (!error && (!data || data.length === 0)) {
+        return { message: 'it was not removed (already gone, or not permitted)' };
+    }
+    return error;
+}
+
 export async function queryTeamMatchData(teamNumber, eventId) {
     const { data, error } = await supabase.from(matchScoutTable).select().eq('event', eventId).eq(teamNumberColumn, teamNumber);
 
