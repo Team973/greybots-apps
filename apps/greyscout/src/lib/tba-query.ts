@@ -20,6 +20,26 @@ async function describeFunctionError(error, data) {
     return error.message ?? String(error);
 }
 
+// Refreshes the event's team list and match schedule from TBA (issue #127).
+// Teams no longer at the event are removed (see the tba-proxy function),
+// and are reported back so the caller can say which.
+export async function refreshEventData(eventId) {
+    const { data, error } = await supabase.functions.invoke(tbaProxyFunction, {
+        body: { action: 'refresh_event', event_id: eventId }
+    });
+
+    if (error || data?.error) {
+        return { teamCount: 0, removedTeams: [], matchCount: 0, error: { message: await describeFunctionError(error, data) } };
+    }
+
+    return {
+        teamCount: data?.teamCount ?? 0,
+        removedTeams: data?.removedTeams ?? [],
+        matchCount: data?.matchCount ?? 0,
+        error: null
+    };
+}
+
 export async function refreshEventSchedule(eventId) {
     const { data, error } = await supabase.functions.invoke(tbaProxyFunction, {
         body: { action: 'refresh_schedule', event_id: eventId }

@@ -936,11 +936,15 @@ CREATE TABLE IF NOT EXISTS "public"."Team" (
     "key" "text" NOT NULL,
     "event_id" "text" NOT NULL,
     "team_number" smallint,
-    "name" "text"
+    "name" "text",
+    "custom" boolean DEFAULT false NOT NULL
 );
 
 
 ALTER TABLE "public"."Team" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."Team"."custom" IS 'Added by hand rather than from TBA: kept when the event''s team list is refreshed.';
 
 
 CREATE TABLE IF NOT EXISTS "public"."User" (
@@ -1420,6 +1424,14 @@ CREATE POLICY "Enable read access for logged in users" ON "public"."RobotPhoto" 
 
 
 CREATE POLICY "Enable read access for logged in users" ON "public"."Team" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "Enable insert of custom teams for leads and admins" ON "public"."Team" FOR INSERT TO "authenticated" WITH CHECK (("custom" AND (EXISTS ( SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"])))))));
+
+
+
+CREATE POLICY "Enable delete of custom teams for leads and admins" ON "public"."Team" FOR DELETE TO "authenticated" USING (("custom" AND (EXISTS ( SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"])))))));
 
 
 
