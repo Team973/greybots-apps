@@ -83,23 +83,37 @@ import "@material/web/button/filled-button";
                 </div>
             </div>
 
-            <!-- Preview / Auto Edit / Whiteboard all live in this one tile so
-                 switching modes never means scrolling away from the field —
-                 and so fullscreen (via FullscreenTile) covers every control
-                 for whichever mode is active. -->
-            <FullscreenTile class="data-tile strategy-main-tile">
-                <div class="strategy-mode-toggle">
-                    <md-filled-button v-on:click="strategyMode = 'preview'"
-                        :class="{ 'mode-inactive': strategyMode !== 'preview' }">Preview</md-filled-button>
-                    <md-filled-button v-on:click="strategyMode = 'autoEdit'"
-                        :class="{ 'mode-inactive': strategyMode !== 'autoEdit' }">Auto Edit</md-filled-button>
-                    <md-filled-button v-on:click="strategyMode = 'whiteboard'"
-                        :class="{ 'mode-inactive': strategyMode !== 'whiteboard' }">Whiteboard</md-filled-button>
+            <!-- The four phases of a match, like the paper strategy sheets
+                 (issue #126): AUTO is the auto-path preview and editor, and
+                 TRANSITION / ACTIVE / INACTIVE are each their own whiteboard.
+                 All of it lives in this one tile, so switching never means
+                 scrolling away from the field, and fullscreen (via
+                 FullscreenTile) covers the title and every control. Swiping
+                 sideways anywhere but on the field moves between phases. -->
+            <FullscreenTile class="data-tile strategy-main-tile" @touchstart.passive="onSwipeStart"
+                @touchend.passive="onSwipeEnd" @touchcancel.passive="swipeStart = null">
+                <div class="strategy-tab-header">
+                    <div class="strategy-tabs" role="tablist" aria-label="Match phase">
+                        <button v-for="tab in STRATEGY_TABS" :key="tab.key" :id="`strategy-tab-${tab.key}`" type="button"
+                            class="strategy-tab" :class="{ 'strategy-tab--active': strategyTab === tab.key }" role="tab"
+                            :aria-selected="strategyTab === tab.key" @click="strategyTab = tab.key">{{ tab.title }}</button>
+                    </div>
+                    <div class="strategy-tab-title-row">
+                        <button type="button" class="strategy-tab-arrow" :disabled="strategyTabIndex === 0"
+                            aria-label="Previous phase" @click="stepStrategyTab(-1)">‹</button>
+                        <h2 class="strategy-tab-title" aria-live="polite">{{ strategyTabTitle }}</h2>
+                        <button type="button" class="strategy-tab-arrow"
+                            :disabled="strategyTabIndex === STRATEGY_TABS.length - 1" aria-label="Next phase"
+                            @click="stepStrategyTab(1)">›</button>
+                    </div>
                 </div>
 
-                <template v-if="strategyMode === 'preview' || strategyMode === 'autoEdit'">
-                    <div class="autopath-preview-heading">
-                        <h3>Auto Path Preview</h3>
+                <template v-if="strategyTab === 'auto'">
+                    <div class="strategy-mode-toggle">
+                        <md-filled-button v-on:click="strategyMode = 'preview'"
+                            :class="{ 'mode-inactive': strategyMode !== 'preview' }">Preview</md-filled-button>
+                        <md-filled-button v-on:click="strategyMode = 'autoEdit'"
+                            :class="{ 'mode-inactive': strategyMode !== 'autoEdit' }">Auto Edit</md-filled-button>
                     </div>
 
                     <template v-if="strategyMode === 'autoEdit'">
@@ -185,10 +199,11 @@ import "@material/web/button/filled-button";
                     </div>
                 </template>
 
-                <template v-else-if="strategyMode === 'whiteboard'">
-                    <StrategyBoard :match-number="matchNumber" :team-numbers="teamNumbers" :team-filters="teamFilters"
-                        :slot-color="slotColor"></StrategyBoard>
-                </template>
+                <!-- Kept mounted while AUTO is showing (v-show, not v-if), so
+                     going to AUTO and back never drops strokes that are
+                     still waiting to save. -->
+                <StrategyBoard v-show="strategyTab !== 'auto'" :phase="whiteboardPhase" :match-number="matchNumber"
+                    :team-numbers="teamNumbers" :team-filters="teamFilters" :slot-color="slotColor"></StrategyBoard>
             </FullscreenTile>
         </div>
         <div v-else-if="teamsLoaded">
@@ -198,6 +213,22 @@ import "@material/web/button/filled-button";
 </template>
 
 <script lang="ts">
+// The phases of a match, in order — the tabs of the strategy tile. AUTO is
+// the auto-path preview/editor; the rest are whiteboards.
+const STRATEGY_TABS = [
+    { key: 'auto', title: 'AUTO' },
+    { key: 'transition', title: 'TRANSITION' },
+    { key: 'active', title: 'ACTIVE' },
+    { key: 'inactive', title: 'INACTIVE' }
+];
+
+// A sideways swipe has to travel this far, and be clearly more sideways
+// than up-and-down, to change phase.
+const SWIPE_MIN_PX = 60;
+// Swipes that start on these don't count: the field is for drawing, and the
+// rest have their own drag or scroll behavior.
+const SWIPE_IGNORE = 'svg, input, textarea, select, md-outlined-select, .searchable-dropdown, .color-swatch-picker';
+
 // Fixed palette a team's color can be chosen from (issue #32 feedback) —
 // at least 6 distinct colors, with 2 extras (magenta/white) for the rare
 // case all 6 defaults collide with a scout's preference. Declared here
@@ -232,9 +263,15 @@ export default {
             // Default is schedule-driven auto-assignment; flip on to hand-pick
             // teams instead (e.g. the schedule hasn't been synced yet).
             manualTeamSelection: false,
-            // Which top-level mode the page is in — merges the old separate
-            // Match Preview view with the new in-place path creation and
-            // whiteboard strategy board behind one toggle.
+            // Which phase tab is showing (see STRATEGY_TABS).
+            strategyTab: 'auto',
+            // The whiteboard phase last shown, so the board keeps a valid
+            // phase while the AUTO tab is up.
+            whiteboardPhase: 'transition',
+            // Where a touch that might be a swipe started.
+            swipeStart: null,
+            // Within the AUTO tab: looking at the chosen paths, or drawing a
+            // new one in place.
             strategyMode: 'preview',
             // Per-slot dropdown choices ({key, text, path}) of that slot's team's saved auto paths,
             // plus a leading "None" option. Index aligns with teamNumbers (0-2 red, 3-5 blue).
@@ -278,10 +315,14 @@ export default {
             autoEditPathError: false,
             autoEditSavedMessage: '',
             SIDE_CHOICES,
-            COLOR_CHOICES
+            COLOR_CHOICES,
+            STRATEGY_TABS
         }
     },
     watch: {
+        strategyTab(tab) {
+            if (tab !== 'auto') this.whiteboardPhase = tab;
+        },
         matchNumber() {
             this.refreshAutoEditDefaultName();
         },
@@ -290,6 +331,29 @@ export default {
         }
     },
     methods: {
+        stepStrategyTab(step: int) {
+            const next = this.strategyTabIndex + step;
+            if (next < 0 || next >= STRATEGY_TABS.length) return;
+            this.strategyTab = STRATEGY_TABS[next].key;
+        },
+        onSwipeStart(event) {
+            const touch = event.touches.length === 1 ? event.touches[0] : null;
+            this.swipeStart = touch && !event.target.closest?.(SWIPE_IGNORE)
+                ? { x: touch.clientX, y: touch.clientY }
+                : null;
+        },
+        onSwipeEnd(event) {
+            const start = this.swipeStart;
+            this.swipeStart = null;
+            const touch = event.changedTouches[0];
+            if (!start || !touch) return;
+
+            const dx = touch.clientX - start.x;
+            const dy = touch.clientY - start.y;
+            if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < 2 * Math.abs(dy)) return;
+            // Swiping left brings in the next phase, like turning a page.
+            this.stepStrategyTab(dx < 0 ? 1 : -1);
+        },
         async loadTeamsData() {
             // Note: do this to avoid stale data on page refresh.
             await this.eventStore.updateEvent();
@@ -582,6 +646,12 @@ export default {
         }
     },
     computed: {
+        strategyTabIndex() {
+            return STRATEGY_TABS.findIndex((tab) => tab.key === this.strategyTab);
+        },
+        strategyTabTitle() {
+            return STRATEGY_TABS[this.strategyTabIndex]?.title ?? '';
+        },
         isLead() {
             return this.authStore?.isLead;
         },
@@ -741,6 +811,97 @@ export default {
     font-size: 13px;
     color: rgba(128, 128, 128, 0.85);
     margin: -4px 0 12px;
+}
+
+/* ── Phase tabs and title (issue #126) ── */
+.strategy-tab-header {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+    /* Room for FullscreenTile's toggle in the top-right corner. */
+    padding: 0 36px;
+}
+
+/* In fullscreen the tile scrolls, so the title stays pinned to the top. */
+.fullscreen-tile:fullscreen .strategy-tab-header {
+    position: sticky;
+    top: -20px;
+    z-index: 4;
+    margin-top: -20px;
+    padding-top: 20px;
+    padding-bottom: 10px;
+    background: var(--tile-background-color, #1b1b1b);
+}
+
+.strategy-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1.5px solid rgba(128, 128, 128, 0.35);
+}
+
+.strategy-tab {
+    background: transparent;
+    border: none;
+    padding: 10px 14px;
+    min-height: 44px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--primary-text-color);
+    cursor: pointer;
+}
+
+.strategy-tab + .strategy-tab {
+    border-left: 1.5px solid rgba(128, 128, 128, 0.35);
+}
+
+.strategy-tab--active {
+    background: #b05703;
+    color: #fff;
+}
+
+.strategy-tab-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    width: 100%;
+}
+
+.strategy-tab-title {
+    margin: 0;
+    font-size: clamp(30px, 8vw, 56px);
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.05;
+    text-transform: uppercase;
+    text-align: center;
+}
+
+.strategy-tab-arrow {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.strategy-tab-arrow:disabled {
+    opacity: 0.3;
+    cursor: default;
 }
 
 .strategy-mode-toggle {

@@ -344,6 +344,40 @@ above the team-assignment tiles. Match number entry, schedule auto-fill
 (`applyScheduleTeams`/`queryMatchTeams`), and Manual Team Selection are
 unchanged and apply across all three modes.
 
+### Phase tabs ([issue #126](https://github.com/Team973/greybots-apps/issues/126))
+
+The tile is now laid out like the paper strategy sheets, with a tab per
+phase of the match: **AUTO**, **TRANSITION**, **ACTIVE**, and **INACTIVE**
+(`strategyTab`, tabs listed in `STRATEGY_TABS`). This replaces the 3-way
+toggle described above and below: wherever these notes say "Whiteboard
+mode", read "one of the three whiteboard tabs".
+
+- **AUTO** holds what used to be the Preview and Auto Edit modes, still
+  switched by `strategyMode` (`'preview' | 'autoEdit'`).
+- **TRANSITION / ACTIVE / INACTIVE** are each a plain whiteboard. A match
+  still has one `StrategyBoard` row; every entry in its `board` array is
+  tagged with its phase (`{ slot, phase, strokes }`), and `StrategyBoard.vue`
+  shows and edits only the entries for its `phase` prop. Boards saved before
+  this have no phase and show under ACTIVE. Clear and Undo act on the phase
+  on screen only (the undo history is dropped when the phase changes).
+- The phase name is a large all-caps title at the top of the tile, with
+  ‹ › buttons either side. It's inside the `FullscreenTile`, and pinned to
+  the top in fullscreen, so it's always visible there too.
+- **Swiping** left or right moves between phases (`onSwipeStart` /
+  `onSwipeEnd`). A swipe that starts on the field doesn't count, since
+  that's where drawing happens; nor does one that starts on a text box or
+  dropdown.
+- The whiteboard stays mounted while AUTO is showing (`v-show`), so going
+  to AUTO and back never drops strokes still waiting to save.
+- A whiteboard doesn't need a match number or a full team list. With no
+  match number it's a scratch board, kept in this browser only
+  (`localStorage`, one per event). Entering a match number moves it
+  into that match if the match has no strokes yet; if the match already
+  has a board, that board shows and the scratch board stays put for when
+  the match number is cleared. Slots without a team are labelled by position ("Red 1").
+  Changing the match number first saves any strokes still waiting, to the
+  board being left.
+
 ### One shared tile for all three modes
 
 Preview, Auto Edit, and Whiteboard all render inside **one** `FullscreenTile`
