@@ -5,6 +5,7 @@ npm-workspaces monorepo:
 - `apps/greyscout`: GreyScout, the scouting app
 - `apps/preflight`: Preflight, the offline-first pit crew app (see `apps/preflight/docs/architecture.md`)
 - `apps/workshop`: Workshop, the shop management app: tickets, session plans, milestones, and GreyPoints (see `apps/workshop/README.md`)
+- `apps/diagnostics`: Greybots Diagnostics, the robot diagnostics desktop app for Windows, Linux and macOS (see `apps/diagnostics/docs/design.md`)
 - `apps/hub`: the launcher for all the apps
 - `packages/common`: shared Vue components, styles, and the Supabase client
 - `supabase/`: the shared Supabase project
@@ -36,6 +37,12 @@ npm run dev
 To start Preflight in development mode (or use `serve:preflight` to test the offline service worker at http://localhost:4173):
 ```bash
 npm run dev:preflight
+```
+
+To start Greybots Diagnostics (a desktop app) in development mode, or build an installer for the computer you're on into `apps/diagnostics/release`:
+```bash
+npm run dev:diagnostics
+npm run dist:diagnostics
 ```
 
 To format the code:

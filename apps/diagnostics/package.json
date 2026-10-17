@@ -1,0 +1,29 @@
+{
+  "name": "diagnostics",
+  "productName": "Greybots Diagnostics",
+  "version": "0.1.0",
+  "description": "Team 973 robot diagnostics",
+  "author": "Team 973 Greybots",
+  "private": true,
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "run-p type-check \"build-only {@}\" --",
+    "preview": "electron-vite preview",
+    "build-only": "electron-vite build",
+    "type-check": "vue-tsc --build --force",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:dir": "npm run build && electron-builder --dir --publish never",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path ../../.gitignore",
+    "format": "prettier --write src/"
+  },
+  "devDependencies": {
+    "@greybots/common": "*",
+    "electron": "44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "pinia": "^2.1.7",
+    "vue": "^3.4.29",
+    "vue-router": "^4.3.3"
+  }
+}
