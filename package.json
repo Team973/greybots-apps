@@ -22,7 +22,10 @@
     "build:preflight-desktop": "npm run build:desktop -w apps/preflight",
     "dev:hub": "npm run dev -w apps/hub",
     "build:hub": "npm run build -w apps/hub",
-    "type-check:hub": "npm run type-check -w apps/hub"
+    "type-check:hub": "npm run type-check -w apps/hub",
+    "dev:workshop": "npm run dev -w apps/workshop",
+    "build:workshop": "npm run build -w apps/workshop",
+    "type-check:workshop": "npm run type-check -w apps/workshop"
   },
   "devDependencies": {
     "@rushstack/eslint-patch": "^1.8.0",

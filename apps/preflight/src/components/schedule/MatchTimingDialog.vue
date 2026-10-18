@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import '@material/web/button/text-button';
-import AppDialog from '@/components/AppDialog.vue';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { useAutosave } from '@/lib/autosave';
 import { useLiveQuery } from '@/lib/live-query';

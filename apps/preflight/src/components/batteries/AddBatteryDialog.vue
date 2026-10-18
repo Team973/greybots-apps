@@ -3,7 +3,7 @@ import { ref, watch } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import '@material/web/button/text-button';
-import AppDialog from '@/components/AppDialog.vue';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import { registerBattery } from '@/lib/batteries/batteries';
 import { useSessionStore } from '@/stores/session-store';
 

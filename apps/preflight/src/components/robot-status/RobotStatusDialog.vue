@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/text-button';
-import AppDialog from '@/components/AppDialog.vue';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import type { ChecklistSequence } from '@/lib/checklists/config';
 import { formatTime } from '@/lib/schedule/dates';
 import {

@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue';
 
 // Modal built on the native <dialog> element (focus trapping, Esc to close).
+// Shared by every greybots app that needs one.
 const props = defineProps<{ open: boolean; title: string }>();
 const emit = defineEmits<{ close: [] }>();
 const dialog = ref<HTMLDialogElement | null>(null);
@@ -35,6 +36,9 @@ watch(
   /* Compact by design; scrolling is only a fallback on very short screens. */
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
+  /* The shared base styles zero every margin, which undoes the browser's
+     centering of a modal dialog. */
+  margin: auto;
   padding: 0;
   border: none;
   border-radius: 12px;

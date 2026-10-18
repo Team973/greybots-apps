@@ -15,8 +15,9 @@ export interface HubApp {
 // "https://example.com/" -> "https://example.com"
 const clean = (url: string) => url.trim().replace(/\/+$/, '');
 
-// Override either address with VITE_GREYSCOUT_URL / VITE_PREFLIGHT_URL (in the
-// deployment's environment, or a .env.local for development).
+// Override any address with VITE_GREYSCOUT_URL, VITE_PREFLIGHT_URL, or
+// VITE_WORKSHOP_URL (in the deployment's environment, or a .env.local for
+// development).
 export const hubApps: HubApp[] = [
     {
         key: 'greyscout',
@@ -31,5 +32,12 @@ export const hubApps: HubApp[] = [
         description: 'Pit crew checklists, repairs, batteries, and schedule',
         url: clean(import.meta.env.VITE_PREFLIGHT_URL || 'https://greybots-preflight.vercel.app'),
         roleColumn: 'preflight_role'
+    },
+    {
+        key: 'workshop',
+        name: 'Workshop',
+        description: 'Shop tickets, session plans, milestones, and GreyPoints',
+        url: clean(import.meta.env.VITE_WORKSHOP_URL || 'https://greybots-workshop.vercel.app'),
+        roleColumn: 'workshop_role'
     }
 ];

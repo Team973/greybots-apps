@@ -3,7 +3,7 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import jsQR from 'jsqr';
 import '@material/web/button/filled-button';
 import '@material/web/button/text-button';
-import AppDialog from '@/components/AppDialog.vue';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import { parseBatteryCode } from '@/lib/batteries/batteries';
 
 // Pick a battery by scanning its QR label with the device camera, or by
