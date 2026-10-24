@@ -10,9 +10,14 @@ import { matchScoutTable, pitScoutTable, autoPathTable, strategyBoardTable } fro
 const queueStore = useOfflineQueueStore();
 const isOpen = ref(false);
 const isOnline = ref(navigator.onLine);
+// Hides the offline banner until the connection drops again.
+const bannerDismissed = ref(false);
 
 function handleOnline() { isOnline.value = true; }
-function handleOffline() { isOnline.value = false; }
+function handleOffline() {
+    isOnline.value = false;
+    bannerDismissed.value = false;
+}
 
 onMounted(() => {
     window.addEventListener('online', handleOnline);
@@ -115,9 +120,12 @@ function formatDate(iso: string) {
 
 <template>
     <!-- Offline status banner -->
-    <div v-if="!isOnline" class="offline-banner" role="alert">
+    <div v-if="!isOnline && !bannerDismissed" class="offline-banner" role="alert">
         <span class="offline-icon">&#9888;</span>
-        You are offline — changes will be saved locally and synced when you reconnect.
+        <span class="offline-text">You are offline — changes will be saved locally. Use the sync button to retry
+            once you reconnect.</span>
+        <button class="offline-banner-close" aria-label="Dismiss offline notice"
+            @click="bannerDismissed = true">&#10005;</button>
     </div>
 
     <!-- Queue indicator button -->
@@ -181,18 +189,34 @@ function formatDate(iso: string) {
     left: 0;
     right: 0;
     z-index: 9998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     background: #b05703;
     color: #fff;
     text-align: center;
-    padding: 8px 16px;
+    padding: 0 4px 0 16px;
     font-size: 14px;
     font-weight: 500;
     letter-spacing: 0.02em;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-.offline-icon {
-    margin-right: 8px;
+.offline-text {
+    flex: 1;
+    max-width: 640px;
+}
+
+.offline-banner-close {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 16px;
+    min-width: 44px;
+    min-height: 44px;
+    cursor: pointer;
 }
 
 .offline-queue-fab {

@@ -12,7 +12,8 @@ const props = defineProps({
     dirty: { default: false },
     included: { default: true },
     watched: { default: false },
-    formInvalid: { default: false }
+    formInvalid: { default: false },
+    errorMessage: { default: '' }
 });
 
 const emit = defineEmits(['toggle-expand', 'toggle-included', 'form-update']);
@@ -42,6 +43,7 @@ function findPostmatchComponent(key) {
             </label>
             <div class="match-row-chevron" :class="{ 'match-row-chevron--open': expanded }">›</div>
         </div>
+        <div v-if="errorMessage" class="match-row-error" role="alert">{{ errorMessage }}</div>
 
         <transition name="match-row-expand">
             <div v-if="expanded" class="match-row-detail">
@@ -200,6 +202,14 @@ function findPostmatchComponent(key) {
 .match-row-chevron--open {
     transform: rotate(90deg);
     color: #b05703;
+}
+
+.match-row-error {
+    padding: 0 14px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #d32f2f;
+    overflow-wrap: anywhere;
 }
 
 .match-row-detail {

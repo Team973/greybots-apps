@@ -170,7 +170,9 @@ function applyExistingMatchTeamData(schema, row) {
 // The full {key, name, components} section shape for one team's row —
 // matches what FormSection/validateForm/parseScoutData already expect.
 // Pass existingData (a raw MatchData row) to pre-fill for editing.
-export function buildTeamRowSchema({ existingData = null } = {}) {
+// requireComments is false for leads, who often jot down something they
+// noticed about a team they weren't assigned to watch.
+export function buildTeamRowSchema({ existingData = null, requireComments = true } = {}) {
     const schema = [
         {
             key: "prematch",
@@ -188,6 +190,9 @@ export function buildTeamRowSchema({ existingData = null } = {}) {
             components: getMatchPostmatchFields()
         }
     ];
+
+    const comments = schema[2].components.find((c) => c.key === "comments");
+    comments.required = requireComments;
 
     if (existingData) {
         applyExistingMatchTeamData(schema, existingData);

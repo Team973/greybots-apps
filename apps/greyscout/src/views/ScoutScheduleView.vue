@@ -38,14 +38,14 @@ import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assig
                     <thead>
                         <tr>
                             <th>Match</th>
-                            <th>Alliance</th>
+                            <th>Station</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr v-for="assignment in currentAssignments" :key="`${assignment.match_number}|${assignment.alliance}${assignment.slot_index}`">
                             <td>Q{{ assignment.match_number }}</td>
                             <td :class="allianceClass(assignment.alliance)">
-                                {{ allianceLabel(assignment.alliance) }}
+                                {{ stationLabel(assignment.alliance, assignment.slot_index) }}
                             </td>
                         </tr>
                     </tbody>
@@ -72,8 +72,11 @@ import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assig
                         <thead>
                             <tr>
                                 <th>Match</th>
-                                <th class="red-header" colspan="3">Red</th>
-                                <th class="blue-header" colspan="3">Blue</th>
+                                <!-- slotKey is e.g. 'red2': alliance, then station number. -->
+                                <th v-for="slotKey in slotKeys" :key="slotKey"
+                                    :class="slotKey.startsWith('red') ? 'red-header' : 'blue-header'">
+                                    {{ stationLabel(slotKey.slice(0, -1), slotKey.slice(-1)) }}
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
@@ -107,14 +110,14 @@ import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assig
                             <thead>
                                 <tr>
                                     <th>Match</th>
-                                    <th>Alliance</th>
+                                    <th>Station</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr v-for="assignment in group.assignments" :key="`${assignment.match_number}|${assignment.alliance}${assignment.slot_index}`">
                                     <td>Q{{ assignment.match_number }}</td>
                                     <td :class="allianceClass(assignment.alliance)">
-                                        {{ allianceLabel(assignment.alliance) }}
+                                        {{ stationLabel(assignment.alliance, assignment.slot_index) }}
                                     </td>
                                 </tr>
                             </tbody>
@@ -180,9 +183,10 @@ export default {
         }
     },
     methods: {
-        allianceLabel(alliance) {
-            if (alliance === 'red') return 'Red';
-            if (alliance === 'blue') return 'Blue';
+        // "Red 2" — the alliance plus its driver station number.
+        stationLabel(alliance, slotIndex) {
+            if (alliance === 'red') return `Red ${slotIndex}`;
+            if (alliance === 'blue') return `Blue ${slotIndex}`;
             return '—';
         },
         allianceClass(alliance) {

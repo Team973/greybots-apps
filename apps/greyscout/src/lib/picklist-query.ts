@@ -141,16 +141,19 @@ export interface TeamPitSummary {
     weight: number | null;
     /** 1-5. */
     vibe: number | null;
+    batteries: number | null;
+    chargers: number | null;
 }
 
 /**
- * Fetch each team's weight and vibe check from pit scouting, in one query
- * (issue #123). The newest submission wins when a team has several.
+ * Fetch each team's weight, vibe check, and battery/charger counts from pit
+ * scouting, in one query (issue #123). The newest submission wins when a
+ * team has several.
  */
 export async function fetchTeamPitSummaries(eventId: string): Promise<Record<number, TeamPitSummary>> {
     const { data, error } = await supabase
         .from(pitScoutTable)
-        .select('pit_team_number, pit_weight, pit_vibe_check, created_at')
+        .select('pit_team_number, pit_weight, pit_vibe_check, pit_num_batteries, pit_num_chargers, created_at')
         .eq('event', eventId)
         .order('created_at', { ascending: true });
 
@@ -162,7 +165,12 @@ export async function fetchTeamPitSummaries(eventId: string): Promise<Record<num
     const summaries: Record<number, TeamPitSummary> = {};
     (data ?? []).forEach((row) => {
         if (row.pit_team_number == null) return;
-        summaries[row.pit_team_number] = { weight: row.pit_weight ?? null, vibe: row.pit_vibe_check ?? null };
+        summaries[row.pit_team_number] = {
+            weight: row.pit_weight ?? null,
+            vibe: row.pit_vibe_check ?? null,
+            batteries: row.pit_num_batteries ?? null,
+            chargers: row.pit_num_chargers ?? null
+        };
     });
     return summaries;
 }
