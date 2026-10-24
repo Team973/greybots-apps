@@ -5,7 +5,8 @@ import { RouterLink } from 'vue-router';
 import { useEventStore } from "@/stores/event-store";
 import { queryTeamNumbers } from "@/lib/data-query";
 import { fetchLatestEpaByTeam } from "@/lib/prescout-query";
-import { getTeamTbaStats, refreshTbaStats } from "@/lib/tba-cache";
+import { fetchTeamPitSummaries } from "@/lib/picklist-query";
+import { getTeamTbaStats, refreshTbaStats, getCachedTbaRankings, refreshTbaRankings } from "@/lib/tba-cache";
 </script>
 
 <template>
@@ -17,8 +18,8 @@ import { getTeamTbaStats, refreshTbaStats } from "@/lib/tba-cache";
             </button>
         </div>
         <p v-if="refreshError" class="stats-error">{{ refreshError }}</p>
-        <p class="hint">EPA comes from pre-scouting entries; OPR/DPR come from The Blue Alliance — tap Refresh to
-            re-pull the latest.</p>
+        <p class="hint">EPA comes from pre-scouting entries; rank and OPR/DPR come from The Blue Alliance — tap Refresh
+            to re-pull the latest. Batteries and chargers come from pit scouting.</p>
 
         <div v-if="!loaded" class="stats-loading">Loading…</div>
 
@@ -28,20 +29,26 @@ import { getTeamTbaStats, refreshTbaStats } from "@/lib/tba-cache";
             <table>
                 <thead>
                     <tr>
+                        <th class="sortable" @click="sortBy('rank')">Rank{{ sortIndicator('rank') }}</th>
                         <th class="sortable" @click="sortBy('team_number')">Team{{ sortIndicator('team_number') }}</th>
                         <th class="sortable" @click="sortBy('name')">Name{{ sortIndicator('name') }}</th>
                         <th class="sortable" @click="sortBy('epa')">EPA{{ sortIndicator('epa') }}</th>
                         <th class="sortable" @click="sortBy('opr')">OPR{{ sortIndicator('opr') }}</th>
                         <th class="sortable" @click="sortBy('dpr')">DPR{{ sortIndicator('dpr') }}</th>
+                        <th class="sortable" @click="sortBy('batteries')">Batt{{ sortIndicator('batteries') }}</th>
+                        <th class="sortable" @click="sortBy('chargers')">Chg{{ sortIndicator('chargers') }}</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="row in sortedRows" :key="row.team_number">
+                        <td>{{ row.rank ?? '—' }}</td>
                         <td><RouterLink :to="`/team/${row.team_number}`" class="team-link">{{ row.team_number }}</RouterLink></td>
                         <td>{{ row.name }}</td>
                         <td>{{ formatNumber(row.epa) }}</td>
                         <td>{{ formatNumber(row.opr) }}</td>
                         <td>{{ formatNumber(row.dpr) }}</td>
+                        <td>{{ row.batteries ?? '—' }}</td>
+                        <td>{{ row.chargers ?? '—' }}</td>
                     </tr>
                 </tbody>
             </table>
@@ -57,25 +64,32 @@ export default {
             loaded: false,
             teams: [],
             epaByTeam: {},
+            pitByTeam: {},
             // Bumped after a refresh to force `rows` to re-read the TBA cache
             // (a plain localStorage read isn't reactive on its own).
             tbaStatsVersion: 0,
             refreshing: false,
             refreshError: '',
-            sort: { key: 'team_number', direction: 'asc' }
+            // Unranked teams (no TBA rankings yet) sort last.
+            sort: { key: 'rank', direction: 'asc' }
         }
     },
     computed: {
         rows() {
             this.tbaStatsVersion;
+            const ranks = getCachedTbaRankings(this.eventStore.eventId)?.ranks ?? {};
             return this.teams.map((team) => {
                 const tbaStats = getTeamTbaStats(this.eventStore.eventId, team.team_number) ?? {};
+                const pit = this.pitByTeam[team.team_number];
                 return {
+                    rank: ranks[team.team_number] ?? null,
                     team_number: team.team_number,
                     name: team.name,
                     epa: this.epaByTeam[team.team_number] ?? null,
                     opr: tbaStats.opr ?? null,
-                    dpr: tbaStats.dpr ?? null
+                    dpr: tbaStats.dpr ?? null,
+                    batteries: pit?.batteries ?? null,
+                    chargers: pit?.chargers ?? null
                 };
             });
         },
@@ -101,21 +115,37 @@ export default {
             await this.eventStore.updateEvent();
             const eventId = this.eventStore.eventId;
 
-            const [teams, epaByTeam] = await Promise.all([
+            const [teams, epaByTeam, pitByTeam] = await Promise.all([
                 queryTeamNumbers(eventId),
-                fetchLatestEpaByTeam(eventId)
+                fetchLatestEpaByTeam(eventId),
+                fetchTeamPitSummaries(eventId)
             ]);
 
             this.teams = [...teams].sort((a, b) => a.team_number - b.team_number);
             this.epaByTeam = epaByTeam;
+            this.pitByTeam = pitByTeam;
 
             this.loaded = true;
+
+            // Rank is the default sort, so pull it once if this device has
+            // never fetched it for the event.
+            if (!getCachedTbaRankings(eventId)) {
+                try {
+                    await refreshTbaRankings(eventId);
+                    this.tbaStatsVersion++;
+                } catch (e) {
+                    console.warn('Failed to fetch TBA rankings:', e);
+                }
+            }
         },
         async refreshStats() {
             this.refreshing = true;
             this.refreshError = '';
             try {
-                await refreshTbaStats(this.eventStore.eventId);
+                await Promise.all([
+                    refreshTbaStats(this.eventStore.eventId),
+                    refreshTbaRankings(this.eventStore.eventId)
+                ]);
                 this.tbaStatsVersion++;
             } catch (e) {
                 this.refreshError = e.message ?? String(e);
@@ -126,10 +156,11 @@ export default {
             if (this.sort.key === key) {
                 this.sort.direction = this.sort.direction === 'asc' ? 'desc' : 'asc';
             } else {
-                // Team/name default to ascending (alphabetical-ish); the stat
-                // columns default to descending, so the "best" teams surface
-                // on the first click.
-                this.sort = { key, direction: (key === 'team_number' || key === 'name') ? 'asc' : 'desc' };
+                // Rank/team/name default to ascending; the stat columns
+                // default to descending, so the "best" teams surface on the
+                // first click.
+                const ascending = ['rank', 'team_number', 'name'].includes(key);
+                this.sort = { key, direction: ascending ? 'asc' : 'desc' };
             }
         },
         sortIndicator(key) {

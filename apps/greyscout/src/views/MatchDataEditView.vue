@@ -5,8 +5,9 @@ import FormSection from "@greybots/common/components/FormSection.vue";
 
 import { matchScoutTable } from "@/lib/constants";
 import { buildTeamRowSchema } from "@/lib/2026/match-scouting-form";
-import { validateForm, parseScoutData, updateScoutData, deleteScoutData } from "@/lib/data-submission";
+import { validateForm, parseScoutData, updateScoutData, deleteScoutData, isNetworkError } from "@/lib/data-submission";
 import { fetchMatchDataById, matchLabel } from "@/lib/picklist-query";
+import { useAuthStore } from "@/stores/auth-store";
 import { useOfflineQueueStore } from "@/stores/offline-queue-store";
 
 import "@material/web/button/filled-button";
@@ -38,6 +39,10 @@ import "@material/web/button/filled-button";
 
             <div class="data-tile error-tile" v-if="formInvalid">
                 <h1>^^^ Form is invalid. Please check the form for errors ^^^</h1>
+            </div>
+
+            <div class="data-tile error-tile" v-if="saveError">
+                <h1>Save failed: {{ saveError }}</h1>
             </div>
 
             <div class="data-tile error-tile" v-if="deleteError">
@@ -72,6 +77,7 @@ export default {
             formInvalid: false,
             isSaving: false,
             confirmingDelete: false,
+            saveError: '',
             deleteError: ''
         }
     },
@@ -100,7 +106,9 @@ export default {
             this.loaded = false;
             const id = Number(this.$route.params.id);
             this.matchRow = await fetchMatchDataById(id);
-            this.schema = this.matchRow ? buildTeamRowSchema({ existingData: this.matchRow }) : [];
+            this.schema = this.matchRow
+                ? buildTeamRowSchema({ existingData: this.matchRow, requireComments: !useAuthStore().isLead })
+                : [];
             this.loaded = true;
         },
         formValidation() {
@@ -129,6 +137,7 @@ export default {
             this.isSaving = true;
             this.saveSuccess = false;
             this.queuedOffline = false;
+            this.saveError = '';
 
             if (!this.formValidation()) {
                 this.isSaving = false;
@@ -145,6 +154,14 @@ export default {
             dbData.prematch_alliance = this.matchRow.prematch_alliance;
 
             const error = await updateScoutData(this.matchRow.id, dbData, matchScoutTable);
+
+            if (error && !isNetworkError(error)) {
+                // Queueing wouldn't help — stay here so the edit isn't lost.
+                console.log(error);
+                this.saveError = error.message;
+                this.isSaving = false;
+                return;
+            }
 
             if (error) {
                 console.log(error);

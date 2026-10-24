@@ -126,6 +126,14 @@ export function parseScoutData(data, eventId) {
     return db_data
 }
 
+// Supabase returns database, permission, and auth errors with a code (a
+// Postgres SQLSTATE or a PGRST code), but a dropped connection comes back
+// with none. Only the latter is worth queueing for a later retry — a coded
+// error will fail the same way every time.
+export function isNetworkError(error) {
+    return !navigator.onLine || !error?.code;
+}
+
 export async function submitScoutData(data, table) {
     // Submit the data to the database.
     const { error } = await supabase.from(table).insert(data);

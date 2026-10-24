@@ -14,6 +14,8 @@ export function computePitStats(pit) {
     const entries = [];
     if (pit.weight != null) entries.push({ label: 'Weight', avg: formatWeight(pit.weight), sub: 'no bumpers / battery' });
     if (pit.vibe != null) entries.push({ label: 'Vibe', avg: `${pit.vibe} / 5`, sub: 'pit vibe check' });
+    if (pit.batteries != null) entries.push({ label: 'Batteries', avg: String(pit.batteries), sub: 'pit scouting' });
+    if (pit.chargers != null) entries.push({ label: 'Chargers', avg: String(pit.chargers), sub: 'pit scouting' });
     return entries;
 }
 
@@ -44,6 +46,8 @@ export function computeInlineStats(eventId: string, teamNumber: number, summary,
 
     if (pit?.weight != null) chips.push({ label: 'Weight', value: formatWeight(pit.weight) });
     if (pit?.vibe != null) chips.push({ label: 'Vibe', value: `${pit.vibe}/5`, warn: pit.vibe <= 2 });
+    if (pit?.batteries != null) chips.push({ label: 'Batt', value: String(pit.batteries) });
+    if (pit?.chargers != null) chips.push({ label: 'Chg', value: String(pit.chargers) });
     return chips;
 }
 

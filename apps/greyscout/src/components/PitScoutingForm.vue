@@ -4,7 +4,7 @@ import FormSection from "@greybots/common/components/FormSection.vue";
 
 import { pitScoutTable } from "@/lib/constants";
 import { getPitScoutSchema } from "@/lib/2026/pit-scouting-form";
-import { validateForm, parseScoutData, submitScoutData, updateScoutData } from "@/lib/data-submission";
+import { validateForm, parseScoutData, submitScoutData, updateScoutData, isNetworkError } from "@/lib/data-submission";
 import { fetchPitDataById } from "@/lib/picklist-query";
 import { useEventStore } from "@/stores/event-store";
 import { useOfflineQueueStore } from "@/stores/offline-queue-store";
@@ -22,6 +22,9 @@ import "@material/web/button/filled-button";
 
         <div class="data-tile error-tile" v-if="formInvalid">
             <h1>^^^ Form is invalid. Please check the form for errors ^^^</h1>
+        </div>
+        <div class="data-tile error-tile" v-if="submitError">
+            <h1>Couldn't save: {{ submitError }}</h1>
         </div>
 
         <div class="button-container" v-if="formLoaded && !isSubmitting">
@@ -52,6 +55,7 @@ export default {
             formLoaded: false,
             submitData: {},
             formInvalid: false,
+            submitError: '',
             isSubmitting: false
         }
     },
@@ -78,6 +82,7 @@ export default {
         },
         async submitForm() {
             this.isSubmitting = true;
+            this.submitError = '';
 
             if (!this.formValidation()) {
                 this.isSubmitting = false;
@@ -92,6 +97,14 @@ export default {
             const error = this.pitDataId != null
                 ? await updateScoutData(this.pitDataId, this.submitData, pitScoutTable)
                 : await submitScoutData(this.submitData, pitScoutTable);
+
+            if (error && !isNetworkError(error)) {
+                // Queueing wouldn't help — keep the form open with the reason.
+                console.log(error);
+                this.submitError = error.message;
+                this.isSubmitting = false;
+                return;
+            }
 
             if (error) {
                 console.log(error);

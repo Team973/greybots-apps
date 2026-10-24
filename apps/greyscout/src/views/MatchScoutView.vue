@@ -7,8 +7,9 @@ import Switch from "@greybots/common/components/Switch.vue";
 
 import { matchScoutTable, matchTypes, defaultMatchType } from "@/lib/constants";
 import { buildTeamRowSchema } from "@/lib/2026/match-scouting-form";
-import { validateForm, parseScoutData, submitScoutData, getTeamInputElement } from "@/lib/data-submission";
+import { validateForm, parseScoutData, submitScoutData, getTeamInputElement, isNetworkError } from "@/lib/data-submission";
 import { queryMatchTeams, queryPlayoffMatchTeams } from "@/lib/data-query";
+import { useAuthStore } from "@/stores/auth-store";
 import { useEventStore } from "@/stores/event-store";
 import { useOfflineQueueStore } from "@/stores/offline-queue-store";
 import { useWatchlistStore } from "@/stores/watchlist-store";
@@ -65,13 +66,18 @@ import "@material/web/button/filled-button";
                 :alliance-color="slot.allianceColor" :schema="rows[idx].schema" :expanded="rows[idx].expanded"
                 :dirty="rows[idx].dirty" :included="rows[idx].included"
                 :watched="slot.teamNumber ? watchlistStore.isWatched(slot.teamNumber) : false"
-                :form-invalid="rows[idx].formInvalid" @toggle-expand="toggleExpand(idx)"
+                :form-invalid="rows[idx].formInvalid" :error-message="rows[idx].submitError"
+                @toggle-expand="toggleExpand(idx)"
                 @toggle-included="toggleIncluded(idx)" @form-update="onRowFormUpdate(idx)">
             </MatchTeamRow>
         </div>
 
         <div class="data-tile error-tile" v-if="formInvalid">
             <h1>^^^ Form is invalid. Please check the highlighted teams for errors ^^^</h1>
+        </div>
+        <div class="data-tile error-tile" v-if="submitFailed">
+            <h1>Some teams couldn't be saved</h1>
+            <p>Those entries were not queued. Check the error on each highlighted team, fix it, and submit again.</p>
         </div>
         <div class="data-tile success-tile" v-if="submitSuccess">
             <h1>Submitted successfully!</h1>
@@ -130,6 +136,7 @@ export default {
             lastMatchSyncKey: null,
             submitData: {},
             queuedOffline: false,
+            submitFailed: false,
             submitSuccess: false,
             formInvalid: false,
             isSubmitting: false,
@@ -139,11 +146,14 @@ export default {
     methods: {
         buildRow() {
             return {
-                schema: buildTeamRowSchema(),
+                schema: buildTeamRowSchema({ requireComments: !useAuthStore().isLead }),
                 expanded: false,
                 dirty: false,
                 included: true,
-                formInvalid: false
+                formInvalid: false,
+                // Why this row couldn't be submitted: no team assigned, or a
+                // database error that queueing offline wouldn't fix.
+                submitError: ''
             };
         },
         async loadScoutForm() {
@@ -168,6 +178,7 @@ export default {
         },
         onRowFormUpdate(idx) {
             this.rows[idx].dirty = true;
+            this.rows[idx].submitError = '';
             this.submitSuccess = false;
             this.resetSuccess = false;
 
@@ -194,6 +205,7 @@ export default {
             // Starting a new match context — any leftover submit banner from
             // the previous match no longer applies.
             this.queuedOffline = false;
+            this.submitFailed = false;
             this.submitSuccess = false;
             this.resetSuccess = false;
             this.formInvalid = false;
@@ -240,6 +252,7 @@ export default {
         },
         async submitForm() {
             this.queuedOffline = false;
+            this.submitFailed = false;
             this.submitSuccess = false;
             this.resetSuccess = false;
             this.formInvalid = false;
@@ -253,9 +266,13 @@ export default {
 
                 const { data, valid } = validateForm(row.schema);
                 row.schema = data;
-                row.formInvalid = !valid;
+                // A row with no team can never be saved (team number is
+                // NOT NULL), so stop it here instead of at the database.
+                const hasTeam = this.slots[idx].teamNumber != null;
+                row.submitError = hasTeam ? '' : 'No team assigned — pick a team before submitting.';
+                row.formInvalid = !valid || !hasTeam;
 
-                if (!valid) {
+                if (row.formInvalid) {
                     anyInvalid = true;
                     row.expanded = true;
                 } else {
@@ -270,6 +287,7 @@ export default {
             }
 
             let anyQueuedOffline = false;
+            let anyFailed = false;
 
             for (const idx of toSubmit) {
                 const row = this.rows[idx];
@@ -285,11 +303,31 @@ export default {
 
                 const error = await submitScoutData(dbData, matchScoutTable);
 
+                if (error && !isNetworkError(error)) {
+                    // Retrying later would fail the same way, so keep the row
+                    // on screen with the reason instead of queueing it.
+                    console.log(error);
+                    row.submitError = `Couldn't save: ${error.message}`;
+                    row.formInvalid = true;
+                    row.expanded = true;
+                    anyFailed = true;
+                    continue;
+                }
+
                 if (error) {
                     console.log(error);
                     this.queueStore.enqueue('scout_data', { table: matchScoutTable, data: dbData }, error.message ?? String(error));
                     anyQueuedOffline = true;
                 }
+                // Saved or queued — clear the row so a resubmit can't duplicate it.
+                this.rows[idx] = this.buildRow();
+            }
+
+            if (anyFailed) {
+                this.submitFailed = true;
+                this.queuedOffline = anyQueuedOffline;
+                this.isSubmitting = false;
+                return;
             }
 
             this.advanceToNextMatch();
