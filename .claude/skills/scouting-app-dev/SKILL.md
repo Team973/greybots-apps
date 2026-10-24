@@ -29,7 +29,15 @@ The Blue Alliance into Supabase.
   `git checkout -- apps/greyscout/dist/ && git clean -fd apps/greyscout/dist/`.
 - For UI changes, live-test with the claude-in-chrome browser tools rather
   than just trusting the build: log in, navigate, screenshot, verify, then
-  log out. Test account: `test@greybots.com` / `test973` (role: member).
+  log out. Test account: `test@greybots.com` / `test973`. It's an
+  **observer** in every app (`role`, `preflight_role`, `workshop_role`), so
+  it can look but not change anything. To test write paths, ask the user
+  first, then raise its role in just the app under test with
+  `supabase db query --linked` (an UPDATE on `"User"` with no auth context
+  skips the role trigger), and set it back to observer afterwards, deleting
+  any test data created. The sign-in form sends the password to the hosted
+  Supabase project, so ask the user to sign in in the browser tab rather than
+  typing it.
   There's also a live dev server (`npm run dev`, port 5173) with HMR — edits
   via the Edit tool land in the running page automatically, no rebuild needed
   for live testing.
@@ -40,13 +48,12 @@ The Blue Alliance into Supabase.
 - Never test destructive or reordering UI actions against the real/default
   production event's Team List or other shared data without checking first —
   prefer a personal list, a test account, or confirming with the user.
-- `gh` is not installed in this environment (Windows/git-bash) — there's no
-  fallback to `gh pr create`. To push and open a PR: `git push -u origin
-  <branch>` still works over the existing SSH remote and prints a
-  `.../pull/new/<branch>` compare URL; hand that URL to the user (with a
-  suggested title/description) to open the PR themselves, or drive it via
-  claude-in-chrome browser tools if they're connected — don't attempt a raw
-  GitHub API call without a token (none is set in this environment either).
+- `gh` is installed and authenticated. Always pass
+  `--repo Team973/greybots-apps`: without it, commands like `gh issue view`
+  can print nothing and exit 0. To open a PR: `git push -u origin <branch>`,
+  then `gh pr create --repo Team973/greybots-apps --base main --head <branch>
+  --title ... --body-file ...` (a body file avoids quoting trouble in
+  git-bash). PR titles follow the commit style ("App: what changed (#issue)").
 
 ## Data model conventions
 
