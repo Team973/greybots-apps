@@ -81,6 +81,8 @@ export interface TeamMatchSummary {
     diedCount: number;
     beachedCount: number;
     defenseCount: number;
+    /** Matches where the scout rated this team's defense "amazing". */
+    amazingDefenseCount: number;
     autoFailCount: number;
     noShowCount: number;
     /** defenseCount / matches * 100 — used to pre-filter Pick'em's Defender pool (issue #27). */
@@ -99,7 +101,7 @@ export interface TeamMatchSummary {
 export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<number, TeamMatchSummary>> {
     const { data, error } = await supabase
         .from(matchScoutTable)
-        .select('prematch_team_number, prematch_noshow, auto_failed, postmatch_broke, postmatch_died, postmatch_beached, postmatch_played_defense, postmatch_cards')
+        .select('prematch_team_number, prematch_noshow, auto_failed, postmatch_broke, postmatch_died, postmatch_beached, postmatch_played_defense, postmatch_defense_impact, postmatch_cards')
         .eq('event', eventId);
 
     if (error) {
@@ -113,7 +115,8 @@ export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<n
         if (teamNumber == null) return;
 
         const summary = summaries[teamNumber] ?? {
-            matches: 0, brokeCount: 0, diedCount: 0, beachedCount: 0, defenseCount: 0, autoFailCount: 0, noShowCount: 0,
+            matches: 0, brokeCount: 0, diedCount: 0, beachedCount: 0, defenseCount: 0, amazingDefenseCount: 0,
+            autoFailCount: 0, noShowCount: 0,
             defensePercent: 0, worstCard: null
         };
         summary.matches += 1;
@@ -121,6 +124,7 @@ export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<n
         if (row.postmatch_died) summary.diedCount += 1;
         if (row.postmatch_beached) summary.beachedCount += 1;
         if (row.postmatch_played_defense) summary.defenseCount += 1;
+        if (row.postmatch_defense_impact === 'amazing') summary.amazingDefenseCount += 1;
         if (row.auto_failed) summary.autoFailCount += 1;
         if (row.prematch_noshow) summary.noShowCount += 1;
         if (row.postmatch_cards === 'red') summary.worstCard = 'red';

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // @ts-nocheck
 
+import AppDialog from "@greybots/common/components/AppDialog.vue";
 import CollapsibleSection from "@greybots/common/components/CollapsibleSection.vue";
 import SearchableDropdown from "@greybots/common/components/SearchableDropdown.vue";
 
@@ -8,7 +9,7 @@ import { useEventStore } from "@/stores/event-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { queryEventMatchSchedule, queryAllEvents } from "@/lib/data-query";
 import { fetchAllUsers } from "@greybots/common/lib/user-roles";
-import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assignScoutToSlots } from "@/lib/scout-assignment-query";
+import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assignScoutToSlots, clearAssignments } from "@/lib/scout-assignment-query";
 </script>
 
 <template>
@@ -99,6 +100,30 @@ import { queryScoutAssignments, queryScoutAssignmentsForUser, assignScout, assig
                     </table>
                 </div>
                 <p v-if="assignmentError" class="form-error">{{ assignmentError }}</p>
+
+                <div class="clear-controls">
+                    <button type="button" class="danger-button" :disabled="assignmentCountFor('') === 0"
+                        @click="openClearDialog('')">Clear entire schedule</button>
+                    <div class="clear-scout">
+                        <SearchableDropdown class="clear-scout-select" :choices="clearScoutChoices"
+                            :model-value="clearScoutId" placeholder="Pick a scout…"
+                            @update:modelValue="clearScoutId = $event"></SearchableDropdown>
+                        <button type="button" class="danger-button" :disabled="!clearScoutId"
+                            @click="openClearDialog(clearScoutId)">Clear their schedule</button>
+                    </div>
+                </div>
+                <p v-if="clearMessage" class="hint">{{ clearMessage }}</p>
+
+                <AppDialog :open="clearDialog.open" :title="clearDialogTitle" @close="clearDialog.open = false">
+                    <p>This removes {{ clearDialog.count }} assignment{{ clearDialog.count === 1 ? '' : 's' }} at
+                        {{ eventStore.eventName }}. It can't be undone.</p>
+                    <template #actions>
+                        <button type="button" class="refresh-button" @click="clearDialog.open = false">Cancel</button>
+                        <button type="button" class="danger-button" :disabled="clearDialog.busy" @click="confirmClear">
+                            {{ clearDialog.busy ? 'Clearing…' : 'Clear' }}
+                        </button>
+                    </template>
+                </AppDialog>
             </CollapsibleSection>
 
             <CollapsibleSection v-if="pastGroups.length > 0" title="Past Assignments"
@@ -148,6 +173,10 @@ export default {
             // `${match_number}|${alliance}${slot_index}` -> scout_user_id
             assignedScoutByKey: {},
             assignmentError: "",
+            // Clearing the schedule: '' scoutUserId means everyone.
+            clearScoutId: '',
+            clearMessage: '',
+            clearDialog: { open: false, scoutUserId: '', count: 0, busy: false },
             // Excel-style fill-handle drag state for the admin grid.
             fillDrag: {
                 active: false,
@@ -180,6 +209,17 @@ export default {
                 { key: '', text: 'Unassigned' },
                 ...this.assignableUsers.map((person) => ({ key: person.user_id, text: person.name || 'Unnamed user' }))
             ];
+        },
+        // Only scouts who have something at this event to clear.
+        clearScoutChoices() {
+            const assigned = new Set(Object.values(this.assignedScoutByKey).filter(Boolean));
+            return this.assignableUsers
+                .filter((person) => assigned.has(person.user_id))
+                .map((person) => ({ key: person.user_id, text: person.name || 'Unnamed user' }));
+        },
+        clearDialogTitle() {
+            if (!this.clearDialog.scoutUserId) return 'Clear the entire schedule?';
+            return `Clear ${this.nameForUser(this.clearDialog.scoutUserId)}'s schedule?`;
         }
     },
     methods: {
@@ -199,6 +239,39 @@ export default {
         },
         adminScoutFor(matchNumber, slotKey) {
             return this.assignedScoutByKey[`${matchNumber}|${slotKey}`] || '';
+        },
+        nameForUser(userId) {
+            return this.people.find((person) => person.user_id === userId)?.name || 'Unnamed user';
+        },
+        // Filled slots at this event — all of them, or one scout's.
+        assignmentCountFor(scoutUserId) {
+            return Object.values(this.assignedScoutByKey)
+                .filter((id) => id && (!scoutUserId || id === scoutUserId)).length;
+        },
+        openClearDialog(scoutUserId) {
+            this.clearMessage = '';
+            this.clearDialog = { open: true, scoutUserId, count: this.assignmentCountFor(scoutUserId), busy: false };
+        },
+        async confirmClear() {
+            const { scoutUserId, count: expected } = this.clearDialog;
+            this.clearDialog.busy = true;
+            this.assignmentError = '';
+
+            const { count, error } = await clearAssignments(this.eventStore.eventId, scoutUserId || null);
+            this.clearDialog.open = false;
+
+            if (error) {
+                this.assignmentError = error.message ?? 'Unable to clear the schedule.';
+            } else if (count === 0 && expected > 0) {
+                this.assignmentError = "Nothing was cleared. Only leads and admins can change the schedule.";
+            } else {
+                this.clearMessage = scoutUserId
+                    ? `Cleared ${this.nameForUser(scoutUserId)}'s ${expected} assignment${expected === 1 ? '' : 's'}.`
+                    : `Cleared all ${expected} assignment${expected === 1 ? '' : 's'}.`;
+                this.clearScoutId = '';
+            }
+
+            await this.loadData();
         },
         // Deterministic per-scout color (same user always gets the same
         // hue) so a lead can spot who's assigned where at a glance. Spread
@@ -525,5 +598,43 @@ export default {
 
 .form-error {
     color: #c0392b;
+}
+
+.clear-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.clear-scout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.clear-scout-select {
+    min-width: 200px;
+}
+
+.danger-button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    background-color: #c0392b;
+    color: #fff;
+    cursor: pointer;
+    font: inherit;
+}
+
+.danger-button:hover:not(:disabled) {
+    background-color: #a93226;
+}
+
+.danger-button:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 </style>

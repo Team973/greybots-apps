@@ -89,7 +89,7 @@ function formatAvgRank(avgRank: number) {
 
         <div v-if="showInlineStats && !expanded" class="picklist-inline-stats" @click="emit('toggle-expand')">
             <span v-for="chip in computeInlineStats(eventId, team.team_number, matchSummary, pitSummary)" :key="chip.label"
-                class="inline-stat" :class="{ 'inline-stat--warn': chip.warn }">
+                class="inline-stat" :class="{ 'inline-stat--warn': chip.warn, 'inline-stat--highlight': chip.highlight }">
                 <span class="inline-stat-label">{{ chip.label }}</span> {{ chip.value }}
             </span>
         </div>
@@ -402,6 +402,10 @@ function formatAvgRank(avgRank: number) {
 
 .inline-stat--warn {
     background: rgba(211, 47, 47, 0.14);
+}
+
+.inline-stat--highlight {
+    background: rgba(46, 160, 67, 0.18);
 }
 
 /* Card / no-show tags on a match entry (issue #123). */

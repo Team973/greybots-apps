@@ -118,6 +118,7 @@ export function getMatchPostmatchFields() {
             options: {
                 choices: [
                     { key: "none", text: "Select impact..." },
+                    { key: "amazing", text: "Amazing" },
                     { key: "good", text: "Good" },
                     { key: "minimal", text: "Minimal" },
                     { key: "ineffective", text: "Ineffective" },

@@ -22,7 +22,8 @@ export function computePitStats(pit) {
 // The stats shown inline on a ranked row when the pick list's "Show stats"
 // switch is on (issue #123), so teams can be compared without expanding
 // each one. `summary` is a TeamMatchSummary, `pit` a TeamPitSummary; both
-// can be missing. `warn` marks a figure worth a second look.
+// can be missing. `warn` marks a figure worth a second look, `highlight` a
+// standout good one.
 export function computeInlineStats(eventId: string, teamNumber: number, summary, pit) {
     const chips = [];
     const tba = getTeamTbaStats(eventId, teamNumber);
@@ -33,6 +34,9 @@ export function computeInlineStats(eventId: string, teamNumber: number, summary,
         const pct = (count: number) => Math.round((count / summary.matches) * 100);
         chips.push({ label: 'Matches', value: String(summary.matches) });
         chips.push({ label: 'Def', value: `${pct(summary.defenseCount)}%` });
+        if (summary.amazingDefenseCount) {
+            chips.push({ label: 'Amazing D', value: String(summary.amazingDefenseCount), highlight: true });
+        }
         [
             ['Auto fail', summary.autoFailCount],
             ['Break', summary.brokeCount],
@@ -79,18 +83,21 @@ export function formatFieldLabel(field: string) {
         .replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// `value`, when set, is the column value that counts; otherwise any truthy
+// value does.
 export const FLAG_STATS = [
     { key: 'auto_failed', label: 'Auto Fail %' },
     { key: 'postmatch_broke', label: 'Break %' },
     { key: 'postmatch_died', label: 'Die %' },
     { key: 'postmatch_beached', label: 'Beach %' },
-    { key: 'postmatch_played_defense', label: 'Defense %' }
+    { key: 'postmatch_played_defense', label: 'Defense %' },
+    { key: 'postmatch_defense_impact', value: 'amazing', label: 'Amazing D %' }
 ];
 
 export function computeFlagStats(matchData: unknown[]) {
     if (!matchData.length) return [];
-    return FLAG_STATS.map(({ key, label }) => {
-        const count = matchData.filter(row => !!row[key]).length;
+    return FLAG_STATS.map(({ key, value, label }) => {
+        const count = matchData.filter(row => (value === undefined ? !!row[key] : row[key] === value)).length;
         const pct = (count / matchData.length) * 100;
         return { label, pct: pct.toFixed(0), count, total: matchData.length };
     });
