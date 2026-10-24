@@ -1,7 +1,7 @@
 # Greybots hub
 
 The one address to remember: a landing page with a big button for each
-greybots app (GreyScout, Preflight), plus the shared sign-in, registration,
+greybots app (GreyScout, Preflight, Workshop), plus the shared sign-in, registration,
 and People page.
 
 - **Launcher** (`/`): behind the sign-in. It shows a button per app with your
@@ -22,6 +22,7 @@ variables, set in the deployment (or a `.env.local` for development):
 | --- | --- |
 | `VITE_GREYSCOUT_URL` | `https://greyscout.vercel.app` |
 | `VITE_PREFLIGHT_URL` | `https://greybots-preflight.vercel.app` |
+| `VITE_WORKSHOP_URL` | `https://greybots-workshop.vercel.app` |
 
 ## Deployment
 

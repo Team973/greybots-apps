@@ -1,0 +1,9 @@
+{
+  "ignoreCommand": "bash ../../scripts/vercel-ignore-build.sh apps/workshop packages/common package.json package-lock.json scripts/vercel-ignore-build.sh",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
+  ]
+}

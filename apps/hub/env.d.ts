@@ -5,4 +5,5 @@ interface ImportMetaEnv {
   // override the defaults in src/lib/apps.ts.
   readonly VITE_GREYSCOUT_URL?: string;
   readonly VITE_PREFLIGHT_URL?: string;
+  readonly VITE_WORKSHOP_URL?: string;
 }

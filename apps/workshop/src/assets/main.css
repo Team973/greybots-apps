@@ -1,0 +1,324 @@
+@import '@greybots/common/styles/main.css';
+
+.main-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 64px;
+  padding: 1.5rem;
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Every page sits in one readable column; the wide ones (the calendar, the
+   ticket list) get more room. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 880px;
+}
+
+.main-content.wide .page {
+  max-width: 1200px;
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.page-header .hint {
+  flex-basis: 100%;
+}
+
+/* The sign-in and registration forms. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 460px;
+  box-sizing: border-box;
+  padding: 24px;
+  background-color: var(--tile-background-color);
+  border-radius: 12px;
+  box-shadow: inset 0 0 0.5px 1px hsla(0, 0%, 100%, 0.1),
+    0 0 0 1px hsla(230, 13%, 9%, 0.075),
+    0 3.5px 6px hsla(230, 13%, 9%, 0.09);
+}
+
+.card h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+/* A section of a page. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background-color: var(--tile-background-color);
+  box-sizing: border-box;
+}
+
+.panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel h2,
+.panel-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.hint {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.empty {
+  margin: 0;
+  opacity: 0.6;
+}
+
+.error-text {
+  margin: 0;
+  color: #e5534b;
+}
+
+.success-text {
+  margin: 0;
+  color: #3a9e3a;
+}
+
+.text-link {
+  color: var(--header-hover-color);
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Plain form controls. */
+.form-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+
+.field.full {
+  flex-basis: 100%;
+}
+
+/* Stacked straight in a column (not in a .form-grid row), the basis above
+   would be a height. */
+.dialog-body > .field,
+.panel > .field {
+  flex: none;
+}
+
+.field > span {
+  opacity: 0.75;
+}
+
+.field input,
+.field select,
+.field textarea,
+.control {
+  padding: 8px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-color);
+  background: var(--background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.95rem;
+  color-scheme: light dark;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  opacity: 0.6;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-color);
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.95rem;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--header-color);
+}
+
+.button.primary {
+  border-color: var(--header-color);
+  background: var(--header-color);
+  color: var(--header-text-color);
+}
+
+.button.primary:hover:not(:disabled) {
+  background: var(--header-hover-color);
+}
+
+.button.danger {
+  border-color: #e5534b;
+  color: #e5534b;
+}
+
+.button.small {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions-spacer {
+  flex: 1;
+}
+
+/* Small rounded labels: a ticket's status, components, points. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.chip.status-open {
+  border-color: #3987e5;
+  color: #3987e5;
+}
+
+.chip.status-in_progress {
+  border-color: #d0711a;
+  color: #d0711a;
+}
+
+.chip.status-closed {
+  border-color: #3a9e3a;
+  color: #3a9e3a;
+}
+
+.chip.status-closed.reason-duplicate,
+.chip.status-closed.reason-wont_do {
+  border-color: rgba(128, 128, 128, 0.6);
+  color: inherit;
+  opacity: 0.75;
+}
+
+.chip.points {
+  border-color: #b05703;
+  color: #d0711a;
+  font-weight: 600;
+}
+
+.chip.overdue {
+  border-color: #e5534b;
+  color: #e5534b;
+}
+
+/* Tabs and toggle groups. */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--accent-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.segmented button.on {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+.muted {
+  opacity: 0.7;
+}
+
+/* Chart colors (milestone burnups): checked to stay distinguishable for
+   color-blind readers against each theme's surface. */
+.viz-root {
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #1baf7a;
+  --viz-series-3: #eb6834;
+  --viz-axis: rgba(128, 128, 128, 0.5);
+  --viz-grid: rgba(128, 128, 128, 0.18);
+}
+
+html[theme='dark'] .viz-root {
+  --viz-series-1: #3987e5;
+  --viz-series-2: #199e70;
+  --viz-series-3: #d95926;
+}
+
+@media (max-width: 480px) {
+  .main-content {
+    padding: 1rem;
+  }
+}
