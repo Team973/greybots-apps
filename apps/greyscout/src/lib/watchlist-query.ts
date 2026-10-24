@@ -35,11 +35,18 @@ export async function addToWatchlist(eventId: string, teamNumber: number) {
  * Remove a team from the event's watchlist. Returns the error object or null on success.
  */
 export async function removeFromWatchlist(eventId: string, teamNumber: number) {
-    const { error } = await supabase
+    // RLS-denied deletes (non-leads) succeed with zero rows rather than
+    // erroring, so ask for the deleted rows back to tell the two apart.
+    const { data, error } = await supabase
         .from(watchlistTable)
         .delete()
         .eq('event_id', eventId)
-        .eq('team_number', teamNumber);
+        .eq('team_number', teamNumber)
+        .select('team_number');
+
+    if (!error && (!data || data.length === 0)) {
+        return { message: 'Team was not removed (already gone, or not permitted).' };
+    }
 
     return error;
 }

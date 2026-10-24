@@ -64,6 +64,19 @@ export async function assignScout(eventId, matchNumber, alliance, slotIndex, sco
 }
 
 /**
+ * Delete every assignment at an event, or only one scout's when scoutUserId
+ * is given. Returns { count, error }, where count is the number of rows
+ * removed — RLS-blocked deletes don't error, they just remove nothing.
+ */
+export async function clearAssignments(eventId, scoutUserId = null) {
+    let query = supabase.from(scoutAssignmentTable).delete().eq('event_id', eventId);
+    if (scoutUserId) query = query.eq('scout_user_id', scoutUserId);
+
+    const { data, error } = await query.select('id');
+    return { count: data?.length ?? 0, error };
+}
+
+/**
  * Assign the same scout to many alliance station slots in one request —
  * used by the schedule grid's fill-drag (copy one cell's scout across a
  * dragged range) so a large drag doesn't fire one request per cell.

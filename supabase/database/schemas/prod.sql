@@ -328,7 +328,7 @@ CREATE TABLE IF NOT EXISTS "public"."MatchData" (
     "postmatch_defense_impact" "text",
     "prematch_match_type" "text" DEFAULT 'qual'::"text" NOT NULL,
     CONSTRAINT "MatchData_match_type_check" CHECK (("prematch_match_type" = ANY (ARRAY['practice'::"text", 'qual'::"text", 'playoff'::"text"]))),
-    CONSTRAINT "MatchData_defense_impact_check" CHECK (("postmatch_defense_impact" IS NULL) OR ("postmatch_defense_impact" = ANY (ARRAY['none'::"text", 'good'::"text", 'minimal'::"text", 'ineffective'::"text"])))
+    CONSTRAINT "MatchData_defense_impact_check" CHECK (("postmatch_defense_impact" IS NULL) OR ("postmatch_defense_impact" = ANY (ARRAY['none'::"text", 'amazing'::"text", 'good'::"text", 'minimal'::"text", 'ineffective'::"text"])))
 );
 
 
@@ -1495,11 +1495,11 @@ CREATE POLICY "Enable read access for logged in users" ON "public"."Watchlist" F
 
 
 
-CREATE POLICY "Enable insert for authenticated users only" ON "public"."Watchlist" FOR INSERT TO "authenticated" WITH CHECK (true);
+CREATE POLICY "Enable insert for leads and admins" ON "public"."Watchlist" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
 
 
 
-CREATE POLICY "Enable delete for authenticated users only" ON "public"."Watchlist" FOR DELETE TO "authenticated" USING (true);
+CREATE POLICY "Enable delete for leads and admins" ON "public"."Watchlist" FOR DELETE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
 
 
 
@@ -1531,15 +1531,15 @@ CREATE POLICY "Enable read access for logged in users" ON "public"."ScoutAssignm
 
 
 
-CREATE POLICY "Enable insert for authenticated users only" ON "public"."ScoutAssignment" FOR INSERT TO "authenticated" WITH CHECK (true);
+CREATE POLICY "Enable insert for leads and admins" ON "public"."ScoutAssignment" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
 
 
 
-CREATE POLICY "Enable update for authenticated users only" ON "public"."ScoutAssignment" FOR UPDATE TO "authenticated" USING (true);
+CREATE POLICY "Enable update for leads and admins" ON "public"."ScoutAssignment" FOR UPDATE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"])))))) WITH CHECK ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
 
 
 
-CREATE POLICY "Enable delete for authenticated users only" ON "public"."ScoutAssignment" FOR DELETE TO "authenticated" USING (true);
+CREATE POLICY "Enable delete for leads and admins" ON "public"."ScoutAssignment" FOR DELETE TO "authenticated" USING ((EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))));
 
 
 

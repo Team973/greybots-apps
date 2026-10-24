@@ -10,6 +10,7 @@ import MatchDataEditView from "@/views/MatchDataEditView.vue";
 import PitScoutingView from "@/views/PitScoutingView.vue";
 import PreScoutView from "@/views/PreScoutView.vue";
 import StatsView from "@/views/StatsView.vue";
+import WatchlistView from "@/views/WatchlistView.vue";
 import TeamAnalysisView from "@/views/TeamAnalysisView.vue";
 import EventAnalysisView from "@/views/EventAnalysisView.vue";
 import StrategyView from "@/views/StrategyView.vue";
@@ -106,6 +107,15 @@ const router = createRouter({
       path: "/stats",
       name: "Stats | GreyScout",
       component: StatsView,
+      meta: {
+        requiresAuth: isSiteReadPrivate,
+        minRole: 'observer'
+      }
+    },
+    {
+      path: "/watchlist",
+      name: "Watchlist | GreyScout",
+      component: WatchlistView,
       meta: {
         requiresAuth: isSiteReadPrivate,
         minRole: 'observer'

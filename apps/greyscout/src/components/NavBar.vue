@@ -57,6 +57,7 @@ import { useOfflineQueueStore } from "@/stores/offline-queue-store";
                 <template v-if="expandedGroup === 'analysis'">
                     <RouterLink to="/team" class="nav-link nav-link-mobile nav-link-grouped">Team Analysis</RouterLink>
                     <RouterLink to="/stats" class="nav-link nav-link-mobile nav-link-grouped">Stats</RouterLink>
+                    <RouterLink to="/watchlist" class="nav-link nav-link-mobile nav-link-grouped">Watchlist</RouterLink>
                 </template>
 
                 <button type="button" class="nav-group-label" @click.stop="toggleGroup('allianceSelection')">
