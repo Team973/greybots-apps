@@ -15,9 +15,12 @@
 //     schedule, which stores the result in its own synced tables.
 //   - refresh_event: lead/admin only. Refreshes the event's team list and
 //     then its match schedule (issue #127). Teams TBA lists are upserted
-//     into Team; a team TBA no longer lists is deleted, unless its row is
-//     marked custom (added by hand, not from TBA). Nothing is deleted when
-//     TBA returns no teams at all.
+//     into Team, along with the B teams in the event's remap_teams (e.g.
+//     973B), which TBA's team list leaves out. Anything stored under a
+//     remapped placeholder team (9973) first moves to its B team (the
+//     remap_event_teams database function). A team TBA no longer lists
+//     is deleted, unless its row is marked custom (added by hand, not from
+//     TBA). Nothing is deleted when TBA returns no teams at all.
 //   - refresh_schedule: lead/admin only. Ports
 //     util/match_schedule.py's update_match_schedule_for_event — full
 //     delete+insert of the event's Match rows. ScoutAssignment isn't FK'd to
@@ -115,6 +118,26 @@ async function refreshSchedule(adminClient: any, eventId: string, tbaApiKey: str
   return { matchCount: rows.length };
 }
 
+// The teams an event's remap_teams maps placeholder numbers to that have a
+// letter (B teams), named after their parent team, e.g. "Greybots (B)".
+// Mirrors util/event_info.py's _remapped_teams.
+function remappedTeams(
+  remapTeams: Record<string, string>,
+  listedTeams: { teamNumber: string; name: string }[],
+): { teamNumber: string; name: string }[] {
+  const names = new Map(listedTeams.map((team) => [team.teamNumber, team.name]));
+  const listed = new Set(names.keys());
+  const remapped: { teamNumber: string; name: string }[] = [];
+  Object.values(remapTeams).forEach((teamKey) => {
+    const teamNumber = teamNumberFromKey(String(teamKey));
+    if (!teamNumber || listed.has(teamNumber) || !/[A-Z]$/.test(teamNumber)) return;
+    const parentName = names.get(teamNumber.slice(0, -1));
+    remapped.push({ teamNumber, name: parentName ? `${parentName} (${teamNumber.slice(-1)})` : `Team ${teamNumber}` });
+    listed.add(teamNumber);
+  });
+  return remapped;
+}
+
 // Brings the event's Team rows in line with TBA's team list: teams TBA
 // lists are added or renamed, and teams it no longer lists are removed,
 // except rows marked custom. Mirrors util/event_info.py.
@@ -134,10 +157,34 @@ async function refreshTeams(
     return { error: "Unexpected TBA response for the team list.", status: 502 };
   }
 
-  const rows = teams
+  // B teams aren't in TBA's team list: the event registers them under
+  // generic placeholder numbers (frc9973), and usually only right before
+  // the event remaps each one to its B team (frc973B), which is the key the
+  // match schedule then uses.
+  const eventResponse = await tbaFetch(`/event/${eventId}`, tbaApiKey);
+  if (!eventResponse.ok) {
+    return { error: `TBA request failed: ${eventResponse.status}`, status: 502 };
+  }
+  const remapTeams: Record<string, string> = (await eventResponse.json())?.remap_teams ?? {};
+
+  // Anything scouted or ranked under a placeholder moves to its B team.
+  const { error: remapError } = await adminClient.rpc("remap_event_teams", {
+    p_event_id: eventId,
+    p_remap: remapTeams,
+  });
+  if (remapError) {
+    return { error: remapError.message, status: 500 };
+  }
+
+  const placeholders = new Set(Object.keys(remapTeams).map((teamKey) => teamNumberFromKey(teamKey)));
+  const listedTeams = teams
     // deno-lint-ignore no-explicit-any
     .map((team: any) => ({ teamNumber: teamNumberFromKey(team?.key), name: team?.nickname ?? "" }))
-    .filter((team: { teamNumber: string | null }) => team.teamNumber !== null)
+    .filter((team: { teamNumber: string | null }) => team.teamNumber !== null && !placeholders.has(team.teamNumber));
+
+  const remapped = remappedTeams(remapTeams, listedTeams);
+
+  const rows = [...listedTeams, ...remapped]
     .map((team: { teamNumber: string; name: string }) => ({
       key: `${eventId}_${team.teamNumber}`,
       event_id: eventId,

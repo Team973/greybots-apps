@@ -38,6 +38,7 @@ import { useOfflineQueueStore } from "@/stores/offline-queue-store";
                 <RouterLink to="/data-status" class="nav-link nav-link-mobile">Data Status</RouterLink>
                 <RouterLink v-if="isLead" to="/strategy" class="nav-link nav-link-mobile">Match Strategy</RouterLink>
                 <RouterLink v-if="isLead" to="/users" class="nav-link nav-link-mobile">People</RouterLink>
+                <RouterLink v-if="isLead" to="/event-management" class="nav-link nav-link-mobile">Event Management</RouterLink>
 
                 <button v-if="isMember" type="button" class="nav-group-label" @click.stop="toggleGroup('scouting')">
                     <span class="nav-group-chevron" :class="{ 'nav-group-chevron--open': expandedGroup === 'scouting' }">▾</span>

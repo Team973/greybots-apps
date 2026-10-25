@@ -2,7 +2,36 @@
 // @ts-nocheck
 
 import { supabase } from '@greybots/common/supabase/client';
-import { defaultEventId, useDefaultEvent, eventInfoTable } from '@/lib/constants';
+import { defaultEventId, useDefaultEvent, eventInfoTable, eventOverrideKey } from '@/lib/constants';
+
+// The event this device views instead of the automatically picked one,
+// chosen on the Event Management page. Kept in localStorage, so it only
+// changes this device's view of the app.
+export function getEventOverride() {
+    try {
+        return localStorage.getItem(eventOverrideKey) || null;
+    } catch {
+        return null;
+    }
+}
+
+export function setEventOverride(eventId) {
+    try {
+        if (eventId) {
+            localStorage.setItem(eventOverrideKey, eventId);
+        } else {
+            localStorage.removeItem(eventOverrideKey);
+        }
+    } catch (e) {
+        console.warn('Failed to save event override:', e);
+    }
+}
+
+// Every event this season, earliest first.
+export async function getEventList() {
+    const { data, error } = await supabase.from(eventInfoTable).select("event_id, name, start_date, end_date").order("start_date", { ascending: true });
+    return { events: data ?? [], error };
+}
 
 export async function getCurrentEventInfo() {
     // Set the default information
@@ -11,6 +40,17 @@ export async function getCurrentEventInfo() {
         name: ""
     };
 
+    // An event picked for this device wins over everything else, as long as
+    // it still exists.
+    const overrideId = getEventOverride();
+    if (overrideId) {
+        const { data, error } = await supabase.from(eventInfoTable).select("*").eq("event_id", overrideId).limit(1);
+        if (!error && data.length > 0) {
+            info.id = data[0].event_id;
+            info.name = data[0].name;
+            return info;
+        }
+    }
 
     if (useDefaultEvent) {
         const { data, error } = await supabase.from(eventInfoTable).select("*").eq("event_id", defaultEventId).limit(1);

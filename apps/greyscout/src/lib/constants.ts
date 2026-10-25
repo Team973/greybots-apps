@@ -37,6 +37,9 @@ export const allianceBlue = "blue";
 export const sideLeft = "left";
 export const sideRight = "right";
 
+// Event picked for this device on the Event Management page
+export const eventOverrideKey = "greyscout_event_override";
+
 // Offline queue
 export const offlineQueueKey = "greyscout_offline_queue";
 

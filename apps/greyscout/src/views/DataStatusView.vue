@@ -27,7 +27,7 @@ import { matchNumberColumn, teamNumberColumn } from "@/lib/constants";
                 <p>{{ starredRows.length }} starred team{{ starredRows.length === 1 ? '' : 's' }}, with everything
                     collected on each so far. Stars are shared by the whole team<template v-if="!isLead">; leads
                         and admins can change them</template>. See how they're playing on the
-                    <RouterLink to="/watchlist">Watchlist</RouterLink>.</p>
+                    <RouterLink to="/watchlist" class="text-link">Watchlist</RouterLink>.</p>
 
                 <div v-if="isLead" class="star-add">
                     <SearchableDropdown :choices="starChoices" model-value="" placeholder="Star a team…"
@@ -607,6 +607,11 @@ export default {
 .edit-pencil:hover {
     color: #b05703;
     background: rgba(176, 87, 3, 0.12);
+}
+
+.text-link {
+    color: #b05703;
+    font-weight: 600;
 }
 
 .red-header {
