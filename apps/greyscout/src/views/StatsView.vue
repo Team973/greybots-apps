@@ -3,6 +3,7 @@
 import { RouterLink } from 'vue-router';
 
 import { useEventStore } from "@/stores/event-store";
+import { compareTeamNumbers } from "@/lib/team-number";
 import { queryTeamNumbers } from "@/lib/data-query";
 import { fetchLatestEpaByTeam } from "@/lib/prescout-query";
 import { fetchTeamPitSummaries } from "@/lib/picklist-query";
@@ -102,6 +103,7 @@ export default {
                 if (av == null && bv == null) return 0;
                 if (av == null) return 1;
                 if (bv == null) return -1;
+                if (key === 'team_number') return sign * compareTeamNumbers(av, bv);
                 if (av < bv) return -sign;
                 if (av > bv) return sign;
                 return 0;
@@ -121,7 +123,7 @@ export default {
                 fetchTeamPitSummaries(eventId)
             ]);
 
-            this.teams = [...teams].sort((a, b) => a.team_number - b.team_number);
+            this.teams = [...teams].sort((a, b) => compareTeamNumbers(a.team_number, b.team_number));
             this.epaByTeam = epaByTeam;
             this.pitByTeam = pitByTeam;
 

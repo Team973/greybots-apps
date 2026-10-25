@@ -63,7 +63,7 @@ export const defaultMatchType = "qual";
 export const robotPhotoBucket = "robot-photos";
 
 // Default team number
-export const defaultTeamNumber = 973;
+export const defaultTeamNumber = "973";
 
 // Event information.
 export const defaultEventId = "2026cc";

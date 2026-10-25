@@ -96,9 +96,10 @@ import "@material/web/button/filled-button";
 <script lang="ts">
 export default {
     props: {
+        // A team number such as "973" or "973B", or null when none is picked.
         teamNumber: {
-            type: Number,
-            required: true
+            type: String,
+            default: null
         },
         // Auto-opens the edit form for this team's pre-scouting data once
         // loaded — used by Data Status's lead-only edit shortcut (issue
@@ -128,7 +129,7 @@ export default {
     },
     methods: {
         async loadTeamPrescoutData() {
-            if (this.teamNumber < 0) {
+            if (!this.teamNumber) {
                 this.teamPrescoutData = null;
                 this.teamPrescoutDataLoaded = true;
                 return;
@@ -143,7 +144,7 @@ export default {
             }
         },
         async loadTeamPrescoutComments() {
-            if (this.teamNumber < 0) {
+            if (!this.teamNumber) {
                 this.teamPrescoutComments = [];
                 this.teamPrescoutCommentsLoaded = true;
                 return;

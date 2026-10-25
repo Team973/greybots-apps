@@ -35,9 +35,9 @@ const canSkip = computed(() => authStore.isLead);
 let session: PickemSession | null = null;
 
 // The team currently being placed (or the upper-ranked team of a refinement pair).
-const candidate = ref<number | null>(null);
+const candidate = ref<string | null>(null);
 // The team it's being compared against.
-const compareAgainst = ref<number | null>(null);
+const compareAgainst = ref<string | null>(null);
 // Whether to show the two teams in swapped order, randomized per matchup.
 const flipSides = ref(false);
 
@@ -119,7 +119,7 @@ onUnmounted(() => {
 
 // ─── Answering ─────────────────────────────────────────────────────────────────
 
-function pickWinner(winner: number) {
+function pickWinner(winner: string) {
     if (!session) return;
     session.choose(winner);
     syncFromSession();

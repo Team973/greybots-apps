@@ -1,18 +1,24 @@
 
+import re
+
 from supabase_client_interface import create_supabase_client
 from tba_client import TBAClient
 
 MATCH_TABLE = "Match"
 
 
+# Team numbers are text, since offseason events can field a B team: TBA keys
+# 973's second robot as "frc973B". Same rule as the app's src/lib/team-number.ts.
+TEAM_NUMBER_PATTERN = re.compile(r"^[1-9]\d{0,5}[A-Z]?$")
+
+
 def _team_number_from_key(team_key):
-    """Convert a TBA team key like "frc973" to 973, or None for an unfilled/surrogate slot."""
+    """Convert a TBA team key like "frc973" or "frc973B" to "973" / "973B", or
+    None for an unfilled/surrogate slot."""
     if not team_key or not team_key.startswith("frc"):
         return None
-    try:
-        return int(team_key[3:])
-    except ValueError:
-        return None
+    team_number = team_key[3:].upper()
+    return team_number if TEAM_NUMBER_PATTERN.match(team_number) else None
 
 
 def update_match_schedule_for_event(sb_credentials, tba_credentials, event_id):

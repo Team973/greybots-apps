@@ -97,13 +97,13 @@ const rankingsStatus = computed(() => {
 
 const captainSet = computed(() => new Set(playoffsStore.captainEligible));
 
-function isCaptain(teamNumber: number) {
+function isCaptain(teamNumber: string) {
     return poolOrder.value === 'smart' && captainSet.value.has(teamNumber);
 }
 
 // The corner label on a pool tile: the team's TBA rank, or its pick-list
 // position when the pool is ordered by the pick list.
-function poolBadge(teamNumber: number) {
+function poolBadge(teamNumber: string) {
     const rank = playoffsStore.rankings[teamNumber];
     const position = playoffsStore.picklistPosition[teamNumber];
     if (poolOrder.value === 'tba' || isCaptain(teamNumber)) return rank != null ? `#${rank}` : '';
@@ -205,7 +205,8 @@ async function addTypedTeam(allianceNumber: number, slotIndex: number, focusNext
     const key = `${allianceNumber}-${slotIndex}`;
     const raw = String(typedNumber[key] ?? '').trim();
     if (!raw) return;
-    const error = /^\d+$/.test(raw) ? playoffsStore.addTeamToAlliance(allianceNumber, Number(raw)) : 'Enter a team number.';
+    // The store checks it's a team number (973, or 973B for a B team).
+    const error = playoffsStore.addTeamToAlliance(allianceNumber, raw);
     typedError[allianceNumber] = error ?? '';
     if (error) return;
     typedNumber[key] = '';
@@ -227,7 +228,7 @@ async function leaveSlot(allianceNumber: number, slotIndex: number) {
     typedNumber[`${allianceNumber}-${slotIndex}`] = '';
 }
 
-async function removeTeam(teamNumber: number) {
+async function removeTeam(teamNumber: string) {
     Object.keys(typedError).forEach((key) => { typedError[key] = ''; });
     playoffsStore.removeTeam(teamNumber);
     await saveNow();
@@ -237,7 +238,7 @@ async function removeTeam(teamNumber: number) {
 
 const poolSearch = ref('');
 
-function matchesSearch(teamNumber: number) {
+function matchesSearch(teamNumber: string) {
     const query = poolSearch.value.trim().toLowerCase();
     if (!query) return true;
     const team = playoffsStore.teamMap[teamNumber];
@@ -393,7 +394,7 @@ function allianceStatus(number: number) {
                                                 variant="slot" removable
                                                 @remove="removeTeam(playoffsStore.alliances[number - 1][i])" />
                                             <input v-else :id="`alliance-${number}-slot-${i}`" v-model="typedNumber[`${number}-${i}`]"
-                                                type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done"
+                                                type="text" inputmode="numeric" enterkeyhint="done"
                                                 class="alliance-slot-input" :placeholder="label" autocomplete="off"
                                                 :aria-label="`Team number for Alliance ${number}, ${label}`"
                                                 @input="typedError[number] = ''" @keydown.enter.prevent="addTypedTeam(number, i)"

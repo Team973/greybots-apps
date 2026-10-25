@@ -2,6 +2,8 @@
 
 import { supabase } from '@greybots/common/supabase/client';
 import { preScoutTable, preScoutCommentTable, userTable } from '@/lib/constants';
+import { toTeamNumber, normalizeTeamFields } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
 
 /**
  * Fetch the single canonical pre-scouting assessment (epa/archetype/tiers)
@@ -9,7 +11,7 @@ import { preScoutTable, preScoutCommentTable, userTable } from '@/lib/constants'
  * by prescout_data_team_unique. Returns null if the team hasn't been
  * pre-scouted yet.
  */
-export async function fetchTeamPreScoutData(teamNumber: number, eventId: string) {
+export async function fetchTeamPreScoutData(teamNumber: TeamNumber, eventId: string) {
     const { data, error } = await supabase
         .from(preScoutTable)
         .select(`id, prescout_epa, prescout_archetype, prescout_scoring_tier, prescout_driving_tier, prescout_defense_tier, created_at, ${userTable}(name)`)
@@ -43,7 +45,7 @@ export async function fetchTeamPreScoutData(teamNumber: number, eventId: string)
  * author, newest first — mirrors picklist-query.ts's fetchTeamPitData, but
  * for the N:1 (multiple scouts -> one team) PreScoutComment table.
  */
-export async function fetchTeamPreScoutComments(teamNumber: number, eventId: string) {
+export async function fetchTeamPreScoutComments(teamNumber: TeamNumber, eventId: string) {
     const { data, error } = await supabase
         .from(preScoutCommentTable)
         .select(`id, scouted_by, comment, created_at, ${userTable}(name)`)
@@ -82,7 +84,7 @@ export async function fetchPreScoutDataById(id: number) {
         return null;
     }
 
-    return data;
+    return normalizeTeamFields([data], ['prescout_team_number'])[0];
 }
 
 /**
@@ -90,7 +92,7 @@ export async function fetchPreScoutDataById(id: number) {
  * — used by the Stats page. Teams with no EPA on file (or no pre-scouting
  * data at all) are simply absent from the returned map.
  */
-export async function fetchLatestEpaByTeam(eventId: string): Promise<Record<number, number>> {
+export async function fetchLatestEpaByTeam(eventId: string): Promise<Record<TeamNumber, number>> {
     const { data, error } = await supabase
         .from(preScoutTable)
         .select('prescout_team_number, prescout_epa, created_at')
@@ -102,18 +104,19 @@ export async function fetchLatestEpaByTeam(eventId: string): Promise<Record<numb
         return {};
     }
 
-    const latestByTeam: Record<number, { epa: number; createdAt: string }> = {};
+    const latestByTeam: Record<TeamNumber, { epa: number; createdAt: string }> = {};
     (data ?? []).forEach((row) => {
-        const teamNumber = row.prescout_team_number;
+        const teamNumber = toTeamNumber(row.prescout_team_number);
+        if (!teamNumber) return;
         const existing = latestByTeam[teamNumber];
         if (!existing || row.created_at > existing.createdAt) {
             latestByTeam[teamNumber] = { epa: row.prescout_epa, createdAt: row.created_at };
         }
     });
 
-    const result: Record<number, number> = {};
+    const result: Record<TeamNumber, number> = {};
     Object.entries(latestByTeam).forEach(([teamNumber, entry]) => {
-        result[Number(teamNumber)] = entry.epa;
+        result[teamNumber] = entry.epa;
     });
     return result;
 }

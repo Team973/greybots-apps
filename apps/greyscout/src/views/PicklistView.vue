@@ -24,7 +24,7 @@ const queueStore = useOfflineQueueStore();
 const watchlistStore = useWatchlistStore();
 
 // Which row is expanded
-const expandedTeam = ref<number | null>(null);
+const expandedTeam = ref<string | null>(null);
 const expandedData = ref<{ stats: unknown[]; comments: unknown[] } | null>(null);
 const expandedLoading = ref(false);
 
@@ -202,7 +202,7 @@ watch(activeArchetype, async (archetype) => {
 
 // ─── Expand / collapse row ────────────────────────────────────────────────────
 
-async function toggleExpand(teamNumber: number) {
+async function toggleExpand(teamNumber: string) {
     if (expandedTeam.value === teamNumber) {
         expandedTeam.value = null;
         expandedData.value = null;
@@ -218,14 +218,14 @@ async function toggleExpand(teamNumber: number) {
 
 // ─── Picked toggle ─────────────────────────────────────────────────────────────
 
-async function togglePicked(teamNumber: number) {
+async function togglePicked(teamNumber: string) {
     if (!isLead.value || picklistStore.viewingPastEventId) return;
     await picklistStore.togglePicked(eventId.value, teamNumber);
 }
 
 // ─── Watchlist toggle ──────────────────────────────────────────────────────────
 
-async function toggleWatch(teamNumber: number) {
+async function toggleWatch(teamNumber: string) {
     if (!isLead.value || picklistStore.viewingPastEventId) return;
     await watchlistStore.toggleWatch(eventId.value, teamNumber);
 }
@@ -327,7 +327,7 @@ function exportTeamListCsv() {
     const rows: Record<string, unknown>[] = [];
     const { ranked, unranked } = picklistStore.teamLayout[activeArchetype.value];
     let rank = 0;
-    const addRow = (teamNumber: number, group: string) => {
+    const addRow = (teamNumber: string, group: string) => {
         const team = picklistStore.teamMap[teamNumber];
         if (!team) return;
         rank += 1;
@@ -363,7 +363,7 @@ function exportTeamListCsv() {
 
 // ─── Tier stats (Democratic / Team tabs) ──────────────────────────────────────
 
-function tierStatsFor(teamNumber: number) {
+function tierStatsFor(teamNumber: string) {
     return picklistStore.activeTierStatsFor(teamNumber);
 }
 
@@ -389,7 +389,7 @@ function groupRankOffset(group: string) {
 
 // Rank 1, 2, 3… down the ranked teams, skipping dividers.
 const teamPositions = computed(() => {
-    const positions = new Map<number, number>();
+    const positions = new Map<string, number>();
     picklistStore.activeTeamLayout.ranked.forEach((item) => {
         if (item.kind === 'team') positions.set(item.team, positions.size + 1);
     });

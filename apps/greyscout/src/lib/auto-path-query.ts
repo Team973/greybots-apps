@@ -7,7 +7,7 @@ import { autoPathTable, userTable } from '@/lib/constants';
  * Fetch all saved auto paths for a team at an event, newest first.
  * Returns array of { id, name, alliance, side, points, isDefault, author, created_at }.
  */
-export async function fetchTeamAutoPaths(teamNumber: number, eventId: string) {
+export async function fetchTeamAutoPaths(teamNumber: string, eventId: string) {
     const { data, error } = await supabase
         .from(autoPathTable)
         .select(`id, name, alliance, side, path, is_default, created_at, ${userTable}(name)`)
@@ -71,7 +71,7 @@ export async function deleteAutoPath(id: number) {
  * partial unique index, so this clears any existing default first. Returns
  * the error object or null on success.
  */
-export async function setAutoPathDefault(teamNumber: number, eventId: string, id: number) {
+export async function setAutoPathDefault(teamNumber: string, eventId: string, id: number) {
     const { error: clearError } = await supabase
         .from(autoPathTable)
         .update({ is_default: false })

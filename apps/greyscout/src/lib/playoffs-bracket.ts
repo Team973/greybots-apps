@@ -8,6 +8,9 @@
  * result automatically re-routes everyone downstream.
  */
 
+import { toTeamNumbers } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
+
 export const ALLIANCE_COUNT = 8;
 export const ALLIANCE_SIZE = 4;
 export const FINALS_MATCH = 14;
@@ -134,17 +137,20 @@ export function describeSource(source: SlotSource): string {
 }
 
 /** A blank set of alliances: 8 empty arrays of team numbers. */
-export function emptyAlliances(): number[][] {
+export function emptyAlliances(): TeamNumber[][] {
     return Array.from({ length: ALLIANCE_COUNT }, () => []);
 }
 
-/** Normalize stored jsonb (which may be missing/malformed) into 8 alliances of <= 4 numbers. */
-export function normalizeAlliances(raw: unknown): number[][] {
+/**
+ * Normalize stored jsonb (which may be missing/malformed) into 8 alliances
+ * of <= 4 team numbers. Older rows store numbers; see team-number.ts.
+ */
+export function normalizeAlliances(raw: unknown): TeamNumber[][] {
     const alliances = emptyAlliances();
     if (Array.isArray(raw)) {
         raw.slice(0, ALLIANCE_COUNT).forEach((teams, i) => {
             if (Array.isArray(teams)) {
-                alliances[i] = teams.map(Number).filter((n) => Number.isFinite(n)).slice(0, ALLIANCE_SIZE);
+                alliances[i] = toTeamNumbers(teams).slice(0, ALLIANCE_SIZE);
             }
         });
     }

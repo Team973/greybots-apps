@@ -20,6 +20,7 @@ import { getChartModel } from "@/lib/chart-model";
 import type { QueryInputs, ChartInputs } from "@/lib/chart-model";
 import { queryTeamMatchData, queryTeamNumbers, queryEventData } from "@/lib/data-query";
 import { defaultTeamNumber, minWidthForDesktop, teamNumberColumn, matchNumberColumn } from "@/lib/constants";
+import { compareTeamNumbers } from "@/lib/team-number";
 
 </script>
 
@@ -299,22 +300,10 @@ export default {
 
             const teamNumbersRows = await queryTeamNumbers(this.eventStore.eventId);
 
-            // Put the teams in a dictionary first in order to sort them by team number.
-            let teamMap = {};
-            teamNumbersRows.forEach(element => {
-                teamMap[element['team_number']] = (
-                    {
-                        "key": element['team_number'],
-                        "text": element['team_number'] + " - " + element['name']
-                    }
-                );
-            });
-
-
-            this.teamNumbers = [];
-            Object.keys(teamMap).forEach(element => {
-                this.teamNumbers.push(teamMap[element])
-            });
+            this.teamNumbers = teamNumbersRows
+                .filter((row) => row.team_number)
+                .sort((a, b) => compareTeamNumbers(a.team_number, b.team_number))
+                .map((row) => ({ key: row.team_number, text: row.team_number + " - " + row.name }));
             if (!this.teamNumbers.some(t => t.key === this.activeTeamNumber)) {
                 this.activeTeamNumber = this.teamNumbers[0]?.key ?? defaultTeamNumber;
             }

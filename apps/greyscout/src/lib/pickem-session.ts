@@ -20,13 +20,15 @@
  *    from recently shown / cooling teams, and the sides are randomly flipped.
  */
 
+import type { TeamNumber } from '@/lib/team-number';
+
 export type PickemPhase = 'placing' | 'refining' | 'insufficient';
 
 export interface PickemDeps {
     /** The currently ranked teams, best first. Called fresh each time. */
-    getRanked(): number[];
+    getRanked(): TeamNumber[];
     /** Move/insert `team` so it ends up at `index` of the ranked order. */
-    placeAt(team: number, index: number): void;
+    placeAt(team: TeamNumber, index: number): void;
     /** Uniform random in [0, 1). */
     random(): number;
 }
@@ -34,9 +36,9 @@ export interface PickemDeps {
 export interface PickemState {
     phase: PickemPhase;
     /** The team being placed (placing) or the upper-ranked team (refining). */
-    candidate: number | null;
+    candidate: TeamNumber | null;
     /** The team it's being compared against. */
-    opponent: number | null;
+    opponent: TeamNumber | null;
     /** Whether the UI should show `opponent` before `candidate` (random, for variety). */
     flip: boolean;
     placedCount: number;
@@ -54,24 +56,24 @@ export const RECENT_TEAMS_MEMORY = 6;
 export const REFINEMENT_WINDOW = 5;
 
 interface Search {
-    team: number;
+    team: TeamNumber;
     /** Lowest-ranked team the candidate is known to be worse than (null = none yet). */
-    lowerTeam: number | null;
+    lowerTeam: TeamNumber | null;
     /** Highest-ranked team the candidate is known to be better than (null = none yet). */
-    upperTeam: number | null;
+    upperTeam: TeamNumber | null;
 }
 
 interface CurrentMatchup {
     search: Search | null;
-    candidate: number;
-    opponent: number;
+    candidate: TeamNumber;
+    opponent: TeamNumber;
     /** Refining only: ranked index of the upper team when the pair was shown. */
     upperIndex: number;
 }
 
 export function createPickemSession(deps: PickemDeps) {
     let phase: PickemPhase = 'placing';
-    let queue: number[] = [];
+    let queue: TeamNumber[] = [];
     let searches: Search[] = [];
     let current: CurrentMatchup | null = null;
     let flip = false;
@@ -82,15 +84,15 @@ export function createPickemSession(deps: PickemDeps) {
 
     // One "round" per matchup presented; cooldowns are expressed in rounds.
     let round = 0;
-    const coolUntil = new Map<number, number>();
-    let recent: number[] = [];
-    let lastCandidate: number | null = null;
-    let lastRefinementPair: [number, number] | null = null;
+    const coolUntil = new Map<TeamNumber, number>();
+    let recent: TeamNumber[] = [];
+    let lastCandidate: TeamNumber | null = null;
+    let lastRefinementPair: [TeamNumber, TeamNumber] | null = null;
 
-    const isCool = (team: number) => (coolUntil.get(team) ?? 0) > round;
+    const isCool = (team: TeamNumber) => (coolUntil.get(team) ?? 0) > round;
     const randInt = (n: number) => Math.floor(deps.random() * n);
-    const remember = (...teams: number[]) => { recent = [...recent, ...teams].slice(-RECENT_TEAMS_MEMORY); };
-    const coolDown = (team: number) => { coolUntil.set(team, round + SKIP_COOLDOWN_ROUNDS + 1); };
+    const remember = (...teams: TeamNumber[]) => { recent = [...recent, ...teams].slice(-RECENT_TEAMS_MEMORY); };
+    const coolDown = (team: TeamNumber) => { coolUntil.set(team, round + SKIP_COOLDOWN_ROUNDS + 1); };
 
     /**
      * The best non-empty subset of `items`: ones whose teams are neither
@@ -98,7 +100,7 @@ export function createPickemSession(deps: PickemDeps) {
      * else everything — so a small pool can never leave nothing to show.
      * Order is preserved.
      */
-    function preferred<T>(items: T[], teamsOf: (item: T) => number[]): T[] {
+    function preferred<T>(items: T[], teamsOf: (item: T) => TeamNumber[]): T[] {
         const clean = items.filter((it) => teamsOf(it).every((t) => !isCool(t) && !recent.includes(t)));
         if (clean.length > 0) return clean;
         const notCooling = items.filter((it) => teamsOf(it).every((t) => !isCool(t)));
@@ -108,7 +110,7 @@ export function createPickemSession(deps: PickemDeps) {
     // ─── Placing ──────────────────────────────────────────────────────────────
 
     /** [lo, hi) of ranked indexes the search still has to choose between. */
-    function windowOf(search: Search, ranked: number[]): [number, number] {
+    function windowOf(search: Search, ranked: TeamNumber[]): [number, number] {
         // Bounds are kept as teams, not indexes, so other searches inserting
         // teams into the ranked list meanwhile just widen the window.
         const lo = search.lowerTeam == null ? 0 : ranked.indexOf(search.lowerTeam) + 1;
@@ -122,7 +124,7 @@ export function createPickemSession(deps: PickemDeps) {
      * search, while keeping the search close to O(log n)), then nudged to the
      * closest team that isn't cooling down or recently shown.
      */
-    function choosePivot(ranked: number[], lo: number, hi: number): number {
+    function choosePivot(ranked: TeamNumber[], lo: number, hi: number): number {
         const width = hi - lo;
         const trueMid = lo + (width >> 1);
         const jitter = width > 2 ? Math.round((deps.random() - 0.5) * width * 0.6) : 0;
@@ -271,7 +273,7 @@ export function createPickemSession(deps: PickemDeps) {
     }
 
     /** Begin a session over the given unranked teams (shuffled here). */
-    function start(pool: number[]) {
+    function start(pool: TeamNumber[]) {
         queue = [...pool];
         for (let i = queue.length - 1; i > 0; i--) {
             const j = randInt(i + 1);
@@ -292,7 +294,7 @@ export function createPickemSession(deps: PickemDeps) {
     }
 
     /** The user picked `winner` (one of the two teams currently shown). */
-    function choose(winner: number) {
+    function choose(winner: TeamNumber) {
         if (!current) return;
         const { search, candidate, opponent, upperIndex } = current;
         if (winner !== candidate && winner !== opponent) return;

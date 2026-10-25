@@ -5,7 +5,7 @@ import type { TeamEntry } from '@/stores/picklist-store';
 // `team` can be undefined for a team number that's on an alliance but isn't
 // in this event's team list — it still renders (number only, no photo).
 defineProps<{
-    teamNumber: number;
+    teamNumber: string;
     team?: TeamEntry;
     // 'slot' = wide row that fills an alliance slot; 'tile' = square card for the pool.
     variant: 'slot' | 'tile';

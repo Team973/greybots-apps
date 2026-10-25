@@ -39,11 +39,22 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-// Converts a TBA team key like "frc973" to 973, or null for an unfilled/surrogate slot.
-function teamNumberFromKey(teamKey: string | undefined): number | null {
+// Team numbers are text, since offseason events can field a B team: TBA
+// keys 973's second robot as "frc973B". Mirrors toTeamNumber in the app's
+// src/lib/team-number.ts.
+const TEAM_NUMBER_PATTERN = /^[1-9]\d{0,5}[A-Z]?$/;
+
+// Converts a TBA team key like "frc973" or "frc973B" to "973" / "973B", or
+// null for an unfilled/surrogate slot.
+function teamNumberFromKey(teamKey: string | undefined): string | null {
   if (!teamKey || !teamKey.startsWith("frc")) return null;
-  const n = Number(teamKey.slice(3));
-  return Number.isFinite(n) ? n : null;
+  const teamNumber = teamKey.slice(3).toUpperCase();
+  return TEAM_NUMBER_PATTERN.test(teamNumber) ? teamNumber : null;
+}
+
+// Sorts 254 < 973 < 973B < 1678.
+function compareTeamNumbers(a: string, b: string): number {
+  return (parseInt(a, 10) - parseInt(b, 10)) || a.localeCompare(b);
 }
 
 function tbaFetch(path: string, apiKey: string) {
@@ -112,7 +123,7 @@ async function refreshTeams(
   adminClient: any,
   eventId: string,
   tbaApiKey: string,
-): Promise<{ teamCount: number; removedTeams: number[] } | Failure> {
+): Promise<{ teamCount: number; removedTeams: string[] } | Failure> {
   const response = await tbaFetch(`/event/${eventId}/teams/simple`, tbaApiKey);
   if (!response.ok) {
     return { error: `TBA request failed: ${response.status}`, status: 502 };
@@ -125,13 +136,13 @@ async function refreshTeams(
 
   const rows = teams
     // deno-lint-ignore no-explicit-any
-    .filter((team: any) => Number.isInteger(team?.team_number))
-    // deno-lint-ignore no-explicit-any
-    .map((team: any) => ({
-      key: `${eventId}_${team.team_number}`,
+    .map((team: any) => ({ teamNumber: teamNumberFromKey(team?.key), name: team?.nickname ?? "" }))
+    .filter((team: { teamNumber: string | null }) => team.teamNumber !== null)
+    .map((team: { teamNumber: string; name: string }) => ({
+      key: `${eventId}_${team.teamNumber}`,
       event_id: eventId,
-      team_number: team.team_number,
-      name: team.nickname ?? "",
+      team_number: team.teamNumber,
+      name: team.name,
     }));
 
   // An empty list means TBA hasn't published the teams (or something is
@@ -170,8 +181,8 @@ async function refreshTeams(
   return {
     teamCount: rows.length,
     removedTeams: dropped
-      .map((row: { team_number: number }) => row.team_number)
-      .sort((a: number, b: number) => a - b),
+      .map((row: { team_number: unknown }) => String(row.team_number))
+      .sort(compareTeamNumbers),
   };
 }
 
@@ -237,7 +248,7 @@ Deno.serve(async (req) => {
         team_number: teamNumberFromKey(row.team_key),
         rank: row.rank,
       }))
-      .filter((row: { team_number: number | null; rank?: number }) => row.team_number !== null && Number.isFinite(row.rank));
+      .filter((row: { team_number: string | null; rank?: number }) => row.team_number !== null && Number.isFinite(row.rank));
     return jsonResponse({ rankings });
   }
 

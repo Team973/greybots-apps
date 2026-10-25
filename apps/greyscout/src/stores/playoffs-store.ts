@@ -11,6 +11,8 @@ import {
     parseTeamTiers
 } from '@/lib/picklist-query';
 import { hasDividers } from '@/lib/team-list-layout';
+import { toTeamNumber, compareTeamNumbers } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
 import { fetchPlayoffs, upsertPlayoffs, fetchPlayoffsPrediction, upsertPlayoffsPrediction } from '@/lib/playoffs-query';
 import { getCachedTbaRankings, refreshTbaRankings } from '@/lib/tba-cache';
 import {
@@ -25,7 +27,7 @@ import {
 import type { TeamEntry } from '@/stores/picklist-store';
 import type { AlliancePoolOrder } from '@/lib/preferences';
 
-const copyAlliances = (alliances: number[][]) => alliances.map((teams) => [...teams]);
+const copyAlliances = (alliances: TeamNumber[][]) => alliances.map((teams) => [...teams]);
 
 // 'team' is the real alliance selection, shared by everyone and edited by
 // leads and admins. 'personal' is one user's own prediction (issue #123):
@@ -45,14 +47,14 @@ export const usePlayoffsStore = defineStore('playoffs', {
             // Whose prediction is on screen in personal mode.
             userId: null as string | null,
             teams: [] as TeamEntry[],
-            alliances: emptyAlliances() as number[][],
+            alliances: emptyAlliances() as TeamNumber[][],
             // Teams not yet on an alliance. A real array (not a getter) so
             // the pool's draggable can mutate it directly during a drag.
-            pool: [] as number[],
+            pool: [] as TeamNumber[],
             winners: {} as Record<number, number>,
             // Last state known to be in the database, used to work out which
             // teams a save added to / removed from an alliance.
-            savedAlliances: emptyAlliances() as number[][],
+            savedAlliances: emptyAlliances() as TeamNumber[][],
             loading: false,
             loaded: false,
             loadError: false,
@@ -63,20 +65,20 @@ export const usePlayoffsStore = defineStore('playoffs', {
             // How the pool is ordered (issue #123), and what it's ordered by.
             poolOrder: 'tba' as AlliancePoolOrder,
             // Team number -> current TBA qualification rank (1 = first).
-            rankings: {} as Record<number, number>,
+            rankings: {} as Record<TeamNumber, number>,
             rankingsFetchedAt: null as number | null,
             rankingsError: null as string | null,
             // Ranked teams of the pick list in use, best first, and which
             // list that is (null when there isn't one to use).
-            picklistOrder: [] as number[],
+            picklistOrder: [] as TeamNumber[],
             picklistSource: null as 'team' | 'personal' | null,
 
             pastEvents: [] as { event_id: string; name: string; start_date: string }[]
         };
     },
     getters: {
-        teamMap(state): Record<number, TeamEntry> {
-            const map: Record<number, TeamEntry> = {};
+        teamMap(state): Record<TeamNumber, TeamEntry> {
+            const map: Record<TeamNumber, TeamEntry> = {};
             state.teams.forEach((t) => { map[t.team_number] = t; });
             return map;
         },
@@ -92,7 +94,7 @@ export const usePlayoffsStore = defineStore('playoffs', {
         hasRankings(state): boolean {
             return Object.keys(state.rankings).length > 0;
         },
-        picklistPosition(state): Record<number, number> {
+        picklistPosition(state): Record<TeamNumber, number> {
             const positions: Record<number, number> = {};
             state.picklistOrder.forEach((teamNumber, index) => { positions[teamNumber] = index + 1; });
             return positions;
@@ -102,7 +104,7 @@ export const usePlayoffsStore = defineStore('playoffs', {
          * carried on from here: with N alliances still lacking a captain,
          * the N highest-ranked teams not yet on an alliance.
          */
-        captainEligible(state): number[] {
+        captainEligible(state): TeamNumber[] {
             const openCaptains = state.alliances.filter((alliance) => alliance.length === 0).length;
             return state.pool
                 .filter((teamNumber) => state.rankings[teamNumber] != null)
@@ -203,8 +205,8 @@ export const usePlayoffsStore = defineStore('playoffs', {
             // the ones with a tier count.
             const tiers = parseTeamTiers(result?.team_tiers);
             const ranked = hasDividers(result)
-                ? (result.team_numbers ?? []).map(Number)
-                : (result?.team_numbers ?? []).map(Number).filter((teamNumber) => tiers[teamNumber]);
+                ? (result.team_numbers ?? [])
+                : (result?.team_numbers ?? []).filter((teamNumber) => tiers[teamNumber]);
             this.picklistSource = source;
             this.picklistOrder = ranked;
             this.sortPool();
@@ -233,10 +235,10 @@ export const usePlayoffsStore = defineStore('playoffs', {
          * Teams with no rank or list position go last, by team number.
          */
         sortPool() {
-            const rank = (n: number) => this.rankings[n] ?? LAST;
-            const position = (n: number) => this.picklistPosition[n] ?? LAST;
-            const byTba = (a: number, b: number) => rank(a) - rank(b) || a - b;
-            const byPicklist = (a: number, b: number) => position(a) - position(b) || byTba(a, b);
+            const rank = (n: TeamNumber) => this.rankings[n] ?? LAST;
+            const position = (n: TeamNumber) => this.picklistPosition[n] ?? LAST;
+            const byTba = (a: TeamNumber, b: TeamNumber) => rank(a) - rank(b) || compareTeamNumbers(a, b);
+            const byPicklist = (a: TeamNumber, b: TeamNumber) => position(a) - position(b) || byTba(a, b);
 
             if (this.poolOrder === 'picklist') {
                 this.pool.sort(byPicklist);
@@ -258,10 +260,11 @@ export const usePlayoffsStore = defineStore('playoffs', {
          * entering alliances). Local only — callers save afterwards.
          * Returns a message saying why it couldn't, or null on success.
          */
-        addTeamToAlliance(allianceNumber: number, teamNumber: number): string | null {
+        addTeamToAlliance(allianceNumber: number, rawTeamNumber: unknown): string | null {
             const alliance = this.alliances[allianceNumber - 1];
             if (!alliance) return 'No such alliance.';
-            if (!Number.isInteger(teamNumber) || teamNumber <= 0) return 'Enter a team number.';
+            const teamNumber = toTeamNumber(rawTeamNumber);
+            if (!teamNumber) return 'Enter a team number.';
 
             const current = this.alliances.findIndex((teams) => teams.includes(teamNumber));
             if (current >= 0) return `Team ${teamNumber} is already on Alliance ${current + 1}.`;
@@ -274,7 +277,7 @@ export const usePlayoffsStore = defineStore('playoffs', {
         },
 
         /** Take a team off whichever alliance it's on. Local only. */
-        removeTeam(teamNumber: number) {
+        removeTeam(teamNumber: TeamNumber) {
             this.alliances = this.alliances.map((teams) => teams.filter((n) => n !== teamNumber));
             this.rebuildPool();
         },

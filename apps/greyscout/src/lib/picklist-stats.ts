@@ -24,7 +24,7 @@ export function computePitStats(pit) {
 // each one. `summary` is a TeamMatchSummary, `pit` a TeamPitSummary; both
 // can be missing. `warn` marks a figure worth a second look, `highlight` a
 // standout good one.
-export function computeInlineStats(eventId: string, teamNumber: number, summary, pit) {
+export function computeInlineStats(eventId: string, teamNumber: string, summary, pit) {
     const chips = [];
     const tba = getTeamTbaStats(eventId, teamNumber);
     if (tba?.opr != null) chips.push({ label: 'OPR', value: tba.opr.toFixed(1) });
@@ -106,7 +106,7 @@ export function computeFlagStats(matchData: unknown[]) {
 // TBA OPR/DPR, read synchronously from the local cache (src/lib/tba-cache.ts)
 // — never fetched here. Empty until a "Refresh TBA Stats" action has run at
 // least once for this event.
-export function computeTbaStats(eventId: string, teamNumber: number) {
+export function computeTbaStats(eventId: string, teamNumber: string) {
     const stats = getTeamTbaStats(eventId, teamNumber);
     if (!stats) return [];
 
