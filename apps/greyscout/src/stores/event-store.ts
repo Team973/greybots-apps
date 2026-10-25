@@ -4,13 +4,16 @@
 import { defineStore } from "pinia";
 
 import { defaultEventId } from '@/lib/constants';
-import { getCurrentEventInfo } from '@/lib/event-management';
+import { getCurrentEventInfo, getEventOverride } from '@/lib/event-management';
 
 export const useEventStore = defineStore('event', {
     state() {
         return {
             id: defaultEventId,
             name: "",
+            // True when this device is viewing an event picked on the Event
+            // Management page rather than the automatically chosen one.
+            overridden: false,
             isUpdated: false
         }
     },
@@ -20,6 +23,9 @@ export const useEventStore = defineStore('event', {
         },
         eventName(): String {
             return this.name
+        },
+        isOverridden(): boolean {
+            return this.overridden;
         },
         isLoaded(): boolean {
             return this.isUpdated;
@@ -31,6 +37,7 @@ export const useEventStore = defineStore('event', {
             const info = await getCurrentEventInfo();
             this.id = info.id;
             this.name = info.name;
+            this.overridden = getEventOverride() === info.id;
             this.isUpdated = true;
         }
     }

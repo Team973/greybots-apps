@@ -7,8 +7,6 @@ import "@material/web/button/filled-button";
 import { supabase } from "@greybots/common/supabase/client";
 
 import { useAuthStore } from "@/stores/auth-store";
-import { useEventStore } from "@/stores/event-store";
-import { refreshEventData } from "@/lib/tba-query";
 import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/preferences";
 </script>
 
@@ -18,19 +16,6 @@ import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/pr
             <h1>Profile</h1>
             <div>Name: {{ authStore.currentUserName || '(no name on file)' }}</div>
             <div>Scouting role: {{ authStore.role }}</div>
-        </div>
-
-        <div class="user-tile" v-if="authStore.isLead">
-            <h1>Event Management</h1>
-            <div>Current event: {{ eventStore.eventName || eventStore.eventId }}</div>
-            <p class="event-refresh-hint">Pulls the team list and match schedule from The Blue Alliance. A team that
-                has dropped out of the event is removed from the app.</p>
-            <md-filled-button v-on:click="refreshEventData" :disabled="eventRefreshing" class="load-button">
-                {{ eventRefreshing ? 'Refreshing…' : 'Refresh Event Data' }}
-            </md-filled-button>
-            <p v-if="eventRefreshMessage" class="event-refresh-message">{{ eventRefreshMessage }}</p>
-            <p v-if="eventRefreshError" class="form-error">{{ eventRefreshError }}</p>
-            <md-filled-button v-on:click="$router.push('/event-teams')" class="load-button">Event teams</md-filled-button>
         </div>
 
         <div class="user-tile">
@@ -46,12 +31,6 @@ import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/pr
         </div>
 
         <div class="user-tile">
-            <h1>People</h1>
-            <p>Everyone with an account, and their role in each greybots app.</p>
-            <md-filled-button v-on:click="$router.push('/users')" class="load-button">Manage people</md-filled-button>
-        </div>
-
-        <div class="user-tile">
             <h1>Log Out</h1>
             <md-filled-button v-on:click="logOutUser()" class="load-button">Log out</md-filled-button>
         </div>
@@ -63,34 +42,11 @@ export default {
     data() {
         return {
             authStore: null,
-            eventStore: null,
-            eventRefreshing: false,
-            eventRefreshMessage: "",
-            eventRefreshError: "",
             preferences: loadPreferences(),
             allianceEntryChoices,
         }
     },
     methods: {
-        async refreshEventData() {
-            this.eventRefreshing = true;
-            this.eventRefreshMessage = "";
-            this.eventRefreshError = "";
-
-            const { teamCount, removedTeams, matchCount, error } = await refreshEventData(this.eventStore.eventId);
-
-            if (error) {
-                this.eventRefreshError = error.message;
-            } else {
-                const teams = teamCount > 0
-                    ? `${teamCount} team${teamCount === 1 ? '' : 's'}`
-                    : "TBA has no team list yet, so the teams weren't changed";
-                const removed = removedTeams.length > 0 ? ` Removed (no longer at the event): ${removedTeams.join(', ')}.` : '';
-                this.eventRefreshMessage = `Event refreshed — ${teams}; ${matchCount} match${matchCount === 1 ? '' : 'es'}.${removed}`;
-            }
-
-            this.eventRefreshing = false;
-        },
         setAllianceEntry(value) {
             this.preferences = savePreferences({ allianceEntry: value });
         },
@@ -108,9 +64,7 @@ export default {
     },
     async created() {
         this.authStore = useAuthStore();
-        this.eventStore = useEventStore();
         await this.authStore.checkUser();
-        await this.eventStore.updateEvent();
     }
 }
 </script>
@@ -135,19 +89,5 @@ export default {
     background: var(--tile-background-color);
     color: var(--primary-text-color);
     font: inherit;
-}
-
-.form-error {
-    color: #c0392b;
-}
-
-.event-refresh-hint {
-    font-size: 13px;
-    opacity: 0.8;
-}
-
-.event-refresh-message {
-    color: #2f8a2f;
-    font-size: 13px;
 }
 </style>
