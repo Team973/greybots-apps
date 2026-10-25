@@ -25,6 +25,8 @@ import {
     DEFAULT_ARCHETYPE
 } from '@/lib/picklist-query';
 import type { Tier, TierGroup, TeamTierStats, TeamMatchSummary, TeamPitSummary, Archetype } from '@/lib/picklist-query';
+import { hasDividers, layoutFromSaved, layoutFromTierSections, serializeLayout } from '@/lib/team-list-layout';
+import type { TeamListLayout } from '@/lib/team-list-layout';
 import { defenseThresholdPercent } from '@/lib/constants';
 export type { Archetype };
 
@@ -92,6 +94,24 @@ function buildTierSections(
     return groups;
 }
 
+function emptyTeamLayout(): TeamListLayout {
+    return { ranked: [], unranked: [] };
+}
+
+/**
+ * The divider layout for a saved team list row (or none yet). A row still
+ * using tiers is converted, with a divider named for each tier, and is
+ * saved in the divider format from then on.
+ */
+function teamLayoutFromRow(row, allTeams: TeamEntry[]): TeamListLayout {
+    const allTeamNumbers = allTeams.map((t) => t.team_number);
+    if (hasDividers(row)) {
+        return layoutFromSaved(row.team_numbers ?? [], row.dividers, allTeamNumbers);
+    }
+    const sections = buildTierSections(row?.team_numbers ?? [], parseTeamTiers(row?.team_tiers), allTeams);
+    return layoutFromTierSections(sections, allTeamNumbers);
+}
+
 export const usePicklistStore = defineStore('picklist', {
     state() {
         return {
@@ -133,13 +153,15 @@ export const usePicklistStore = defineStore('picklist', {
             viewingPastEventName: null as string | null,
             viewedPastEventTeams: [] as TeamEntry[],
             viewedPastEventTierSections: emptyTierSections() as Record<TierGroup, number[]>,
+            viewedPastEventTeamLayout: emptyTeamLayout() as TeamListLayout,
             viewedPastEventTierStats: {} as Record<number, TeamTierStats>,
             viewedPastEventTeamMatchSummaries: {} as Record<number, TeamMatchSummary>,
             viewedPastEventTeamPitSummaries: {} as Record<number, TeamPitSummary>,
             viewedPastEventListLoading: false,
 
-            // Team (lead) list — tier-grouped team numbers per archetype
-            teamTierSections: perArchetype(emptyTierSections) as Record<Archetype, Record<TierGroup, number[]>>,
+            // Team (lead) list per archetype — one ranked list with labelled
+            // dividers, not tiers (see team-list-layout.ts).
+            teamLayout: perArchetype(emptyTeamLayout) as Record<Archetype, TeamListLayout>,
             teamListLoaded: perArchetype(() => false) as Record<Archetype, boolean>,
 
             // Democratic list — computed (read-only) tier grouping from all personal lists, per archetype
@@ -179,15 +201,24 @@ export const usePicklistStore = defineStore('picklist', {
             return map;
         },
 
-        /** The tier-grouped sections for whichever tab/archetype is currently active. */
+        /**
+         * The tier-grouped sections for whichever tab/archetype is currently
+         * active. Not used on the Team List tab, which has no tiers — see
+         * activeTeamLayout.
+         */
         activeSections(): Record<TierGroup, number[]> {
             if (this.activeTab === 'personal') {
                 if (this.viewingScoutUserId) return this.viewedScoutTierSections;
                 return this.personalTierSections[this.activeArchetype];
             }
             if (this.viewingPastEventId) return this.viewedPastEventTierSections;
-            if (this.activeTab === 'team') return this.teamTierSections[this.activeArchetype];
             return this.democraticTierSections[this.activeArchetype];
+        },
+
+        /** The Team List tab's layout: a viewed past event's, or the current event's. */
+        activeTeamLayout(): TeamListLayout {
+            if (this.viewingPastEventId) return this.viewedPastEventTeamLayout;
+            return this.teamLayout[this.activeArchetype];
         },
 
         /**
@@ -265,18 +296,9 @@ export const usePicklistStore = defineStore('picklist', {
             };
         },
 
-        teamFlatOrder(): (archetype: Archetype) => number[] {
-            return (archetype: Archetype) => TIER_GROUPS.flatMap((g) => this.teamTierSections[archetype][g] ?? []);
-        },
-
-        teamTiersMap(): (archetype: Archetype) => Record<number, Tier> {
-            return (archetype: Archetype) => {
-                const map: Record<number, Tier> = {};
-                TIERS.forEach((tier) => {
-                    (this.teamTierSections[archetype][tier] ?? []).forEach((num) => { map[num] = tier; });
-                });
-                return map;
-            };
+        /** The team list in its saved form: ranked teams plus divider positions. */
+        teamListSaveData(): (archetype: Archetype) => ReturnType<typeof serializeLayout> {
+            return (archetype: Archetype) => serializeLayout(this.teamLayout[archetype].ranked);
         },
 
         isTeamPicked(): (teamNumber: number) => boolean {
@@ -350,11 +372,7 @@ export const usePicklistStore = defineStore('picklist', {
         async loadTeamList(eventId: string, archetype: Archetype) {
             this.teamListLoaded[archetype] = false;
             const result = await fetchTeamPicklist(eventId, archetype);
-            this.teamTierSections[archetype] = buildTierSections(
-                result?.team_numbers ?? [],
-                parseTeamTiers(result?.team_tiers),
-                this.allTeams
-            );
+            this.teamLayout[archetype] = teamLayoutFromRow(result, this.allTeams);
             this.teamListLoaded[archetype] = true;
         },
 
@@ -453,11 +471,7 @@ export const usePicklistStore = defineStore('picklist', {
 
             if (tab === 'team') {
                 const result = await fetchTeamPicklist(pastEventId, archetype);
-                this.viewedPastEventTierSections = buildTierSections(
-                    result?.team_numbers ?? [],
-                    parseTeamTiers(result?.team_tiers),
-                    teams
-                );
+                this.viewedPastEventTeamLayout = teamLayoutFromRow(result, teams);
             } else {
                 this.viewedPastEventTierSections = computeDemocraticTierGroups(
                     teams.map((t) => t.team_number),
@@ -473,6 +487,7 @@ export const usePicklistStore = defineStore('picklist', {
             this.viewingPastEventName = null;
             this.viewedPastEventTeams = [];
             this.viewedPastEventTierSections = emptyTierSections();
+            this.viewedPastEventTeamLayout = emptyTeamLayout();
             this.viewedPastEventTierStats = {};
             this.viewedPastEventTeamMatchSummaries = {};
             this.viewedPastEventTeamPitSummaries = {};
@@ -485,18 +500,20 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         /**
-         * Reset the team list's tiers/order to the current democratic
-         * grouping, overwriting whatever is currently staged for the team list.
+         * Reset the team list's order to the current democratic grouping,
+         * with a divider named for each tier, overwriting whatever is
+         * currently staged for the team list.
          */
         resetTeamListFromDemocratic(archetype: Archetype) {
-            const cloned = emptyTierSections();
-            TIER_GROUPS.forEach((g) => { cloned[g] = [...(this.democraticTierSections[archetype][g] ?? [])]; });
-            this.teamTierSections[archetype] = cloned;
+            this.teamLayout[archetype] = layoutFromTierSections(
+                this.democraticTierSections[archetype],
+                this.allTeams.map((t) => t.team_number)
+            );
         },
 
-        /** Clear the team list's tiers/order entirely. */
+        /** Clear the team list entirely: no dividers, every team unranked. */
         resetTeamList(archetype: Archetype) {
-            this.teamTierSections[archetype] = emptyTierSections();
+            this.teamLayout[archetype] = layoutFromSaved([], [], this.allTeams.map((t) => t.team_number));
         },
 
         /** Unrank every team on the personal list, back to all-Unranked. */
@@ -559,7 +576,8 @@ export const usePicklistStore = defineStore('picklist', {
         async saveTeamList(eventId: string, archetype: Archetype) {
             this.isSaving = true;
             this.lastSaveError = null;
-            const error = await upsertTeamPicklist(eventId, archetype, this.teamFlatOrder(archetype), this.teamTiersMap(archetype));
+            const { teamNumbers, dividers } = this.teamListSaveData(archetype);
+            const error = await upsertTeamPicklist(eventId, archetype, teamNumbers, {}, dividers);
             this.isSaving = false;
             if (error) {
                 this.lastSaveError = error.message ?? 'Unknown error';

@@ -443,12 +443,14 @@ export async function fetchAllPersonalPicklists(eventId: string, archetype: Arch
 }
 
 /**
- * Fetch the team (shared lead) picklist for an event/archetype.
+ * Fetch the team (shared lead) picklist for an event/archetype. `dividers`
+ * is set once the list uses the divider layout (see team-list-layout.ts),
+ * and null while it still uses tiers.
  */
 export async function fetchTeamPicklist(eventId: string, archetype: Archetype) {
     const { data, error } = await supabase
         .from(pickListTable)
-        .select('id, team_numbers, team_tiers, updated_at')
+        .select('id, team_numbers, team_tiers, dividers, updated_at')
         .eq('event_id', eventId)
         .eq('type', pickListTypeTeam)
         .eq('archetype', archetype)
@@ -537,13 +539,17 @@ export async function upsertPersonalPicklist(
 /**
  * Upsert the shared team picklist to Supabase. Leaves picked_team_numbers
  * untouched — that's updated separately via updatePickedTeams.
+ * `dividers` is the divider layout's (see team-list-layout.ts); leaving it
+ * out saves a tier-based list (dividers NULL), which is what an offline
+ * save queued before the divider layout still holds.
  * Returns the error object or null on success.
  */
 export async function upsertTeamPicklist(
     eventId: string,
     archetype: Archetype,
     teamNumbers: number[],
-    teamTiers: Record<number, Tier>
+    teamTiers: Record<number, Tier>,
+    dividers: { id: string; label: string; position: number }[] | null = null
 ) {
     const { data, error: fetchError } = await supabase
         .from(pickListTable)
@@ -561,6 +567,7 @@ export async function upsertTeamPicklist(
             .update({
                 team_numbers: teamNumbers,
                 team_tiers: teamTiers,
+                dividers,
                 updated_at: new Date().toISOString()
             })
             .eq('id', data.id);
@@ -574,6 +581,7 @@ export async function upsertTeamPicklist(
                 archetype,
                 team_numbers: teamNumbers,
                 team_tiers: teamTiers,
+                dividers,
                 updated_at: new Date().toISOString()
             });
         return error;

@@ -38,12 +38,15 @@ const retryHandlers = {
             payload.teamTiers as Record<number, string>
         );
     },
+    // A save queued before the divider layout has no `dividers`, and is
+    // retried as the tier-based list it was.
     picklist_team: async (payload: Record<string, unknown>) => {
         return await upsertTeamPicklist(
             payload.eventId as string,
             payload.archetype as 'scorer' | 'defender',
             payload.teamNumbers as number[],
-            payload.teamTiers as Record<number, string>
+            payload.teamTiers as Record<number, string>,
+            (payload.dividers as { id: string; label: string; position: number }[] | undefined) ?? null
         );
     },
     scout_data: async (payload: Record<string, unknown>) => {
