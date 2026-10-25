@@ -9,6 +9,7 @@ import { matchScoutTable, matchTypes, defaultMatchType } from "@/lib/constants";
 import { buildTeamRowSchema } from "@/lib/2026/match-scouting-form";
 import { validateForm, parseScoutData, submitScoutData, getTeamInputElement, isNetworkError } from "@/lib/data-submission";
 import { queryMatchTeams, queryPlayoffMatchTeams } from "@/lib/data-query";
+import { toTeamNumber } from "@/lib/team-number";
 import { useAuthStore } from "@/stores/auth-store";
 import { useEventStore } from "@/stores/event-store";
 import { useOfflineQueueStore } from "@/stores/offline-queue-store";
@@ -194,7 +195,7 @@ export default {
         onManualTeamChange(idx, choiceIdx) {
             this.manualTeamIndices[idx] = choiceIdx;
             const choice = this.allTeamChoices[choiceIdx];
-            this.setSlotTeam(idx, choice && choice.key !== 'none' ? Number(choice.key) : null);
+            this.setSlotTeam(idx, choice && choice.key !== 'none' ? toTeamNumber(choice.key) : null);
         },
         setSlotTeam(idx, teamNumber) {
             if (this.slots[idx].teamNumber === teamNumber) return;

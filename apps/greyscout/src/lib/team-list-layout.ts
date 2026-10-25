@@ -9,10 +9,12 @@
 
 import { TIERS } from '@/lib/picklist-query';
 import type { Tier, TierGroup } from '@/lib/picklist-query';
+import { toTeamNumber } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
 
 export interface TeamItem {
     kind: 'team';
-    team: number;
+    team: TeamNumber;
 }
 
 export interface DividerItem {
@@ -36,7 +38,7 @@ export interface TeamListLayout {
     unranked: TeamItem[];
 }
 
-export function teamItem(team: number): TeamItem {
+export function teamItem(team: TeamNumber): TeamItem {
     return { kind: 'team', team };
 }
 
@@ -56,7 +58,7 @@ export function hasDividers(row: { dividers?: unknown } | null | undefined): boo
 }
 
 /** Every event team not in `ranked`, as unranked items in event order. */
-function unrankedFrom(ranked: LayoutItem[], allTeamNumbers: number[]): TeamItem[] {
+function unrankedFrom(ranked: LayoutItem[], allTeamNumbers: TeamNumber[]): TeamItem[] {
     const placed = new Set(ranked.filter((i) => i.kind === 'team').map((i) => (i as TeamItem).team));
     return allTeamNumbers.filter((n) => !placed.has(n)).map(teamItem);
 }
@@ -67,13 +69,13 @@ function unrankedFrom(ranked: LayoutItem[], allTeamNumbers: number[]): TeamItem[
  * can't wipe the list), and teams new to the event land in unranked.
  */
 export function layoutFromSaved(
-    teamNumbers: number[],
+    teamNumbers: TeamNumber[],
     dividers: unknown,
-    allTeamNumbers: number[]
+    allTeamNumbers: TeamNumber[]
 ): TeamListLayout {
     const atEvent = new Set(allTeamNumbers);
-    const seen = new Set<number>();
-    const keep = (n: number) => (atEvent.size === 0 || atEvent.has(n)) && !seen.has(n);
+    const seen = new Set<TeamNumber>();
+    const keep = (n: TeamNumber) => (atEvent.size === 0 || atEvent.has(n)) && !seen.has(n);
 
     const sorted = (Array.isArray(dividers) ? dividers : [])
         .filter((d) => d && typeof d.id === 'string')
@@ -90,9 +92,9 @@ export function layoutFromSaved(
             ranked.push({ kind: 'divider', id: sorted[d].id, label: sorted[d].label });
         }
     };
-    teamNumbers.map(Number).forEach((team, index) => {
+    teamNumbers.map(toTeamNumber).forEach((team, index) => {
         placeDividersUpTo(index);
-        if (!keep(team)) return;
+        if (team === null || !keep(team)) return;
         seen.add(team);
         ranked.push(teamItem(team));
     });
@@ -107,22 +109,22 @@ export function layoutFromSaved(
  * non-empty tier, so the existing grouping carries over.
  */
 export function layoutFromTierSections(
-    sections: Record<TierGroup, number[]>,
-    allTeamNumbers: number[]
+    sections: Record<TierGroup, TeamNumber[]>,
+    allTeamNumbers: TeamNumber[]
 ): TeamListLayout {
     const ranked: LayoutItem[] = [];
     TIERS.forEach((tier: Tier) => {
         const teams = sections[tier] ?? [];
         if (teams.length === 0) return;
         ranked.push(newDivider(tier));
-        teams.forEach((team) => ranked.push(teamItem(Number(team))));
+        teams.forEach((team) => ranked.push(teamItem(team)));
     });
     return { ranked, unranked: unrankedFrom(ranked, allTeamNumbers) };
 }
 
 /** The ranked layout in its saved form. */
-export function serializeLayout(ranked: LayoutItem[]): { teamNumbers: number[]; dividers: SavedDivider[] } {
-    const teamNumbers: number[] = [];
+export function serializeLayout(ranked: LayoutItem[]): { teamNumbers: TeamNumber[]; dividers: SavedDivider[] } {
+    const teamNumbers: TeamNumber[] = [];
     const dividers: SavedDivider[] = [];
     ranked.forEach((item) => {
         if (item.kind === 'team') teamNumbers.push(item.team);

@@ -2,18 +2,20 @@
 
 import { defineStore } from 'pinia';
 import { fetchWatchlist, addToWatchlist, removeFromWatchlist } from '@/lib/watchlist-query';
+import { toTeamNumber } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
 
 export const useWatchlistStore = defineStore('watchlist', {
     state() {
         return {
             eventId: null as string | null,
-            watchedTeamNumbers: [] as number[],
+            watchedTeamNumbers: [] as TeamNumber[],
             loaded: false
         };
     },
     getters: {
         isWatched(state) {
-            return (teamNumber: number) => state.watchedTeamNumbers.includes(Number(teamNumber));
+            return (teamNumber: unknown) => state.watchedTeamNumbers.includes(toTeamNumber(teamNumber));
         }
     },
     actions: {
@@ -26,8 +28,9 @@ export const useWatchlistStore = defineStore('watchlist', {
 
         // Optimistically flips the local state, then reverts if the write fails.
         // Returns the error object or null on success.
-        async toggleWatch(eventId: string, teamNumber: number) {
-            const num = Number(teamNumber);
+        async toggleWatch(eventId: string, teamNumber: unknown) {
+            const num = toTeamNumber(teamNumber);
+            if (!num) return { message: `${teamNumber} isn't a team number` };
             const wasWatched = this.watchedTeamNumbers.includes(num);
 
             if (wasWatched) {

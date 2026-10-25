@@ -12,6 +12,8 @@ import {
     userTable,
     eventInfoTable
 } from '@/lib/constants';
+import { toTeamNumber, toTeamNumbers, compareTeamNumbers, normalizeTeamFields } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
 
 /**
  * A team can be ranked independently under either or both archetypes
@@ -27,16 +29,18 @@ export const DEFAULT_ARCHETYPE: Archetype = 'scorer';
  * Returns an array of { team_number, name, photo_url | null }.
  */
 export async function fetchTeamsForPicklist(eventId: string) {
-    const { data: teams, error: teamsError } = await supabase
+    const { data: rows, error: teamsError } = await supabase
         .from(teamInfoTable)
         .select('team_number, name')
-        .eq('event_id', eventId)
-        .order('team_number', { ascending: true });
+        .eq('event_id', eventId);
 
-    if (teamsError || !teams) {
+    if (teamsError || !rows) {
         console.error('fetchTeamsForPicklist teams error:', teamsError);
         return [];
     }
+    const teams = normalizeTeamFields(rows, ['team_number'])
+        .filter((t) => t.team_number)
+        .sort((a, b) => compareTeamNumbers(a.team_number, b.team_number));
 
     // Fetch all robot photos for this event's teams in one shot.
     const teamNumbers = teams.map((t) => t.team_number);
@@ -45,8 +49,8 @@ export async function fetchTeamsForPicklist(eventId: string) {
         .select('team_number, photo_url')
         .in('team_number', teamNumbers);
 
-    const photoMap: Record<number, string> = {};
-    (photos ?? []).forEach((p) => {
+    const photoMap: Record<TeamNumber, string> = {};
+    normalizeTeamFields(photos, ['team_number']).forEach((p) => {
         photoMap[p.team_number] = p.photo_url;
     });
 
@@ -61,7 +65,7 @@ export async function fetchTeamsForPicklist(eventId: string) {
  * Fetch match-scouting stats for a single team at an event.
  * Returns raw match rows — callers can aggregate as needed.
  */
-export async function fetchTeamMatchStats(teamNumber: number, eventId: string) {
+export async function fetchTeamMatchStats(teamNumber: TeamNumber, eventId: string) {
     const { data, error } = await supabase
         .from(matchScoutTable)
         .select('*')
@@ -72,7 +76,7 @@ export async function fetchTeamMatchStats(teamNumber: number, eventId: string) {
         console.error('fetchTeamMatchStats error:', error);
         return [];
     }
-    return data ?? [];
+    return normalizeTeamFields(data, ['prematch_team_number']);
 }
 
 export interface TeamMatchSummary {
@@ -98,7 +102,7 @@ export interface TeamMatchSummary {
  * requiring a per-team round trip, and to compute the Break/Die/Beach/
  * Defense % stats shown when a row is expanded.
  */
-export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<number, TeamMatchSummary>> {
+export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<TeamNumber, TeamMatchSummary>> {
     const { data, error } = await supabase
         .from(matchScoutTable)
         .select('prematch_team_number, prematch_noshow, auto_failed, postmatch_broke, postmatch_died, postmatch_beached, postmatch_played_defense, postmatch_defense_impact, postmatch_cards')
@@ -109,9 +113,9 @@ export async function fetchTeamMatchSummaries(eventId: string): Promise<Record<n
         return {};
     }
 
-    const summaries: Record<number, TeamMatchSummary> = {};
+    const summaries: Record<TeamNumber, TeamMatchSummary> = {};
     (data ?? []).forEach((row) => {
-        const teamNumber = row.prematch_team_number;
+        const teamNumber = toTeamNumber(row.prematch_team_number);
         if (teamNumber == null) return;
 
         const summary = summaries[teamNumber] ?? {
@@ -154,7 +158,7 @@ export interface TeamPitSummary {
  * scouting, in one query (issue #123). The newest submission wins when a
  * team has several.
  */
-export async function fetchTeamPitSummaries(eventId: string): Promise<Record<number, TeamPitSummary>> {
+export async function fetchTeamPitSummaries(eventId: string): Promise<Record<TeamNumber, TeamPitSummary>> {
     const { data, error } = await supabase
         .from(pitScoutTable)
         .select('pit_team_number, pit_weight, pit_vibe_check, pit_num_batteries, pit_num_chargers, created_at')
@@ -166,10 +170,11 @@ export async function fetchTeamPitSummaries(eventId: string): Promise<Record<num
         return {};
     }
 
-    const summaries: Record<number, TeamPitSummary> = {};
+    const summaries: Record<TeamNumber, TeamPitSummary> = {};
     (data ?? []).forEach((row) => {
-        if (row.pit_team_number == null) return;
-        summaries[row.pit_team_number] = {
+        const teamNumber = toTeamNumber(row.pit_team_number);
+        if (teamNumber == null) return;
+        summaries[teamNumber] = {
             weight: row.pit_weight ?? null,
             vibe: row.pit_vibe_check ?? null,
             batteries: row.pit_num_batteries ?? null,
@@ -184,7 +189,7 @@ export async function fetchTeamPitSummaries(eventId: string): Promise<Record<num
  * attributed to their author. Returns array of
  * { author, drivetrain, weight, language, vibe_check, comments, created_at }, newest first.
  */
-export async function fetchTeamPitData(teamNumber: number, eventId: string) {
+export async function fetchTeamPitData(teamNumber: TeamNumber, eventId: string) {
     const { data, error } = await supabase
         .from(pitScoutTable)
         .select(`id, pit_drivetrain, pit_drive_motor_type, pit_length, pit_width, pit_weight, pit_archetype, pit_language, pit_num_batteries, pit_num_chargers, pit_traverse_bump, pit_traverse_trench, pit_outpost_fuel, pit_shoot_close, pit_shoot_tower, pit_shoot_corner, pit_shoot_trench, pit_climb, pit_climb_auto, pit_auto_strategy, pit_cycle_rate, pit_defense, pit_driver_new, pit_system_check, pit_vibe_check, pit_comments, created_at, ${userTable}(name)`)
@@ -245,7 +250,7 @@ export async function fetchPitDataById(id: number) {
         return null;
     }
 
-    return data;
+    return normalizeTeamFields([data], ['pit_team_number'])[0];
 }
 
 /**
@@ -264,7 +269,7 @@ export async function fetchMatchDataById(id: number) {
         return null;
     }
 
-    return data;
+    return normalizeTeamFields([data], ['prematch_team_number'])[0];
 }
 
 /**
@@ -285,7 +290,7 @@ export function matchLabel(matchNumber: number | null, matchType: string | null 
  * no-show is included even without a comment, so those always show up in
  * the comments section (issue #123).
  */
-export async function fetchTeamComments(teamNumber: number, eventId: string) {
+export async function fetchTeamComments(teamNumber: TeamNumber, eventId: string) {
     // Match scout comments — scout identity is resolved via the submitting user's
     // account (scouted_by -> User.user_id) rather than a free-text name field.
     // Every column is selected so this keeps working whether or not the
@@ -353,12 +358,21 @@ function isTier(value: unknown): value is Tier {
  * Normalize a raw team_tiers jsonb value (string keys) into a
  * Record<team_number, Tier>, dropping any invalid entries.
  */
-export function parseTeamTiers(raw: Record<string, unknown> | null | undefined): Record<number, Tier> {
-    const tiers: Record<number, Tier> = {};
+export function parseTeamTiers(raw: Record<string, unknown> | null | undefined): Record<TeamNumber, Tier> {
+    const tiers: Record<TeamNumber, Tier> = {};
     Object.entries(raw ?? {}).forEach(([teamNumStr, tier]) => {
-        if (isTier(tier)) tiers[Number(teamNumStr)] = tier;
+        const teamNumber = toTeamNumber(teamNumStr);
+        if (teamNumber && isTier(tier)) tiers[teamNumber] = tier;
     });
     return tiers;
+}
+
+/** A PickList row with its team number arrays normalized (see team-number.ts). */
+function normalizePicklistRow(row) {
+    if (!row) return row;
+    if ('team_numbers' in row) row.team_numbers = toTeamNumbers(row.team_numbers);
+    if ('picked_team_numbers' in row) row.picked_team_numbers = toTeamNumbers(row.picked_team_numbers);
+    return row;
 }
 
 /**
@@ -420,7 +434,7 @@ export async function fetchPersonalPicklist(userId: string, eventId: string, arc
         console.error('fetchPersonalPicklist error:', error);
         return null;
     }
-    return data;
+    return normalizePicklistRow(data);
 }
 
 /**
@@ -439,7 +453,7 @@ export async function fetchAllPersonalPicklists(eventId: string, archetype: Arch
         console.error('fetchAllPersonalPicklists error:', error);
         return [];
     }
-    return data ?? [];
+    return (data ?? []).map(normalizePicklistRow);
 }
 
 /**
@@ -461,7 +475,7 @@ export async function fetchTeamPicklist(eventId: string, archetype: Archetype) {
         console.error('fetchTeamPicklist error:', error);
         return null;
     }
-    return data;
+    return normalizePicklistRow(data);
 }
 
 /**
@@ -471,7 +485,7 @@ export async function fetchTeamPicklist(eventId: string, archetype: Archetype) {
  * regardless of role), so this is always anchored to the Scorer archetype's
  * shared team row rather than being duplicated across both.
  */
-export async function fetchPickedTeams(eventId: string): Promise<number[]> {
+export async function fetchPickedTeams(eventId: string): Promise<TeamNumber[]> {
     const { data, error } = await supabase
         .from(pickListTable)
         .select('picked_team_numbers')
@@ -485,7 +499,7 @@ export async function fetchPickedTeams(eventId: string): Promise<number[]> {
         console.error('fetchPickedTeams error:', error);
         return [];
     }
-    return data?.picked_team_numbers ?? [];
+    return toTeamNumbers(data?.picked_team_numbers);
 }
 
 /**
@@ -496,8 +510,8 @@ export async function upsertPersonalPicklist(
     userId: string,
     eventId: string,
     archetype: Archetype,
-    teamNumbers: number[],
-    teamTiers: Record<number, Tier>
+    teamNumbers: TeamNumber[],
+    teamTiers: Record<TeamNumber, Tier>
 ) {
     const { data, error: fetchError } = await supabase
         .from(pickListTable)
@@ -547,8 +561,8 @@ export async function upsertPersonalPicklist(
 export async function upsertTeamPicklist(
     eventId: string,
     archetype: Archetype,
-    teamNumbers: number[],
-    teamTiers: Record<number, Tier>,
+    teamNumbers: TeamNumber[],
+    teamTiers: Record<TeamNumber, Tier>,
     dividers: { id: string; label: string; position: number }[] | null = null
 ) {
     const { data, error: fetchError } = await supabase
@@ -595,7 +609,7 @@ export async function upsertTeamPicklist(
  * never clobbers a concurrently-edited tier/order draft, and vice versa.
  * Returns the error object or null on success.
  */
-export async function updatePickedTeams(eventId: string, pickedTeamNumbers: number[]) {
+export async function updatePickedTeams(eventId: string, pickedTeamNumbers: TeamNumber[]) {
     const { data, error: fetchError } = await supabase
         .from(pickListTable)
         .select('id')
@@ -649,26 +663,25 @@ export interface TeamTierStats {
  * *tiered* teams — untriaged teams always sort after it and can't shift it.
  */
 export function computeTeamTierStats(
-    allLists: { user_id: string; team_numbers: number[]; team_tiers: Record<string, unknown> }[]
-): Record<number, TeamTierStats> {
-    const tiersByTeam: Record<number, Tier[]> = {};
-    const ranksByTeam: Record<number, number[]> = {};
+    allLists: { user_id: string; team_numbers: TeamNumber[]; team_tiers: Record<string, unknown> }[]
+): Record<TeamNumber, TeamTierStats> {
+    const tiersByTeam: Record<TeamNumber, Tier[]> = {};
+    const ranksByTeam: Record<TeamNumber, number[]> = {};
 
     allLists.forEach(({ team_numbers, team_tiers }) => {
         const tiersMap = parseTeamTiers(team_tiers);
         (team_numbers ?? []).forEach((teamNumRaw, idx) => {
-            const teamNum = Number(teamNumRaw);
-            const tier = tiersMap[teamNum];
+            const teamNum = toTeamNumber(teamNumRaw);
+            const tier = teamNum && tiersMap[teamNum];
             if (!tier) return; // left unranked by this scout — no data point
             (tiersByTeam[teamNum] ??= []).push(tier);
             (ranksByTeam[teamNum] ??= []).push(idx + 1);
         });
     });
 
-    const stats: Record<number, TeamTierStats> = {};
+    const stats: Record<TeamNumber, TeamTierStats> = {};
 
-    Object.entries(tiersByTeam).forEach(([teamNumStr, tiers]) => {
-        const teamNum = Number(teamNumStr);
+    Object.entries(tiersByTeam).forEach(([teamNum, tiers]) => {
         const tierCounts = { S: 0, A: 0, B: 0, C: 0, D: 0, DNP: 0 };
         let sum = 0;
         tiers.forEach((t) => {
@@ -693,10 +706,10 @@ export function computeTeamTierStats(
  * vote count.
  */
 export function computeDemocraticTierGroups(
-    allTeamNumbers: number[],
-    stats: Record<number, TeamTierStats>
-): Record<TierGroup, number[]> {
-    const groups: Record<TierGroup, number[]> = {
+    allTeamNumbers: TeamNumber[],
+    stats: Record<TeamNumber, TeamTierStats>
+): Record<TierGroup, TeamNumber[]> {
+    const groups: Record<TierGroup, TeamNumber[]> = {
         Unranked: [], S: [], A: [], B: [], C: [], D: [], DNP: []
     };
 
@@ -711,7 +724,7 @@ export function computeDemocraticTierGroups(
             const sb = stats[b];
             if (sa.avgRank !== sb.avgRank) return sa.avgRank - sb.avgRank;
             if (sa.votes !== sb.votes) return sb.votes - sa.votes;
-            return a - b;
+            return compareTeamNumbers(a, b);
         });
     });
 

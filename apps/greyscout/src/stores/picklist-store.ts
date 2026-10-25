@@ -28,12 +28,13 @@ import type { Tier, TierGroup, TeamTierStats, TeamMatchSummary, TeamPitSummary, 
 import { hasDividers, layoutFromSaved, layoutFromTierSections, serializeLayout } from '@/lib/team-list-layout';
 import type { TeamListLayout } from '@/lib/team-list-layout';
 import { defenseThresholdPercent } from '@/lib/constants';
+import type { TeamNumber } from '@/lib/team-number';
 export type { Archetype };
 
 export type PicklistTab = 'personal' | 'democratic' | 'team';
 
 export interface TeamEntry {
-    team_number: number;
+    team_number: TeamNumber;
     name: string;
     photo_url: string | null;
 }
@@ -47,8 +48,8 @@ const PICKEM_TIER_SIZES: Record<Exclude<Tier, 'DNP'>, number> = {
     S: 3, A: 7, B: 8, C: 10, D: 4
 };
 
-function emptyTierSections(): Record<TierGroup, number[]> {
-    const groups = {} as Record<TierGroup, number[]>;
+function emptyTierSections(): Record<TierGroup, TeamNumber[]> {
+    const groups = {} as Record<TierGroup, TeamNumber[]>;
     TIER_GROUPS.forEach((g) => { groups[g] = []; });
     return groups;
 }
@@ -67,28 +68,28 @@ function perArchetype<T>(factory: () => T): Record<Archetype, T> {
  * is appended to "Unranked".
  */
 function buildTierSections(
-    teamNumbers: number[],
-    tiersMap: Record<number, Tier>,
+    teamNumbers: TeamNumber[],
+    tiersMap: Record<TeamNumber, Tier>,
     allTeams: TeamEntry[]
-): Record<TierGroup, number[]> {
+): Record<TierGroup, TeamNumber[]> {
     const groups = emptyTierSections();
-    const seen = new Set<number>();
+    const seen = new Set<TeamNumber>();
     // A saved list can still name a team that has since dropped out of the
     // event (issue #127): only teams at the event are shown. If the team
     // list itself didn't load, nothing is dropped, so a save can't wipe the
     // list.
     const atEvent = new Set(allTeams.map((t) => t.team_number));
-    const saved = atEvent.size ? teamNumbers.filter((num) => atEvent.has(Number(num))) : teamNumbers;
+    const saved = atEvent.size ? teamNumbers.filter((num) => atEvent.has(num)) : teamNumbers;
     const orderSource = saved.length ? saved : allTeams.map((t) => t.team_number);
 
-    const place = (num: number) => {
+    const place = (num: TeamNumber) => {
         if (seen.has(num)) return;
         seen.add(num);
         const tier = tiersMap[num];
         groups[tier ?? 'Unranked'].push(num);
     };
 
-    orderSource.forEach((num) => place(Number(num)));
+    orderSource.forEach((num) => place(num));
     allTeams.forEach((t) => place(t.team_number));
 
     return groups;
@@ -127,7 +128,7 @@ export const usePicklistStore = defineStore('picklist', {
             teamsLoaded: false,
 
             // Personal list — tier-grouped team numbers per archetype, source of truth for order + tier
-            personalTierSections: perArchetype(emptyTierSections) as Record<Archetype, Record<TierGroup, number[]>>,
+            personalTierSections: perArchetype(emptyTierSections) as Record<Archetype, Record<TierGroup, TeamNumber[]>>,
             personalListLoaded: perArchetype(() => false) as Record<Archetype, boolean>,
 
             // Admin-only "view a scout's pick list" filter (issue #56) — a
@@ -138,7 +139,7 @@ export const usePicklistStore = defineStore('picklist', {
             scoutRosterLoaded: false,
             viewingScoutUserId: null as string | null,
             viewingScoutName: null as string | null,
-            viewedScoutTierSections: emptyTierSections() as Record<TierGroup, number[]>,
+            viewedScoutTierSections: emptyTierSections() as Record<TierGroup, TeamNumber[]>,
             viewedScoutListLoading: false,
 
             // Lead/admin-only "view a prior event's pick list" filter (issue
@@ -152,11 +153,11 @@ export const usePicklistStore = defineStore('picklist', {
             viewingPastEventId: null as string | null,
             viewingPastEventName: null as string | null,
             viewedPastEventTeams: [] as TeamEntry[],
-            viewedPastEventTierSections: emptyTierSections() as Record<TierGroup, number[]>,
+            viewedPastEventTierSections: emptyTierSections() as Record<TierGroup, TeamNumber[]>,
             viewedPastEventTeamLayout: emptyTeamLayout() as TeamListLayout,
-            viewedPastEventTierStats: {} as Record<number, TeamTierStats>,
-            viewedPastEventTeamMatchSummaries: {} as Record<number, TeamMatchSummary>,
-            viewedPastEventTeamPitSummaries: {} as Record<number, TeamPitSummary>,
+            viewedPastEventTierStats: {} as Record<TeamNumber, TeamTierStats>,
+            viewedPastEventTeamMatchSummaries: {} as Record<TeamNumber, TeamMatchSummary>,
+            viewedPastEventTeamPitSummaries: {} as Record<TeamNumber, TeamPitSummary>,
             viewedPastEventListLoading: false,
 
             // Team (lead) list per archetype — one ranked list with labelled
@@ -165,16 +166,16 @@ export const usePicklistStore = defineStore('picklist', {
             teamListLoaded: perArchetype(() => false) as Record<Archetype, boolean>,
 
             // Democratic list — computed (read-only) tier grouping from all personal lists, per archetype
-            democraticTierSections: perArchetype(emptyTierSections) as Record<Archetype, Record<TierGroup, number[]>>,
+            democraticTierSections: perArchetype(emptyTierSections) as Record<Archetype, Record<TierGroup, TeamNumber[]>>,
             democraticListLoaded: perArchetype(() => false) as Record<Archetype, boolean>,
 
             // Per-team aggregate tier stats across all personal lists, per archetype
-            teamTierStats: perArchetype(() => ({})) as Record<Archetype, Record<number, TeamTierStats>>,
+            teamTierStats: perArchetype(() => ({})) as Record<Archetype, Record<TeamNumber, TeamTierStats>>,
 
             // Event-wide "has this team already been picked" set, visible to everyone,
             // editable by leads only. Real-world draft status isn't per-archetype (see
             // picklist-query.ts's fetchPickedTeams), so this stays a single value.
-            pickedTeams: [] as number[],
+            pickedTeams: [] as TeamNumber[],
             pickedTeamsLoaded: false,
 
             // Per-event-team expanded data cache, keyed by "eventId:teamNumber"
@@ -183,10 +184,10 @@ export const usePicklistStore = defineStore('picklist', {
             // Per-team card status + broke/died/beached/defense counts across all
             // matches — loaded up front so card status can show on the collapsed
             // row without expanding.
-            teamMatchSummaries: {} as Record<number, TeamMatchSummary>,
+            teamMatchSummaries: {} as Record<TeamNumber, TeamMatchSummary>,
 
             // Per-team weight and vibe check from pit scouting (issue #123).
-            teamPitSummaries: {} as Record<number, TeamPitSummary>,
+            teamPitSummaries: {} as Record<TeamNumber, TeamPitSummary>,
 
             // Save status
             isSaving: false,
@@ -195,8 +196,8 @@ export const usePicklistStore = defineStore('picklist', {
         };
     },
     getters: {
-        teamMap(): Record<number, TeamEntry> {
-            const map: Record<number, TeamEntry> = {};
+        teamMap(): Record<TeamNumber, TeamEntry> {
+            const map: Record<TeamNumber, TeamEntry> = {};
             this.allTeams.forEach((t) => { map[t.team_number] = t; });
             return map;
         },
@@ -206,7 +207,7 @@ export const usePicklistStore = defineStore('picklist', {
          * active. Not used on the Team List tab, which has no tiers — see
          * activeTeamLayout.
          */
-        activeSections(): Record<TierGroup, number[]> {
+        activeSections(): Record<TierGroup, TeamNumber[]> {
             if (this.activeTab === 'personal') {
                 if (this.viewingScoutUserId) return this.viewedScoutTierSections;
                 return this.personalTierSections[this.activeArchetype];
@@ -227,9 +228,9 @@ export const usePicklistStore = defineStore('picklist', {
          * than the current event, so its rows must resolve team name/photo
          * from viewedPastEventTeams rather than the current event's teamMap.
          */
-        activeTeamMap(): Record<number, TeamEntry> {
+        activeTeamMap(): Record<TeamNumber, TeamEntry> {
             if (this.viewingPastEventId && this.activeTab !== 'personal') {
-                const map: Record<number, TeamEntry> = {};
+                const map: Record<TeamNumber, TeamEntry> = {};
                 this.viewedPastEventTeams.forEach((t) => { map[t.team_number] = t; });
                 return map;
             }
@@ -237,8 +238,8 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         /** Like tierStatsFor but sourced from a viewed past event's votes when one is active (issue #58). */
-        activeTierStatsFor(): (teamNumber: number) => TeamTierStats | null {
-            return (teamNumber: number) => {
+        activeTierStatsFor(): (teamNumber: TeamNumber) => TeamTierStats | null {
+            return (teamNumber: TeamNumber) => {
                 if (this.viewingPastEventId && this.activeTab !== 'personal') {
                     return this.viewedPastEventTierStats[teamNumber] ?? null;
                 }
@@ -247,8 +248,8 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         /** Like cardStatusFor but sourced from a viewed past event's matches when one is active (issue #58). */
-        activeCardStatusFor(): (teamNumber: number) => 'red' | 'yellow' | null {
-            return (teamNumber: number) => {
+        activeCardStatusFor(): (teamNumber: TeamNumber) => 'red' | 'yellow' | null {
+            return (teamNumber: TeamNumber) => {
                 if (this.viewingPastEventId && this.activeTab !== 'personal') {
                     return this.viewedPastEventTeamMatchSummaries[teamNumber]?.worstCard ?? null;
                 }
@@ -257,8 +258,8 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         /** The match summary for whichever event is on screen (a viewed past event's, when one is active). */
-        activeMatchSummaryFor(): (teamNumber: number) => TeamMatchSummary | null {
-            return (teamNumber: number) => {
+        activeMatchSummaryFor(): (teamNumber: TeamNumber) => TeamMatchSummary | null {
+            return (teamNumber: TeamNumber) => {
                 if (this.viewingPastEventId && this.activeTab !== 'personal') {
                     return this.viewedPastEventTeamMatchSummaries[teamNumber] ?? null;
                 }
@@ -267,8 +268,8 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         /** Same, for the pit summary (weight and vibe check). */
-        activePitSummaryFor(): (teamNumber: number) => TeamPitSummary | null {
-            return (teamNumber: number) => {
+        activePitSummaryFor(): (teamNumber: TeamNumber) => TeamPitSummary | null {
+            return (teamNumber: TeamNumber) => {
                 if (this.viewingPastEventId && this.activeTab !== 'personal') {
                     return this.viewedPastEventTeamPitSummaries[teamNumber] ?? null;
                 }
@@ -277,18 +278,18 @@ export const usePicklistStore = defineStore('picklist', {
         },
 
         /** Returns a function since callers (e.g. Pick'em) need a specific archetype, not just the active one. */
-        personalFlatOrder(): (archetype: Archetype) => number[] {
+        personalFlatOrder(): (archetype: Archetype) => TeamNumber[] {
             return (archetype: Archetype) => TIER_GROUPS.flatMap((g) => this.personalTierSections[archetype][g] ?? []);
         },
 
         /** Like personalFlatOrder, but only the actually-ranked tiers (S-DNP) — excludes Unranked. */
-        personalRankedFlatOrder(): (archetype: Archetype) => number[] {
+        personalRankedFlatOrder(): (archetype: Archetype) => TeamNumber[] {
             return (archetype: Archetype) => TIERS.flatMap((g) => this.personalTierSections[archetype][g] ?? []);
         },
 
-        personalTiersMap(): (archetype: Archetype) => Record<number, Tier> {
+        personalTiersMap(): (archetype: Archetype) => Record<TeamNumber, Tier> {
             return (archetype: Archetype) => {
-                const map: Record<number, Tier> = {};
+                const map: Record<TeamNumber, Tier> = {};
                 TIERS.forEach((tier) => {
                     (this.personalTierSections[archetype][tier] ?? []).forEach((num) => { map[num] = tier; });
                 });
@@ -301,17 +302,17 @@ export const usePicklistStore = defineStore('picklist', {
             return (archetype: Archetype) => serializeLayout(this.teamLayout[archetype].ranked);
         },
 
-        isTeamPicked(): (teamNumber: number) => boolean {
-            return (teamNumber: number) => this.pickedTeams.includes(teamNumber);
+        isTeamPicked(): (teamNumber: TeamNumber) => boolean {
+            return (teamNumber: TeamNumber) => this.pickedTeams.includes(teamNumber);
         },
 
-        cardStatusFor(): (teamNumber: number) => 'red' | 'yellow' | null {
-            return (teamNumber: number) => this.teamMatchSummaries[teamNumber]?.worstCard ?? null;
+        cardStatusFor(): (teamNumber: TeamNumber) => 'red' | 'yellow' | null {
+            return (teamNumber: TeamNumber) => this.teamMatchSummaries[teamNumber]?.worstCard ?? null;
         },
 
         /** Defense% over the threshold — used to pre-filter Pick'em's Defender candidate pool (issue #27). */
-        isLikelyDefender(): (teamNumber: number) => boolean {
-            return (teamNumber: number) =>
+        isLikelyDefender(): (teamNumber: TeamNumber) => boolean {
+            return (teamNumber: TeamNumber) =>
                 (this.teamMatchSummaries[teamNumber]?.defensePercent ?? 0) > defenseThresholdPercent;
         }
     },
@@ -538,7 +539,7 @@ export const usePicklistStore = defineStore('picklist', {
          * flatIndex is always within [0, personalRankedFlatOrder(archetype).length]
          * by construction.
          */
-        placeTeamAtFlatIndex(archetype: Archetype, teamNumber: number, flatIndex: number) {
+        placeTeamAtFlatIndex(archetype: Archetype, teamNumber: TeamNumber, flatIndex: number) {
             const sections = this.personalTierSections[archetype];
             const flat = TIERS.flatMap((t) => sections[t]).filter((n) => n !== teamNumber);
             flat.splice(flatIndex, 0, teamNumber);
@@ -592,7 +593,7 @@ export const usePicklistStore = defineStore('picklist', {
          * Toggle the event-wide picked status for a team. Optimistically
          * updates local state, reverting if the save fails.
          */
-        async togglePicked(eventId: string, teamNumber: number) {
+        async togglePicked(eventId: string, teamNumber: TeamNumber) {
             const previous = this.pickedTeams;
             const wasPicked = previous.includes(teamNumber);
             const next = wasPicked
@@ -609,7 +610,7 @@ export const usePicklistStore = defineStore('picklist', {
             return true;
         },
 
-        async getTeamData(teamNumber: number, eventId: string) {
+        async getTeamData(teamNumber: TeamNumber, eventId: string) {
             // Keyed by event + team, not just team — the same team number
             // can attend multiple events, and issue #58 makes it possible to
             // view a past event's data in the same session as the current

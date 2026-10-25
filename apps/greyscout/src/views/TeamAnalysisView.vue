@@ -24,6 +24,7 @@ import { supabase, supabaseProjectId } from "@greybots/common/supabase/client";
 import { getTeamAnalysisLayout } from "@/lib/2026/team-analysis-layout";
 import { processLayout } from "@/lib/process-layout";
 import { queryTeamNumbers } from "@/lib/data-query";
+import { toTeamNumber, compareTeamNumbers } from "@/lib/team-number";
 import { fetchTeamComments } from "@/lib/picklist-query";
 import { fetchTeamAutoPaths, setAutoPathDefault } from "@/lib/auto-path-query";
 import { getTeamTbaStats, refreshTbaStats } from "@/lib/tba-cache";
@@ -233,7 +234,7 @@ export default {
         },
         loadTbaStats() {
             const teamNumber = this.getTeamNumber();
-            this.tbaStats = teamNumber < 0 ? null : getTeamTbaStats(this.eventStore.eventId, teamNumber);
+            this.tbaStats = !teamNumber ? null : getTeamTbaStats(this.eventStore.eventId, teamNumber);
         },
         async refreshTbaStatsForTeam() {
             this.tbaStatsRefreshing = true;
@@ -249,12 +250,12 @@ export default {
         async toggleTeamWatch() {
             if (!this.isUserLead) return;
             const teamNumber = this.getTeamNumber();
-            if (teamNumber < 0) return;
+            if (!teamNumber) return;
             await this.watchlistStore.toggleWatch(this.eventStore.eventId, teamNumber);
         },
         async loadTeamAutoPaths() {
             const teamNumber = this.getTeamNumber();
-            if (teamNumber < 0) {
+            if (!teamNumber) {
                 this.teamAutoPaths = [];
                 this.teamAutoPathsLoaded = true;
                 return;
@@ -308,7 +309,7 @@ export default {
         },
         async loadTeamComments() {
             const teamNumber = this.getTeamNumber();
-            if (teamNumber < 0) {
+            if (!teamNumber) {
                 this.teamComments = [];
                 this.teamCommentsLoaded = true;
                 return;
@@ -321,21 +322,10 @@ export default {
         async loadTeamNumbers() {
             const teamNumbersRows = await queryTeamNumbers(this.eventStore.eventId);
 
-            // Put the teams in a dictionary first in order to sort them by team number.
-            let teamMap = {};
-            teamNumbersRows.forEach(element => {
-                teamMap[element['team_number']] = (
-                    {
-                        "key": element['team_number'],
-                        "text": element['team_number'] + " - " + element['name']
-                    }
-                );
-            });
-
-            this.teamFilters = [];
-            Object.keys(teamMap).forEach(element => {
-                this.teamFilters.push(teamMap[element])
-            });
+            this.teamFilters = teamNumbersRows
+                .filter((row) => row.team_number)
+                .sort((a, b) => compareTeamNumbers(a.team_number, b.team_number))
+                .map((row) => ({ key: row.team_number, text: row.team_number + " - " + row.name }));
 
             if (!this.teamFilters.some(t => t.key === this.currentTeamNumber)) {
                 // Falls back to the first team if currentTeamNumber wasn't
@@ -346,14 +336,11 @@ export default {
 
             this.getRobotPhoto();
         },
-        // Reads the optional :teamNumber route param (issue #46) — null if
-        // absent or not a real number, in which case the usual "first team"
-        // default in loadTeamNumbers() applies instead.
+        // Reads the optional :teamNumber route param (issue #46), e.g.
+        // /team/973B — null if absent or not a team number, in which case
+        // the usual "first team" default in loadTeamNumbers() applies instead.
         parseRouteTeamNumber() {
-            const raw = this.$route.params.teamNumber;
-            if (raw == null) return null;
-            const num = Number(raw);
-            return Number.isFinite(num) ? num : null;
+            return toTeamNumber(this.$route.params.teamNumber);
         },
         async refreshTiles() {
             this.teamLoaded = false;
@@ -379,7 +366,7 @@ export default {
             const teamNumber = this.getTeamNumber();
 
             // If the team number is negative, this function has been called before the teams are loaded.
-            if (teamNumber < 0) {
+            if (!teamNumber) {
                 this.teamPhotoAvailable = false;
                 this.teamPhotoLoaded = true;
                 return;
@@ -416,7 +403,7 @@ export default {
             this.currentLayout = newLayout;
         },
         getTeamNumber() {
-            return this.currentTeamNumber ?? -1;
+            return this.currentTeamNumber ?? null;
         },
         setTeam(teamNumber) {
             this.currentTeamNumber = teamNumber;
@@ -463,7 +450,7 @@ export default {
 
                 if (fileResult) {
                     const data = {
-                        team_number: Number(teamNumber),
+                        team_number: teamNumber,
                         photo_url: "https://" + supabaseProjectId + ".supabase.co/storage/v1/object/public/" + robotPhotoBucket + "/" + fileResult
                     };
                     updatePhoto(data, robotPhotoTable);
@@ -508,11 +495,11 @@ export default {
         },
         isTeamWatched() {
             const teamNumber = this.getTeamNumber();
-            if (teamNumber < 0) return false;
+            if (!teamNumber) return false;
             return this.watchlistStore.isWatched(teamNumber);
         },
         teamNumber() {
-            return this.currentTeamNumber ?? -1;
+            return this.currentTeamNumber ?? null;
         }
     },
     watch: {

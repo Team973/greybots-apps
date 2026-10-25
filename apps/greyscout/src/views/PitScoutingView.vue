@@ -5,6 +5,7 @@ import PitScoutingSection from "@/components/PitScoutingSection.vue";
 
 import { useEventStore } from "@/stores/event-store";
 import { queryTeamNumbers } from "@/lib/data-query";
+import { toTeamNumber, compareTeamNumbers } from "@/lib/team-number";
 </script>
 
 <template>
@@ -37,21 +38,10 @@ export default {
             await this.eventStore.updateEvent();
             const teamNumbersRows = await queryTeamNumbers(this.eventStore.eventId);
 
-            // Put the teams in a dictionary first in order to sort them by team number.
-            let teamMap = {};
-            teamNumbersRows.forEach(element => {
-                teamMap[element['team_number']] = (
-                    {
-                        "key": element['team_number'],
-                        "text": element['team_number'] + " - " + element['name']
-                    }
-                );
-            });
-
-            this.teamFilters = [];
-            Object.keys(teamMap).forEach(element => {
-                this.teamFilters.push(teamMap[element])
-            });
+            this.teamFilters = teamNumbersRows
+                .filter((row) => row.team_number)
+                .sort((a, b) => compareTeamNumbers(a.team_number, b.team_number))
+                .map((row) => ({ key: row.team_number, text: row.team_number + " - " + row.name }));
 
             if (!this.teamFilters.some(t => t.key === this.currentTeamNumber)) {
                 this.currentTeamNumber = this.teamFilters[0]?.key ?? null;
@@ -64,8 +54,9 @@ export default {
         isDataAvailable() {
             return this.teamFilters.length > 0;
         },
+        // null until a team is picked.
         teamNumber() {
-            return this.currentTeamNumber ?? -1;
+            return this.currentTeamNumber ?? null;
         }
     },
     created() {
@@ -74,8 +65,8 @@ export default {
         // Data Status's lead-only pit-edit shortcut (issue #31) lands here
         // with ?team=&editPit=1 — capture both, then strip them from the URL
         // so a refresh/back-nav doesn't keep re-forcing edit mode.
-        const queryTeam = Number(this.$route.query.team);
-        if (Number.isFinite(queryTeam)) {
+        const queryTeam = toTeamNumber(this.$route.query.team);
+        if (queryTeam) {
             this.currentTeamNumber = queryTeam;
         }
         if (this.$route.query.editPit === '1') {

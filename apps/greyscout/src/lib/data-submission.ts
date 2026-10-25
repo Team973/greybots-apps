@@ -4,14 +4,19 @@
 import { supabase } from '@greybots/common/supabase/client';
 import { useEventStore } from "@/stores/event-store";
 import { teamInfoTable, robotPhotoTable, robotPhotoBucket } from "@/lib/constants";
+import { normalizeTeamFields, compareTeamNumbers } from "@/lib/team-number";
 
 export async function getTeamInputElement() {
     let eventStore = useEventStore();
     await eventStore.updateEvent();
     const eventId = eventStore.eventId;
 
-    // Load teams for dropdowns
-    const { data, error } = await supabase.from(teamInfoTable).select("*").eq("event_id", eventId).order("team_number", { ascending: true });
+    // Load teams for dropdowns. Sorted here rather than by the database,
+    // which would put a text "1000" before "254".
+    const { data: rows, error } = await supabase.from(teamInfoTable).select("*").eq("event_id", eventId);
+    const data = normalizeTeamFields(rows, ['team_number'])
+        .filter((row) => row.team_number)
+        .sort((a, b) => compareTeamNumbers(a.team_number, b.team_number));
 
     let teamInputElement = {
         key: "team_number",

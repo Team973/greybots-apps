@@ -11,6 +11,7 @@ import { fetchTeamAutoPaths } from "@/lib/auto-path-query";
 import { fetchRobotPhotoUrl } from "@/lib/robot-photo-query";
 import { submitScoutData } from "@/lib/data-submission";
 import { queryMatchTeams } from "@/lib/data-query";
+import { normalizeTeamFields, compareTeamNumbers } from "@/lib/team-number";
 import { fetchStrategyBoard, saveAutoSelections } from "@/lib/strategy-query";
 import { SIDE_CHOICES, transformPath } from "@/lib/2026/auto-path-field";
 
@@ -359,23 +360,11 @@ export default {
             await this.eventStore.updateEvent();
 
             const { data, error } = await supabase.from(teamInfoTable).select("*").eq("event_id", this.eventStore.eventId);
-            let teamTextMap = {};
-            if (error) {
-                console.log(error);
-            } else {
-                for (var team of data) {
-                    teamTextMap[team.team_number] = String(team.team_number) + " - " + String(team.name);
-                }
-            }
-
-            this.teamFilters = [];
-            Object.keys(teamTextMap).forEach(element => {
-                let teamText = String(element);
-                if (Object.keys(teamTextMap).includes(element)) {
-                    teamText = teamTextMap[element];
-                }
-                this.teamFilters.push({ key: element, text: teamText });
-            })
+            if (error) console.log(error);
+            this.teamFilters = normalizeTeamFields(error ? [] : data, ['team_number'])
+                .filter((team) => team.team_number)
+                .sort((a, b) => compareTeamNumbers(a.team_number, b.team_number))
+                .map((team) => ({ key: team.team_number, text: team.team_number + " - " + String(team.name) }));
 
             // Mark the data as ready for the view to display.
             this.teamsLoaded = true;
@@ -399,7 +388,7 @@ export default {
                 return;
             }
 
-            const teamNumber = Number(teamKey);
+            const teamNumber = teamKey;
             const paths = await fetchTeamAutoPaths(teamNumber, this.eventStore.eventId);
             fetchRobotPhotoUrl(teamNumber).then((url) => { this.robotPhotoUrls[slot] = url; });
 
@@ -581,7 +570,7 @@ export default {
             const slots = [matchTeams.red1, matchTeams.red2, matchTeams.red3, matchTeams.blue1, matchTeams.blue2, matchTeams.blue3];
             slots.forEach((teamNumber, slot) => {
                 if (!teamNumber) return;
-                const teamKey = this.teamFilters.find((t) => Number(t.key) === teamNumber)?.key;
+                const teamKey = this.teamFilters.find((t) => t.key === teamNumber)?.key;
                 if (teamKey !== undefined) this.setTeam(slot, teamKey);
             });
         },
@@ -621,7 +610,7 @@ export default {
             this.autoEditPathError = this.autoEditPoints.length < 2;
             if (this.autoEditNameError || this.autoEditPathError) return;
 
-            const teamNumber = Number(this.teamNumbers[this.autoEditSlot]);
+            const teamNumber = this.teamNumbers[this.autoEditSlot];
             const data = {
                 team_number: teamNumber,
                 name: this.autoEditName.trim(),

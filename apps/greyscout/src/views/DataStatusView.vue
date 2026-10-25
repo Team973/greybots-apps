@@ -6,6 +6,7 @@ import CollapsibleSection from "@greybots/common/components/CollapsibleSection.v
 import SearchableDropdown from "@greybots/common/components/SearchableDropdown.vue";
 
 import { useEventStore } from "@/stores/event-store";
+import { compareTeamNumbers } from "@/lib/team-number";
 import { useAuthStore } from "@/stores/auth-store";
 import { useWatchlistStore } from "@/stores/watchlist-store";
 import { queryEventMatchSchedule, queryEventData, queryEventPitData, queryEventPrescoutData, queryTeamNumbers } from "@/lib/data-query";
@@ -229,7 +230,7 @@ export default {
             const atEvent = new Set(this.teams.map((team) => team.team_number));
             return [...(this.watchlistStore?.watchedTeamNumbers ?? [])]
                 .filter((teamNumber) => atEvent.size === 0 || atEvent.has(teamNumber))
-                .sort((a, b) => a - b)
+                .sort(compareTeamNumbers)
                 .map((teamNumber) => {
                     const totals = this.teamTotals[teamNumber] ?? { scouted: 0, noShows: 0, yellow: 0, red: 0, otherMatches: 0 };
                     return {
@@ -296,7 +297,7 @@ export default {
 
             this.schedule = schedule;
 
-            this.teams = [...teams].sort((a, b) => a.team_number - b.team_number);
+            this.teams = [...teams].sort((a, b) => compareTeamNumbers(a.team_number, b.team_number));
 
             this.scoutedByKey = {};
             this.teamTotals = {};
@@ -376,13 +377,13 @@ export default {
         async addStar(teamNumber) {
             if (!teamNumber || !this.isLead) return;
             this.starError = '';
-            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, Number(teamNumber));
+            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, teamNumber);
             if (error) this.starError = `Couldn't star ${teamNumber}: ${error.message ?? 'unknown error'}`;
         },
         async removeStar(teamNumber) {
             if (!this.isLead) return;
             this.starError = '';
-            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, Number(teamNumber));
+            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, teamNumber);
             if (error) this.starError = `Couldn't unstar ${teamNumber}: ${error.message ?? 'unknown error'}`;
         },
         // Leads/admins clicking an already-scouted slot go straight to

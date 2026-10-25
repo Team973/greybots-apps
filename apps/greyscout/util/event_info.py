@@ -72,7 +72,9 @@ def update_team_info_for_event(sb_credentials, tba_credentials, event_id):
 
         if 'team_number' in team and 'nickname' in team:
             name = team['nickname']
-            number = team['team_number']
+            # Team numbers are text (B teams like "973B"); TBA's team list
+            # only has real teams, numbered as integers.
+            number = str(team['team_number'])
             key = f"{event_id}_{number}"
             listed_keys.add(key)
 
@@ -102,4 +104,4 @@ def update_team_info_for_event(sb_credentials, tba_credentials, event_id):
     dropped = [row for row in existing.data if row['key'] not in listed_keys]
     if dropped:
         sb_client.table(TEAM_TABLE).delete().in_("key", [row['key'] for row in dropped]).execute()
-        print(f"{event_id}: removed dropped teams {sorted(row['team_number'] for row in dropped)}")
+        print(f"{event_id}: removed dropped teams {sorted(str(row['team_number']) for row in dropped)}")

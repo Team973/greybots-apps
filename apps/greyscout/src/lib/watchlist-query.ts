@@ -2,11 +2,13 @@
 
 import { supabase } from '@greybots/common/supabase/client';
 import { watchlistTable } from '@/lib/constants';
+import { toTeamNumbers } from '@/lib/team-number';
+import type { TeamNumber } from '@/lib/team-number';
 
 /**
  * Fetch the set of team numbers currently on the watchlist for an event.
  */
-export async function fetchWatchlist(eventId: string): Promise<number[]> {
+export async function fetchWatchlist(eventId: string): Promise<TeamNumber[]> {
     const { data, error } = await supabase
         .from(watchlistTable)
         .select('team_number')
@@ -17,13 +19,13 @@ export async function fetchWatchlist(eventId: string): Promise<number[]> {
         return [];
     }
 
-    return (data ?? []).map((row) => row.team_number);
+    return toTeamNumbers((data ?? []).map((row) => row.team_number));
 }
 
 /**
  * Add a team to the event's watchlist. Returns the error object or null on success.
  */
-export async function addToWatchlist(eventId: string, teamNumber: number) {
+export async function addToWatchlist(eventId: string, teamNumber: TeamNumber) {
     const { error } = await supabase
         .from(watchlistTable)
         .insert({ event_id: eventId, team_number: teamNumber });
@@ -34,7 +36,7 @@ export async function addToWatchlist(eventId: string, teamNumber: number) {
 /**
  * Remove a team from the event's watchlist. Returns the error object or null on success.
  */
-export async function removeFromWatchlist(eventId: string, teamNumber: number) {
+export async function removeFromWatchlist(eventId: string, teamNumber: TeamNumber) {
     // RLS-denied deletes (non-leads) succeed with zero rows rather than
     // erroring, so ask for the deleted rows back to tell the two apart.
     const { data, error } = await supabase

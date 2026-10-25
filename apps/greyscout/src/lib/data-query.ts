@@ -4,6 +4,7 @@
 
 import { supabase } from "@greybots/common/supabase/client";
 import { matchScoutTable, matchScheduleTable, teamInfoTable, teamNumberColumn, pitScoutTable, preScoutTable, eventInfoTable } from "@/lib/constants";
+import { normalizeTeamFields, MATCH_SLOT_FIELDS } from "@/lib/team-number";
 
 // Qualification matches are the only ones with a schedule known ahead of
 // time (playoff pairings are only decided live), so schedule-based
@@ -24,7 +25,7 @@ export async function queryMatchTeams(eventId, matchNumber) {
         return null;
     }
 
-    return data.length > 0 ? data[0] : null;
+    return data.length > 0 ? normalizeTeamFields(data, MATCH_SLOT_FIELDS)[0] : null;
 }
 
 // The teams in the Nth playoff match of an event (1 = the first playoff
@@ -51,7 +52,7 @@ export async function queryEventMatchSchedule(eventId) {
         return [];
     }
 
-    return data.sort((a, b) => {
+    return normalizeTeamFields(data, MATCH_SLOT_FIELDS).sort((a, b) => {
         const rankDiff = (COMP_LEVEL_RANK[a.comp_level] ?? 99) - (COMP_LEVEL_RANK[b.comp_level] ?? 99);
         if (rankDiff !== 0) return rankDiff;
         if (a.set_number !== b.set_number) return a.set_number - b.set_number;
@@ -67,7 +68,7 @@ export async function queryTeamNumbers(eventId) {
         return [];
     }
 
-    return data;
+    return normalizeTeamFields(data, ['team_number']);
 }
 
 // Add a custom team to an event (issue #127): one The Blue Alliance doesn't
@@ -106,7 +107,7 @@ export async function queryTeamMatchData(teamNumber, eventId) {
         return [];
     }
 
-    return data;
+    return normalizeTeamFields(data, [teamNumberColumn]);
 }
 
 export async function queryEventData(eventId) {
@@ -117,7 +118,7 @@ export async function queryEventData(eventId) {
         return [];
     }
 
-    return data;
+    return normalizeTeamFields(data, [teamNumberColumn]);
 }
 
 // All events, newest first — used to label assignments from past events by
@@ -141,7 +142,7 @@ export async function queryEventPitData(eventId) {
         return [];
     }
 
-    return data;
+    return normalizeTeamFields(data, ['pit_team_number']);
 }
 
 export async function queryEventPrescoutData(eventId) {
@@ -152,6 +153,6 @@ export async function queryEventPrescoutData(eventId) {
         return [];
     }
 
-    return data;
+    return normalizeTeamFields(data, ['prescout_team_number']);
 }
 

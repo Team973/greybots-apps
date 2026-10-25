@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router';
 import SearchableDropdown from "@greybots/common/components/SearchableDropdown.vue";
 
 import { useEventStore } from "@/stores/event-store";
+import { compareTeamNumbers } from "@/lib/team-number";
 import { useAuthStore } from "@/stores/auth-store";
 import { useWatchlistStore } from "@/stores/watchlist-store";
 import { queryTeamNumbers } from "@/lib/data-query";
@@ -90,7 +91,7 @@ export default {
                     rank: ranks[teamNumber] ?? null,
                     chips: computeInlineStats(eventId, teamNumber, this.matchSummaries[teamNumber], this.pitSummaries[teamNumber])
                 }))
-                .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.teamNumber - b.teamNumber);
+                .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || compareTeamNumbers(a.teamNumber, b.teamNumber));
         },
         addChoices() {
             const watched = new Set(this.watchlistStore?.watchedTeamNumbers ?? []);
@@ -113,7 +114,7 @@ export default {
                 this.watchlistStore.loadWatchlist(eventId)
             ]);
 
-            this.teams = [...teams].sort((a, b) => a.team_number - b.team_number);
+            this.teams = [...teams].sort((a, b) => compareTeamNumbers(a.team_number, b.team_number));
             this.matchSummaries = matchSummaries;
             this.pitSummaries = pitSummaries;
 
@@ -122,13 +123,13 @@ export default {
         async addTeam(teamNumber) {
             if (!teamNumber || !this.isLead) return;
             this.watchError = '';
-            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, Number(teamNumber));
+            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, teamNumber);
             if (error) this.watchError = `Couldn't add ${teamNumber}: ${error.message ?? 'unknown error'}`;
         },
         async removeTeam(teamNumber) {
             if (!this.isLead) return;
             this.watchError = '';
-            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, Number(teamNumber));
+            const error = await this.watchlistStore.toggleWatch(this.eventStore.eventId, teamNumber);
             if (error) this.watchError = `Couldn't remove ${teamNumber}: ${error.message ?? 'unknown error'}`;
         }
     },

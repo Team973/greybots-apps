@@ -38,7 +38,7 @@ import "@material/web/button/filled-button";
 export default {
     props: {
         teamNumber: {
-            type: Number,
+            type: String,
             required: true
         },
         pitDataId: {

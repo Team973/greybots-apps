@@ -5,6 +5,7 @@
 
 import { supabase } from '@greybots/common/supabase/client';
 import { tbaProxyFunction } from '@/lib/constants';
+import { toTeamNumber } from '@/lib/team-number';
 
 async function describeFunctionError(error, data) {
     if (data?.error) return data.error;
@@ -65,9 +66,9 @@ export async function fetchEventRankings(eventId) {
 
     const ranks = {};
     (data?.rankings ?? []).forEach((row) => {
-        const teamNumber = Number(row.team_number);
+        const teamNumber = toTeamNumber(row.team_number);
         const rank = Number(row.rank);
-        if (Number.isFinite(teamNumber) && Number.isFinite(rank)) ranks[teamNumber] = rank;
+        if (teamNumber && Number.isFinite(rank)) ranks[teamNumber] = rank;
     });
     return ranks;
 }
@@ -81,12 +82,12 @@ export async function fetchEventOprDpr(eventId) {
         throw new Error(await describeFunctionError(error, data));
     }
 
-    // TBA keys OPRs/DPRs by team key ("frc973") — normalize to bare team numbers.
+    // TBA keys OPRs/DPRs by team key ("frc973", "frc973B") — normalize to team numbers.
     const normalize = (byTeamKey) => {
         const result = {};
         Object.entries(byTeamKey ?? {}).forEach(([key, value]) => {
-            const teamNumber = Number(key.replace('frc', ''));
-            if (Number.isFinite(teamNumber)) result[teamNumber] = value;
+            const teamNumber = toTeamNumber(key);
+            if (teamNumber) result[teamNumber] = value;
         });
         return result;
     };

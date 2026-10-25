@@ -313,7 +313,7 @@ CREATE TABLE IF NOT EXISTS "public"."MatchData" (
     "event" "text",
     "scouted_by" "uuid" DEFAULT "auth"."uid"() NOT NULL,
     "prematch_match_number" smallint NOT NULL,
-    "prematch_team_number" smallint NOT NULL,
+    "prematch_team_number" "text" NOT NULL,
     "prematch_alliance" "text",
     "prematch_noshow" boolean DEFAULT false,
     "postmatch_cards" "text",
@@ -386,7 +386,7 @@ CREATE TABLE IF NOT EXISTS "public"."PitData" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "event" "text",
     "scouted_by" "uuid" DEFAULT "auth"."uid"() NOT NULL,
-    "pit_team_number" smallint NOT NULL,
+    "pit_team_number" "text" NOT NULL,
     "pit_drivetrain" "text",
     "pit_drive_motor_type" "text" NOT NULL,
     "pit_length" real NOT NULL,
@@ -424,7 +424,7 @@ CREATE TABLE IF NOT EXISTS "public"."PreScoutData" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "event" "text",
     "scouted_by" "uuid" DEFAULT "auth"."uid"() NOT NULL,
-    "prescout_team_number" smallint NOT NULL,
+    "prescout_team_number" "text" NOT NULL,
     "prescout_epa" real,
     "prescout_archetype" "text",
     "prescout_scoring_tier" "text",
@@ -441,7 +441,7 @@ CREATE TABLE IF NOT EXISTS "public"."PreScoutComment" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "event" "text",
     "scouted_by" "uuid" DEFAULT "auth"."uid"() NOT NULL,
-    "prescout_team_number" smallint NOT NULL,
+    "prescout_team_number" "text" NOT NULL,
     "comment" "text" NOT NULL
 );
 
@@ -455,7 +455,7 @@ CREATE TABLE IF NOT EXISTS "public"."AutoPath" (
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "event" "text" NOT NULL,
     "scouted_by" "uuid" DEFAULT "auth"."uid"() NOT NULL,
-    "team_number" smallint NOT NULL,
+    "team_number" "text" NOT NULL,
     "name" "text" DEFAULT ''::"text" NOT NULL,
     "alliance" "text" NOT NULL,
     "side" "text" NOT NULL,
@@ -475,12 +475,12 @@ CREATE TABLE IF NOT EXISTS "public"."Match" (
     "comp_level" "text" NOT NULL,
     "set_number" smallint NOT NULL,
     "match_number" smallint NOT NULL,
-    "red1" smallint,
-    "red2" smallint,
-    "red3" smallint,
-    "blue1" smallint,
-    "blue2" smallint,
-    "blue3" smallint
+    "red1" "text",
+    "red2" "text",
+    "red3" "text",
+    "blue1" "text",
+    "blue2" "text",
+    "blue3" "text"
 );
 
 
@@ -579,11 +579,11 @@ CREATE TABLE IF NOT EXISTS "public"."PickList" (
     "user_id" "uuid",
     "event_id" "text" NOT NULL,
     "type" "text" NOT NULL,
-    "team_numbers" integer[] DEFAULT '{}'::integer[] NOT NULL,
+    "team_numbers" "text"[] DEFAULT '{}'::"text"[] NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "team_tiers" jsonb DEFAULT '{}'::jsonb NOT NULL,
-    "picked_team_numbers" integer[] DEFAULT '{}'::integer[] NOT NULL,
+    "picked_team_numbers" "text"[] DEFAULT '{}'::"text"[] NOT NULL,
     "archetype" "text" DEFAULT 'scorer'::"text" NOT NULL,
     "dividers" "jsonb",
     CONSTRAINT "PickList_type_check" CHECK (("type" = ANY (ARRAY['personal'::"text", 'team'::"text"]))),
@@ -599,7 +599,7 @@ COMMENT ON COLUMN "public"."PickList"."dividers" IS 'Team lists only: [{id, labe
 
 CREATE TABLE IF NOT EXISTS "public"."Watchlist" (
     "event_id" "text" NOT NULL,
-    "team_number" smallint NOT NULL,
+    "team_number" "text" NOT NULL,
     "created_by" "uuid" DEFAULT "auth"."uid"(),
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );
@@ -939,7 +939,7 @@ ALTER TABLE "public"."StrategyBoard" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."RobotPhoto" (
-    "team_number" smallint NOT NULL,
+    "team_number" "text" NOT NULL,
     "photo_url" "text"
 );
 
@@ -950,7 +950,7 @@ ALTER TABLE "public"."RobotPhoto" OWNER TO "postgres";
 CREATE TABLE IF NOT EXISTS "public"."Team" (
     "key" "text" NOT NULL,
     "event_id" "text" NOT NULL,
-    "team_number" smallint,
+    "team_number" "text",
     "name" "text",
     "custom" boolean DEFAULT false NOT NULL
 );

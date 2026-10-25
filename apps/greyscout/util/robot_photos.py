@@ -83,7 +83,8 @@ def update_robot_photos_for_event(sb_credentials, tba_credentials, event_id):
     year = int(event_id[:4])
 
     teams_response = sb_client.table(TEAM_TABLE).select("team_number").eq("event_id", event_id).execute()
-    team_numbers = sorted({row['team_number'] for row in teams_response.data})
+    # Text, not integers, once B teams (e.g. "973B") can be stored.
+    team_numbers = sorted({str(row['team_number']) for row in teams_response.data})
 
     updated = 0
     skipped = 0

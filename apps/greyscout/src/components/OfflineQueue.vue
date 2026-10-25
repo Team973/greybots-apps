@@ -6,6 +6,7 @@ import { upsertPersonalPicklist, upsertTeamPicklist } from '@/lib/picklist-query
 import { submitScoutData, updateScoutData } from '@/lib/data-submission';
 import { saveAutoSelections } from '@/lib/strategy-query';
 import { matchScoutTable, pitScoutTable, autoPathTable, strategyBoardTable } from '@/lib/constants';
+import { toTeamNumbers } from '@/lib/team-number';
 
 const queueStore = useOfflineQueueStore();
 const isOpen = ref(false);
@@ -34,8 +35,9 @@ const retryHandlers = {
             payload.userId as string,
             payload.eventId as string,
             payload.archetype as 'scorer' | 'defender',
-            payload.teamNumbers as number[],
-            payload.teamTiers as Record<number, string>
+            // Saves queued before team numbers were text hold numbers.
+            toTeamNumbers(payload.teamNumbers),
+            payload.teamTiers as Record<string, string>
         );
     },
     // A save queued before the divider layout has no `dividers`, and is
@@ -44,8 +46,9 @@ const retryHandlers = {
         return await upsertTeamPicklist(
             payload.eventId as string,
             payload.archetype as 'scorer' | 'defender',
-            payload.teamNumbers as number[],
-            payload.teamTiers as Record<number, string>,
+            // Saves queued before team numbers were text hold numbers.
+            toTeamNumbers(payload.teamNumbers),
+            payload.teamTiers as Record<string, string>,
             (payload.dividers as { id: string; label: string; position: number }[] | undefined) ?? null
         );
     },

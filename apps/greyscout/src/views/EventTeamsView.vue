@@ -7,6 +7,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useAuthStore } from '@/stores/auth-store';
+import { compareTeamNumbers, toTeamNumber } from "@/lib/team-number";
 import { useEventStore } from '@/stores/event-store';
 import { queryTeamNumbers, addCustomTeam, removeCustomTeam } from '@/lib/data-query';
 
@@ -16,7 +17,7 @@ const eventStore = useEventStore();
 const loaded = ref(false);
 const teams = ref([]);
 
-const sortedTeams = computed(() => [...teams.value].sort((a, b) => a.team_number - b.team_number));
+const sortedTeams = computed(() => [...teams.value].sort((a, b) => compareTeamNumbers(a.team_number, b.team_number)));
 const customCount = computed(() => teams.value.filter((team) => team.custom).length);
 
 async function loadTeams() {
@@ -38,18 +39,15 @@ const saving = ref(false);
 const formError = ref('');
 const formMessage = ref('');
 
-// Team numbers are stored as a 16-bit integer.
-const MAX_TEAM_NUMBER = 32767;
-
 async function addTeam() {
     formError.value = '';
     formMessage.value = '';
 
-    const raw = String(newNumber.value).trim();
-    const teamNumber = Number(raw);
+    // A number, or a number and one letter for a B team (e.g. 973B).
+    const teamNumber = toTeamNumber(newNumber.value);
     const name = newName.value.trim();
-    if (!/^\d+$/.test(raw) || teamNumber < 1 || teamNumber > MAX_TEAM_NUMBER) {
-        formError.value = `Enter a team number from 1 to ${MAX_TEAM_NUMBER}.`;
+    if (!teamNumber) {
+        formError.value = 'Enter a team number, like 973, or 973B for a B team.';
         return;
     }
     if (!name) {
@@ -114,8 +112,8 @@ async function removeTeam(team) {
                 <div class="event-teams-fields">
                     <label class="event-teams-field">
                         <span>Team number</span>
-                        <input id="custom-team-number" v-model="newNumber" type="text" inputmode="numeric" pattern="[0-9]*"
-                            autocomplete="off" placeholder="e.g. 9973" />
+                        <input id="custom-team-number" v-model="newNumber" type="text" autocapitalize="characters"
+                            autocomplete="off" maxlength="7" placeholder="e.g. 973B" />
                     </label>
                     <label class="event-teams-field event-teams-field--name">
                         <span>Name</span>
