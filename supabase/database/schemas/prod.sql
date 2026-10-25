@@ -585,12 +585,16 @@ CREATE TABLE IF NOT EXISTS "public"."PickList" (
     "team_tiers" jsonb DEFAULT '{}'::jsonb NOT NULL,
     "picked_team_numbers" integer[] DEFAULT '{}'::integer[] NOT NULL,
     "archetype" "text" DEFAULT 'scorer'::"text" NOT NULL,
+    "dividers" "jsonb",
     CONSTRAINT "PickList_type_check" CHECK (("type" = ANY (ARRAY['personal'::"text", 'team'::"text"]))),
     CONSTRAINT "PickList_archetype_check" CHECK (("archetype" = ANY (ARRAY['scorer'::"text", 'defender'::"text"])))
 );
 
 
 ALTER TABLE "public"."PickList" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."PickList"."dividers" IS 'Team lists only: [{id, label, position}] dividers in the ranked order. NULL for tier-based lists.';
 
 
 CREATE TABLE IF NOT EXISTS "public"."Watchlist" (
@@ -1485,9 +1489,9 @@ CREATE POLICY "Enable update for authenticated users only" ON "public"."PreScout
 
 
 
-CREATE POLICY "Enable write access for personal lists" ON "public"."PickList" TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+CREATE POLICY "Enable write access for personal lists" ON "public"."PickList" TO "authenticated" USING ((("type" = 'personal'::"text") AND ("user_id" = "auth"."uid"()))) WITH CHECK ((("type" = 'personal'::"text") AND ("user_id" = "auth"."uid"())));
 
-CREATE POLICY "Enable write access for picklists" ON "public"."PickList" TO "authenticated" USING (true);
+CREATE POLICY "Enable write access to team lists for leads and admins" ON "public"."PickList" TO "authenticated" USING ((("type" = 'team'::"text") AND (EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"]))))))) WITH CHECK ((("type" = 'team'::"text") AND (EXISTS (SELECT 1 FROM "public"."User" "u" WHERE (("u"."user_id" = "auth"."uid"()) AND ("u"."role" = ANY (ARRAY['lead'::"text", 'admin'::"text"])))))));
 
 
 

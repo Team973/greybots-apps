@@ -9,9 +9,11 @@ import { useEventStore } from '@/stores/event-store';
 import { useOfflineQueueStore } from '@/stores/offline-queue-store';
 import { useWatchlistStore } from '@/stores/watchlist-store';
 import { TIERS, TIER_GROUPS } from '@/lib/picklist-query';
+import { newDivider, layoutItemKey } from '@/lib/team-list-layout';
 import { refreshTbaStats } from '@/lib/tba-cache';
 import { useDragAutoscroll } from '@greybots/common/lib/drag-autoscroll';
 import PicklistRow from '@/components/PicklistRow.vue';
+import PicklistDividerRow from '@/components/PicklistDividerRow.vue';
 import PicklistUnrankedCard from '@/components/PicklistUnrankedCard.vue';
 import SearchableDropdown from '@greybots/common/components/SearchableDropdown.vue';
 
@@ -248,11 +250,13 @@ async function saveList() {
     } else if (activeTab.value === 'team' && isLead.value) {
         success = await picklistStore.saveTeamList(eventId.value, activeArchetype.value);
         if (!success) {
+            const { teamNumbers, dividers } = picklistStore.teamListSaveData(activeArchetype.value);
             queueStore.enqueue('picklist_team', {
                 eventId: eventId.value,
                 archetype: activeArchetype.value,
-                teamNumbers: picklistStore.teamFlatOrder(activeArchetype.value),
-                teamTiers: picklistStore.teamTiersMap(activeArchetype.value)
+                teamNumbers,
+                teamTiers: {},
+                dividers
             }, picklistStore.lastSaveError ?? undefined);
         }
     }
@@ -321,21 +325,28 @@ async function resetPersonalListEmpty() {
 
 function exportTeamListCsv() {
     const rows: Record<string, unknown>[] = [];
+    const { ranked, unranked } = picklistStore.teamLayout[activeArchetype.value];
     let rank = 0;
-    TIER_GROUPS.forEach((group) => {
-        (picklistStore.teamTierSections[activeArchetype.value][group] ?? []).forEach((teamNumber) => {
-            const team = picklistStore.teamMap[teamNumber];
-            if (!team) return;
-            rank += 1;
-            rows.push({
-                rank,
-                tier: group,
-                team_number: team.team_number,
-                name: team.name,
-                picked: picklistStore.isTeamPicked(teamNumber)
-            });
+    const addRow = (teamNumber: number, group: string) => {
+        const team = picklistStore.teamMap[teamNumber];
+        if (!team) return;
+        rank += 1;
+        rows.push({
+            rank,
+            group,
+            team_number: team.team_number,
+            name: team.name,
+            picked: picklistStore.isTeamPicked(teamNumber)
         });
+    };
+
+    // Each ranked team's group is the label of the divider above it.
+    let group = '';
+    ranked.forEach((item) => {
+        if (item.kind === 'divider') group = item.label;
+        else addRow(item.team, group);
     });
+    unranked.forEach((item) => addRow(item.team, 'Unranked'));
 
     const csv = Papa.unparse(rows);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -371,6 +382,44 @@ function groupRankOffset(group: string) {
     }
     return offset;
 }
+
+// ─── Team List dividers ────────────────────────────────────────────────────────
+// The team list is one ranked list with dividers instead of tiers (see
+// team-list-layout.ts). Edits save straight away, like a drag does.
+
+// Rank 1, 2, 3… down the ranked teams, skipping dividers.
+const teamPositions = computed(() => {
+    const positions = new Map<number, number>();
+    picklistStore.activeTeamLayout.ranked.forEach((item) => {
+        if (item.kind === 'team') positions.set(item.team, positions.size + 1);
+    });
+    return positions;
+});
+
+const rankedTeamCount = computed(() => teamPositions.value.size);
+
+function addDivider() {
+    picklistStore.teamLayout[activeArchetype.value].ranked.push(newDivider());
+    saveList();
+}
+
+function updateDividerLabel(divider, label: string) {
+    divider.label = label;
+    saveList();
+}
+
+function removeDivider(divider) {
+    const ranked = picklistStore.teamLayout[activeArchetype.value].ranked;
+    const index = ranked.indexOf(divider);
+    if (index >= 0) ranked.splice(index, 1);
+    saveList();
+}
+
+// Dividers only belong in the ranked list; the unranked pool takes teams only.
+const unrankedTeamGroup = {
+    name: 'team-list',
+    put: (_to, _from, dragEl: HTMLElement) => !dragEl.classList.contains('picklist-divider')
+};
 
 // ─── Inline stats (issue #123) ─────────────────────────────────────────────────
 // Shows each ranked team's stats on its collapsed row, so teams can be
@@ -509,7 +558,8 @@ function toggleTierCollapse(group: string) {
                     {{ activeTab === 'team' ? 'team pick list' : 'democratic ranking' }} (read-only).</span>
                 <span v-else-if="activeTab === 'democratic'">Aggregated tier ranking from all scouts' personal lists
                     (read-only).</span>
-                <span v-else>Official team pick list — only leads can edit. Drag between tiers, then save.</span>
+                <span v-else>Official team pick list — only leads can edit. Drag teams into order, and add dividers to
+                    split it into groups. Changes save as you go.</span>
             </div>
 
             <!-- Loading state -->
@@ -599,6 +649,102 @@ function toggleTierCollapse(group: string) {
                 <!-- Democratic hint -->
                 <div v-if="activeTab === 'democratic' && !hasDemocraticVotes" class="picklist-empty">
                     <p>No personal lists have been submitted yet — submit yours on the "My List" tab first.</p>
+                </div>
+
+                <!-- Team List: one ranked list with dividers instead of tiers
+                     (see team-list-layout.ts), beside the same Unranked pool. -->
+                <div v-else-if="activeTab === 'team'" class="picklist-columns" :key="`team-${tbaStatsVersion}`">
+                    <div class="tier-sections-ranked">
+                        <div class="tier-section">
+                            <div class="tier-section-header tier-section-header--ranked">
+                                <span class="tier-section-name">Ranked</span>
+                                <span class="tier-section-count">{{ rankedTeamCount }}</span>
+                                <button v-if="isEditable" id="btn-add-divider" type="button" class="picklist-add-divider-btn"
+                                    title="Add a divider at the bottom of the ranked list" @click="addDivider">
+                                    + Add Divider
+                                </button>
+                            </div>
+
+                            <draggable v-if="isEditable" :list="picklistStore.activeTeamLayout.ranked" group="team-list"
+                                :item-key="layoutItemKey" handle=".picklist-drag-handle" animation="200"
+                                ghost-class="picklist-row--ghost" :force-fallback="true" :scroll="false"
+                                class="tier-section-body" @start="onDragStart" @end="onDragEnd" @change="saveList">
+                                <template #item="{ element }">
+                                    <PicklistDividerRow v-if="element.kind === 'divider'" :label="element.label" :editable="true"
+                                        @update:label="updateDividerLabel(element, $event)" @remove="removeDivider(element)" />
+                                    <PicklistRow v-else :row-id="`picklist-team-${element.team}`" :team="picklistStore.activeTeamMap[element.team]"
+                                        :event-id="displayEventId"
+                                        :position="teamPositions.get(element.team)" :show-drag-handle="true" :show-vote-stats="showVoteStats"
+                                        :tier-stats="tierStatsFor(element.team)" :show-picked="showPickedCheckbox"
+                                        :is-picked="picklistStore.isTeamPicked(element.team)"
+                                        :can-toggle-picked="isLead && !picklistStore.viewingPastEventId" :card-status="picklistStore.activeCardStatusFor(element.team)"
+                                        :watched="watchlistStore.isWatched(element.team)"
+                                        :can-toggle-watch="isLead && !picklistStore.viewingPastEventId" :expanded="expandedTeam === element.team"
+                                        :expanded-data="expandedData" :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(element.team)" :match-summary="picklistStore.activeMatchSummaryFor(element.team)" :show-inline-stats="showInlineStats"
+                                        @toggle-expand="toggleExpand(element.team)" @toggle-picked="togglePicked(element.team)"
+                                        @toggle-watch="toggleWatch(element.team)" />
+                                </template>
+                            </draggable>
+
+                            <!-- Read-only (a prior event's team list) -->
+                            <div v-else class="tier-section-body tier-section-body--static">
+                                <template v-for="element in picklistStore.activeTeamLayout.ranked" :key="layoutItemKey(element)">
+                                    <PicklistDividerRow v-if="element.kind === 'divider'" :label="element.label" :editable="false" />
+                                    <PicklistRow v-else :row-id="`picklist-team-static-${element.team}`" :team="picklistStore.activeTeamMap[element.team]"
+                                        :event-id="displayEventId"
+                                        :position="teamPositions.get(element.team)" :show-drag-handle="false" :show-vote-stats="showVoteStats"
+                                        :tier-stats="tierStatsFor(element.team)" :show-picked="showPickedCheckbox"
+                                        :is-picked="picklistStore.isTeamPicked(element.team)"
+                                        :can-toggle-picked="isLead && !picklistStore.viewingPastEventId" :card-status="picklistStore.activeCardStatusFor(element.team)"
+                                        :watched="watchlistStore.isWatched(element.team)"
+                                        :can-toggle-watch="isLead && !picklistStore.viewingPastEventId" :expanded="expandedTeam === element.team"
+                                        :expanded-data="expandedData" :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(element.team)" :match-summary="picklistStore.activeMatchSummaryFor(element.team)" :show-inline-stats="showInlineStats"
+                                        @toggle-expand="toggleExpand(element.team)" @toggle-picked="togglePicked(element.team)"
+                                        @toggle-watch="toggleWatch(element.team)" />
+                                </template>
+                            </div>
+
+                            <div v-if="picklistStore.activeTeamLayout.ranked.length === 0" class="tier-section-empty">
+                                {{ isEditable ? 'Drag teams here to rank them' : 'No teams were ranked' }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tier-section tier-section-unranked">
+                        <div class="tier-section-header tier-section-header--Unranked" @click="toggleTierCollapse('Unranked')">
+                            <span class="tier-section-collapse-icon"
+                                :class="{ 'tier-section-collapse-icon--collapsed': isTierCollapsed('Unranked') }">▾</span>
+                            <span class="tier-section-name">Unranked</span>
+                            <span class="tier-section-count">{{ picklistStore.activeTeamLayout.unranked.length }}</span>
+                        </div>
+
+                        <draggable v-if="isEditable" v-show="!isTierCollapsed('Unranked')" :list="picklistStore.activeTeamLayout.unranked"
+                            :group="unrankedTeamGroup" :item-key="layoutItemKey" handle=".unranked-card-handle" animation="200"
+                            ghost-class="unranked-card--ghost" :force-fallback="true" :scroll="false"
+                            class="unranked-grid" @start="onDragStart" @end="onDragEnd" @change="saveList">
+                            <template #item="{ element }">
+                                <PicklistUnrankedCard :row-id="`picklist-unranked-${element.team}`" :team="picklistStore.activeTeamMap[element.team]"
+                                    :watched="watchlistStore.isWatched(element.team)" :can-toggle-watch="isLead && !picklistStore.viewingPastEventId"
+                                    :expanded="expandedTeam === element.team" :expanded-data="expandedData"
+                                    :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(element.team)" @toggle-expand="toggleExpand(element.team)"
+                                    @toggle-watch="toggleWatch(element.team)" />
+                            </template>
+                        </draggable>
+
+                        <div v-else v-show="!isTierCollapsed('Unranked')" class="unranked-grid">
+                            <PicklistUnrankedCard v-for="element in picklistStore.activeTeamLayout.unranked" :key="layoutItemKey(element)"
+                                :row-id="`picklist-unranked-static-${element.team}`" :team="picklistStore.activeTeamMap[element.team]"
+                                :watched="watchlistStore.isWatched(element.team)" :can-toggle-watch="isLead && !picklistStore.viewingPastEventId"
+                                :expanded="expandedTeam === element.team" :expanded-data="expandedData"
+                                :expanded-loading="expandedLoading" :pit-summary="picklistStore.activePitSummaryFor(element.team)" @toggle-expand="toggleExpand(element.team)"
+                                @toggle-watch="toggleWatch(element.team)" />
+                        </div>
+
+                        <div v-if="!isTierCollapsed('Unranked') && picklistStore.activeTeamLayout.unranked.length === 0"
+                            class="tier-section-empty">
+                            {{ isEditable ? 'Drag teams here to unrank them' : 'No unranked teams' }}
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Tier-grouped sections: ranked tiers on the left, the
@@ -1104,6 +1250,28 @@ function toggleTierCollapse(group: string) {
 
 .tier-section-header--Unranked {
     border-left-color: rgba(128, 128, 128, 0.4);
+}
+
+.tier-section-header--ranked {
+    border-left-color: #b05703;
+}
+
+.picklist-add-divider-btn {
+    margin-left: auto;
+    background: none;
+    color: #b05703;
+    border: 1.5px solid #b05703;
+    border-radius: 8px;
+    padding: 4px 12px;
+    min-height: 36px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.picklist-add-divider-btn:hover {
+    background: rgba(176, 87, 3, 0.1);
 }
 
 .tier-section-body {

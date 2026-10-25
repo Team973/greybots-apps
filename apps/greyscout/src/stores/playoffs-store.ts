@@ -10,6 +10,7 @@ import {
     fetchPersonalPicklist,
     parseTeamTiers
 } from '@/lib/picklist-query';
+import { hasDividers } from '@/lib/team-list-layout';
 import { fetchPlayoffs, upsertPlayoffs, fetchPlayoffsPrediction, upsertPlayoffsPrediction } from '@/lib/playoffs-query';
 import { getCachedTbaRankings, refreshTbaRankings } from '@/lib/tba-cache';
 import {
@@ -197,9 +198,15 @@ export const usePlayoffsStore = defineStore('playoffs', {
             }
             if (this.eventId !== eventId) return;
 
+            // A divider-layout team list (see team-list-layout.ts) saves only
+            // its ranked teams; a tier-based list saves every team, so only
+            // the ones with a tier count.
             const tiers = parseTeamTiers(result?.team_tiers);
+            const ranked = hasDividers(result)
+                ? (result.team_numbers ?? []).map(Number)
+                : (result?.team_numbers ?? []).map(Number).filter((teamNumber) => tiers[teamNumber]);
             this.picklistSource = source;
-            this.picklistOrder = (result?.team_numbers ?? []).map(Number).filter((teamNumber) => tiers[teamNumber]);
+            this.picklistOrder = ranked;
             this.sortPool();
         },
 
