@@ -1,0 +1,41 @@
+name: Diagnostics CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/diagnostics/**'
+      - 'packages/common/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/diagnostics-ci.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/diagnostics/**'
+      - 'packages/common/**'
+
+jobs:
+  # Type-checks, builds, and packages the app on each operating system it
+  # runs on. The installers are attached to the workflow run.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:diagnostics
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greybots-diagnostics-${{ matrix.os }}
+          path: |
+            apps/diagnostics/release/*.exe
+            apps/diagnostics/release/*.AppImage
+            apps/diagnostics/release/*.dmg
+          if-no-files-found: error

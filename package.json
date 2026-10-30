@@ -25,7 +25,11 @@
     "type-check:hub": "npm run type-check -w apps/hub",
     "dev:workshop": "npm run dev -w apps/workshop",
     "build:workshop": "npm run build -w apps/workshop",
-    "type-check:workshop": "npm run type-check -w apps/workshop"
+    "type-check:workshop": "npm run type-check -w apps/workshop",
+    "dev:diagnostics": "npm run dev -w apps/diagnostics",
+    "build:diagnostics": "npm run build -w apps/diagnostics",
+    "type-check:diagnostics": "npm run type-check -w apps/diagnostics",
+    "dist:diagnostics": "npm run dist -w apps/diagnostics"
   },
   "devDependencies": {
     "@rushstack/eslint-patch": "^1.8.0",

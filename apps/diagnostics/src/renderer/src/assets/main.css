@@ -1,0 +1,97 @@
+@import '@greybots/common/styles/main.css';
+
+.main-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-top: 64px;
+  padding: 1.5rem;
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 720px;
+  box-sizing: border-box;
+  padding: 24px;
+  background-color: var(--tile-background-color);
+  border-radius: 12px;
+  box-shadow: inset 0 0 0.5px 1px hsla(0, 0%, 100%, 0.1),
+    0 0 0 1px hsla(230, 13%, 9%, 0.075),
+    0 3.5px 6px hsla(230, 13%, 9%, 0.09);
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hint {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.error-text {
+  margin: 0;
+  color: #e5534b;
+}
+
+.success-text {
+  margin: 0;
+  color: #3a9e3a;
+}
+
+.path {
+  font-family: ui-monospace, Consolas, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+table.plain {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.plain th,
+table.plain td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+table.plain th {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+table.plain td.number {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The other apps load Roboto from Google Fonts. This one has to work with no
+   internet, so the Material components use the same system font as the page. */
+:root {
+  --md-ref-typeface-brand: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --md-ref-typeface-plain: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+}

@@ -1,0 +1,24 @@
+# Packaging for the pit laptop: one installer per operating system. Nothing is
+# code signed yet, so Windows and macOS warn on first launch (docs/design.md).
+appId: com.team973.diagnostics
+productName: Greybots Diagnostics
+directories:
+  output: release
+  buildResources: build
+# The app is fully bundled into out/ by electron-vite, so no node_modules
+# are packaged.
+files:
+  - out/**
+  - package.json
+npmRebuild: false
+artifactName: greybots-diagnostics-${version}-${os}-${arch}.${ext}
+win:
+  target: nsis
+linux:
+  target: AppImage
+  category: Development
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
