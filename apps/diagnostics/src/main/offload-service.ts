@@ -93,7 +93,8 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
       let reader: SftpReader | null = null;
       try {
         reader = await SftpReader.connect(robotHost);
-        addResult(summary, await offloadLogs(directory, { reader, origin: 'robot', robot, locations: robotLogLocations }, onProgress));
+        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations };
+        addResult(summary, await offloadLogs(directory, job, onProgress));
       } catch (error) {
         summary.errors.push(`${reader ? 'Offload from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
       } finally {
@@ -105,7 +106,8 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
 
     if (process.platform === 'win32') {
       const reader = new LocalReader();
-      addResult(summary, await offloadLogs(directory, { reader, origin: 'local', robot, locations: driverStationLocations }, onProgress));
+      const job = { label: 'Driver Station logs', reader, origin: 'local' as const, robot, locations: driverStationLocations };
+      addResult(summary, await offloadLogs(directory, job, onProgress));
     }
   } catch (error) {
     summary.errors.push((error as Error).message);

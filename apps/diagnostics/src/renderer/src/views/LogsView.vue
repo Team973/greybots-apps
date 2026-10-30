@@ -68,12 +68,13 @@ onUnmounted(() => clearInterval(timer));
         Logs already on this computer aren't pulled again.
       </p>
 
-      <div v-if="status.current" class="progress">
-        <div>{{ status.current.label }}: <span class="path">{{ status.current.file }}</span></div>
-        <progress :value="progressPercent" max="100"></progress>
-        <div class="hint">
+      <div v-if="status.current" id="offload-progress" class="progress">
+        <div>
+          {{ status.current.label }}: {{ status.current.filesDone }} of {{ status.current.filesTotal }} files,
           {{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}
         </div>
+        <progress :value="progressPercent" max="100"></progress>
+        <div v-for="name in status.current.active" :key="name" class="hint path">{{ name }}</div>
       </div>
 
       <div class="card-actions">

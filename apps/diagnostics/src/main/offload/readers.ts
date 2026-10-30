@@ -1,6 +1,6 @@
 import { createReadStream, promises as fs } from 'node:fs';
 import { extname, join, posix } from 'node:path';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 import { Client, type FileEntryWithStats, type SFTPWrapper } from 'ssh2';
 
 import { robotSshUser } from '@shared/offload';
@@ -33,6 +33,11 @@ function matches(name: string, extensions: string[]): boolean {
 }
 
 const sshTimeoutMs = 5000;
+
+// What ssh2's fastGet uses: 32 KB reads (fits one SFTP packet on any
+// server), many at a time.
+const sftpChunkBytes = 32 * 1024;
+const sftpReadsInFlight = 32;
 
 export class SftpReader implements FileReader {
   connected = true;
@@ -96,9 +101,54 @@ export class SftpReader implements FileReader {
     return new Promise((resolve) => this.sftp.realpath(directory, (error, path) => resolve(error ? null : path)));
   }
 
+  // ssh2's own read stream asks for one chunk at a time and waits for it, so
+  // every 32 KB costs a round trip to the robot, which is slow over the
+  // radio. This keeps many reads in flight, like ssh2's fastGet, and hands
+  // the chunks on in order.
   read(path: string, start: number, end: number): Readable {
-    // ssh2's `end` is inclusive.
-    return this.sftp.createReadStream(path, { start, end: end - 1 });
+    const sftp = this.sftp;
+    const call = <T>(fn: (cb: (error: Error | null | undefined, value: T) => void) => void) =>
+      new Promise<T>((resolve, reject) => fn((error, value) => (error ? reject(error) : resolve(value))));
+
+    // Reads `length` bytes at `offset`. A server may send fewer than asked;
+    // the rest is asked for again.
+    const readAt = async (handle: Buffer, offset: number, length: number): Promise<Buffer> => {
+      const buffer = Buffer.alloc(length);
+      let got = 0;
+      while (got < length) {
+        const count = await call<number>((cb) =>
+          sftp.read(handle, buffer, got, length - got, offset + got, (error, bytesRead) => cb(error, bytesRead))
+        );
+        if (count === 0) throw new Error('the file is shorter than it was');
+        got += count;
+      }
+      return buffer;
+    };
+
+    async function* chunks() {
+      const handle = await call<Buffer>((cb) => sftp.open(path, 'r', cb));
+      try {
+        const pending: Promise<Buffer>[] = [];
+        let offset = start;
+        while (offset < end || pending.length > 0) {
+          while (pending.length < sftpReadsInFlight && offset < end) {
+            const length = Math.min(sftpChunkBytes, end - offset);
+            const read = readAt(handle, offset, length);
+            // Awaited in order below; this only stops a failure further
+            // along from being reported as unhandled if an earlier one ends
+            // the download first.
+            read.catch(() => {});
+            pending.push(read);
+            offset += length;
+          }
+          yield await pending.shift()!;
+        }
+      } finally {
+        sftp.close(handle, () => {});
+      }
+    }
+
+    return Readable.from(chunks(), { objectMode: false });
   }
 
   close() {

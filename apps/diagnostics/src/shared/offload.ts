@@ -114,11 +114,16 @@ export interface OffloadRunSummary {
   errors: string[];
 }
 
+// How the current part of an offload (the robot, or Driver Station logs) is
+// going. Counts only the files being pulled, not those already here.
 export interface OffloadProgress {
   label: string;
-  file: string;
+  filesDone: number;
+  filesTotal: number;
   bytesDone: number;
   bytesTotal: number;
+  // The names of the files being pulled right now.
+  active: string[];
 }
 
 export interface OffloadStatus {
