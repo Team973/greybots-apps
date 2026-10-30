@@ -11,9 +11,11 @@ export interface Settings {
   addressMode: AddressMode;
   // An IP address or hostname. Only used in manual mode.
   manualAddress: string;
-  // Whether to look for the robot and its coprocessors by mDNS. Discovery
-  // itself comes with the log offload work (issue #91).
+  // Whether to look for the robot by its mDNS name. Finding coprocessors by
+  // mDNS comes later (issue #91).
   mdnsEnabled: boolean;
+  // Whether to pull the robot's logs as soon as it shows up on the network.
+  autoOffload: boolean;
   // Where logs and results are kept. Empty means the default folder, which
   // only the main process can name (it depends on the operating system).
   dataDirectory: string;
@@ -24,6 +26,7 @@ export const defaultSettings: Settings = {
   addressMode: 'team',
   manualAddress: '',
   mdnsEnabled: true,
+  autoOffload: true,
   dataDirectory: ''
 };
 
@@ -61,6 +64,7 @@ export function normalizeSettings(raw: unknown): Settings {
     addressMode: input.addressMode === 'manual' ? 'manual' : 'team',
     manualAddress: typeof input.manualAddress === 'string' ? input.manualAddress.trim() : defaultSettings.manualAddress,
     mdnsEnabled: typeof input.mdnsEnabled === 'boolean' ? input.mdnsEnabled : defaultSettings.mdnsEnabled,
+    autoOffload: typeof input.autoOffload === 'boolean' ? input.autoOffload : defaultSettings.autoOffload,
     dataDirectory: typeof input.dataDirectory === 'string' ? input.dataDirectory.trim() : defaultSettings.dataDirectory
   };
 }

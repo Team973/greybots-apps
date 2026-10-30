@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
+import LogsView from '@/views/LogsView.vue';
 import OverviewView from '@/views/OverviewView.vue';
 import SettingsView from '@/views/SettingsView.vue';
 
@@ -13,6 +14,7 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: '/', name: 'overview', component: OverviewView, meta: { title: 'Overview' } },
+    { path: '/logs', name: 'logs', component: LogsView, meta: { title: 'Logs' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ]

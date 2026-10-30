@@ -82,10 +82,19 @@ onMounted(async () => {
     <div class="field-row">
       <div>
         Find the robot by mDNS
-        <p class="hint">Looks for the robot and its coprocessors by name on the network.</p>
+        <p class="hint">Looks for the robot by its name on the network, as well as its address.</p>
       </div>
       <Switch id="mdns-switch" :model-value="draft.mdnsEnabled"
         @update:model-value="edit({ mdnsEnabled: $event })"></Switch>
+    </div>
+
+    <div class="field-row">
+      <div>
+        Offload logs automatically
+        <p class="hint">Pulls the robot's logs as soon as it connects. They can always be pulled from the Logs page.</p>
+      </div>
+      <Switch id="auto-offload-switch" :model-value="draft.autoOffload"
+        @update:model-value="edit({ autoOffload: $event })"></Switch>
     </div>
 
     <p class="hint">
