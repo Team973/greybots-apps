@@ -2,6 +2,7 @@
 // one function per entry as `window.diagnostics`; the main process handles
 // each on the channel of the same name.
 
+import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries } from './signals';
@@ -65,20 +66,42 @@ export interface OffloadedFiles {
   recent: OffloadedFile[];
 }
 
-// An offloaded data log that signals can be read from.
-export interface SignalLogFile {
-  // Below the data folder, as in the offload index.
+export interface SessionHoot {
   localPath: string;
   name: string;
+  bus: string;
+  label: string;
+  size: number;
+}
+
+// One recording to read signals from: a WPILib data log and the CTRE Hoot
+// logs from the same match or time, or Hoot logs on their own.
+export interface SignalLogFile {
+  // Names the session: its data log's path, or its first Hoot log's.
+  id: string;
+  // The data log, below the data folder; null for Hoot logs on their own.
+  localPath: string | null;
+  name: string;
   robot: string;
+  // Of all its files.
   size: number;
   // When recording started (ISO), as near as is known.
   recorded: string;
   match: MatchInfo | null;
+  hoots: SessionHoot[];
+}
+
+export interface HootSessionStatus {
+  hoots: HootLogStatus[];
+  progress: HootProgress | null;
+  // The session's time span in seconds, which grows once Hoot logs are
+  // lined up (they often start before the data log).
+  start: number;
+  end: number;
 }
 
 export interface SignalLogSummary {
-  localPath: string;
+  id: string;
   // Seconds from the first value to the last.
   duration: number;
   // When the log started, by the clock (ISO), if the log says.
@@ -107,10 +130,17 @@ export interface DiagnosticsApi {
   startOffload(): Promise<string>;
   getOffloadedFiles(): Promise<OffloadedFiles>;
   getSignalLogs(): Promise<SignalLogFile[]>;
-  // Opens a log for reading signals; rejects if it can't be read.
-  openSignalLog(localPath: string): Promise<SignalLogSummary>;
-  // Null if the log has no such signal.
-  readSignal(localPath: string, key: string, range: SignalRange): Promise<SignalSeries | null>;
+  // Opens a session for reading signals; rejects if it can't be read.
+  openSignalLog(id: string): Promise<SignalLogSummary>;
+  // Null if the session has no such signal. A Hoot signal not read before is
+  // exported first, which can take a while for a big log.
+  readSignal(id: string, key: string, range: SignalRange): Promise<SignalSeries | null>;
+  getHootStatus(id: string): Promise<HootSessionStatus>;
+  getOwletStatus(): Promise<OwletStatus>;
+  // Records that CTRE's licence was accepted, and gets owlet.
+  acceptCtreLicense(): Promise<OwletStatus>;
+  // Checks CTRE for owlet again.
+  downloadOwlet(): Promise<OwletStatus>;
 }
 
 export const ipcChannels: (keyof DiagnosticsApi)[] = [
@@ -126,5 +156,9 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getOffloadedFiles',
   'getSignalLogs',
   'openSignalLog',
-  'readSignal'
+  'readSignal',
+  'getHootStatus',
+  'getOwletStatus',
+  'acceptCtreLicense',
+  'downloadOwlet'
 ];
