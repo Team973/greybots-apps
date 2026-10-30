@@ -15,9 +15,9 @@ const files = ref<OffloadedFiles | null>(null);
 const startMessage = ref('');
 let timer: ReturnType<typeof setInterval> | undefined;
 
-const progressPercent = computed(() => {
+const filesLeft = computed(() => {
   const current = status.value?.current;
-  return current && current.bytesTotal > 0 ? Math.floor((current.bytesDone / current.bytesTotal) * 100) : 0;
+  return current ? current.filesTotal - current.filesDone : 0;
 });
 
 const sourceNames: Record<string, string> = {
@@ -69,11 +69,18 @@ onUnmounted(() => clearInterval(timer));
       </p>
 
       <div v-if="status.current" id="offload-progress" class="progress">
-        <div>
-          {{ status.current.label }}: {{ status.current.filesDone }} of {{ status.current.filesTotal }} files,
-          {{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}
-        </div>
-        <progress :value="progressPercent" max="100"></progress>
+        <div>{{ status.current.label }}</div>
+        <label class="bar">
+          <span>
+            {{ status.current.filesDone }} of {{ status.current.filesTotal }} files
+            <span class="hint">({{ filesLeft }} left)</span>
+          </span>
+          <progress id="files-progress" :value="status.current.filesDone" :max="Math.max(status.current.filesTotal, 1)"></progress>
+        </label>
+        <label class="bar">
+          <span>{{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}</span>
+          <progress id="bytes-progress" :value="status.current.bytesDone" :max="Math.max(status.current.bytesTotal, 1)"></progress>
+        </label>
         <div v-for="name in status.current.active" :key="name" class="hint path">{{ name }}</div>
       </div>
 
@@ -134,6 +141,17 @@ onUnmounted(() => clearInterval(timer));
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* The count above its bar. */
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bar .hint {
+  display: inline;
 }
 
 progress {
