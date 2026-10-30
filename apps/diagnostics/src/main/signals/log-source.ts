@@ -108,6 +108,18 @@ export class LogSignalSource {
     return started >= Date.UTC(2020, 0, 1) ? new Date(started).toISOString() : null;
   }
 
+  private sortedEntries = new Map<number, boolean>();
+
+  private inTimeOrder(entry: number): boolean {
+    let sorted = this.sortedEntries.get(entry);
+    if (sorted === undefined) {
+      const records = this.log.records[entry];
+      sorted = records.every((record, i) => i === 0 || records[i - 1].timestamp <= record.timestamp);
+      this.sortedEntries.set(entry, sorted);
+    }
+    return sorted;
+  }
+
   private buildCatalog() {
     for (const [index, entry] of this.log.entries.entries()) {
       if (entry.type === 'structschema' || entry.name.startsWith('/.schema/')) continue;
@@ -179,13 +191,31 @@ export class LogSignalSource {
     const start = range.start ?? -Infinity;
     const end = range.end ?? Infinity;
 
+    // Entries are nearly always written in time order; then the range is
+    // found by binary search, and the value just outside each end is
+    // included so a zoomed-in line reaches the edges. Stats are of the
+    // range only.
+    const sorted = this.inTimeOrder(location.entry);
+    const timeAt = (i: number) => records[i].timestamp / 1e6 - this.firstTime;
+    let first = 0;
+    let last = records.length;
+    if (sorted) {
+      first = Math.max(0, firstAtOrAfter(records.length, timeAt, start) - (range.start === undefined ? 0 : 1));
+      last = Math.min(records.length, firstAtOrAfter(records.length, timeAt, end, true) + (range.end === undefined ? 0 : 1));
+    }
+
     const times: number[] = [];
     const strings: string[] = [];
     const numbers: number[] = [];
-    for (const record of records) {
-      const time = record.timestamp / 1e6 - this.firstTime;
-      if (time < start || time > end) continue;
-      const decoded = decodeValue(this.bytes, record, entry.type, this.structs);
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let counted = 0;
+    for (let i = first; i < last; i++) {
+      const time = timeAt(i);
+      const inRange = time >= start && time <= end;
+      if (!inRange && !sorted) continue;
+      const decoded = decodeValue(this.bytes, records[i], entry.type, this.structs);
       const value = location.path.length === 0 ? decoded : pick(decoded, location.path);
       if (location.kind === 'string') {
         if (typeof value !== 'string') continue;
@@ -194,6 +224,12 @@ export class LogSignalSource {
         const number = asNumber(value);
         if (number === null) continue;
         numbers.push(number);
+        if (inRange) {
+          if (number < min) min = number;
+          if (number > max) max = number;
+          sum += number;
+          counted += 1;
+        }
       }
       times.push(time);
     }
@@ -202,18 +238,7 @@ export class LogSignalSource {
       return { key, kind: location.kind, times: Float64Array.from(times), values: strings, downsampled: false, stats: null };
     }
 
-    let stats: SignalSeries['stats'] = null;
-    if (numbers.length > 0) {
-      let min = Infinity;
-      let max = -Infinity;
-      let sum = 0;
-      for (const n of numbers) {
-        if (n < min) min = n;
-        if (n > max) max = n;
-        sum += n;
-      }
-      stats = { min, max, mean: sum / numbers.length };
-    }
+    const stats: SignalSeries['stats'] = counted > 0 ? { min, max, mean: sum / counted } : null;
 
     const maxPoints = range.maxPoints ?? Infinity;
     if (numbers.length <= maxPoints) {
@@ -222,6 +247,19 @@ export class LogSignalSource {
     const reduced = downsample(times, numbers, maxPoints);
     return { key, kind: location.kind, times: reduced.times, values: reduced.values, downsampled: true, stats };
   }
+}
+
+// The first index whose time is at or after `time` (after it, with
+// `after`), in times sorted ascending; `count` if there's none.
+function firstAtOrAfter(count: number, timeAt: (i: number) => number, time: number, after = false): number {
+  let low = 0;
+  let high = count;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (after ? timeAt(mid) <= time : timeAt(mid) < time) low = mid + 1;
+    else high = mid;
+  }
+  return low;
 }
 
 // Splits the time span into maxPoints / 2 stretches and keeps each one's

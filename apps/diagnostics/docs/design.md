@@ -113,7 +113,18 @@ ssh2 has two optional native add-ons (faster ciphers and CPU detection). The bui
 
 ## Signals
 
-One signal layer serves log review, live view, and automated tests (#92), so a dashboard works with any of them. The Signals page shows it working on offloaded data logs.
+One signal layer serves log review, live view, and automated tests (#92), so a dashboard works with any of them. The Signals page plots it from offloaded data logs.
+
+**The Signals page.** The chart is the main part, with the log's signals in a list beside it.
+
+- **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …) and for a new left or right axis. Clicking a signal adds it to L1.
+- **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
+- **Text signals** (subsystem states) are drawn as bands of labelled spans above the plot.
+- **Under the chart:** a list of what's plotted, with each signal's colour, its axis (changeable, including to a new one), and its min, max, and mean over the span shown. Rows can be dragged onto the chart to move them.
+- **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
+- **Hover:** shows every signal's value at that moment (the last value at or before it).
+- **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
+- **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
 
 **Reading data logs.** `src/main/signals/wpilog.ts` reads WPILib data logs (`.wpilog`, [format](https://github.com/wpilibsuite/allwpilib/blob/main/wpiutil/doc/datalog.adoc)) in plain TypeScript, with no Node or Electron. `structs.ts` decodes `struct:` values (Pose2d, team-defined structs) from the schemas the log carries: nested structs, fixed arrays, enums, and bitfields. A 15 MB log of about 1M values opens in about 250 ms. The log is held in memory whole, one at a time.
 

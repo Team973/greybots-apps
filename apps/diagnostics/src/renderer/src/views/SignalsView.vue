@@ -1,37 +1,47 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, shallowRef, watch } from 'vue';
 import '@material/web/button/outlined-button';
 import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
+import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { describeMatch } from '@shared/offload';
 import type { SignalInfo, SignalSeries } from '@shared/signals';
-import SignalChart from '@/components/SignalChart.vue';
+import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChart.vue';
 import { formatBytes, formatTime } from '@/format';
+import { maxTraces, usePlotStore, type AxisSide, type PlotTarget } from '@/stores/plot-store';
 
-// More points than the chart is pixels wide add nothing.
-const maxPoints = 2000;
-// Rows shown in a values table.
-const tableRows = 200;
+// The reference palette's categorical order, a step per theme, validated
+// against the card colours (#fff and #272727). In light mode slots 3, 4 and
+// 5 are under 3:1 against white, so every line is also named in the list
+// under the chart.
+const palette = {
+  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
+  dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
+};
+
+const plotStore = usePlotStore();
+const viewMode = useViewModeStore();
+const colorOf = (slot: number) => (viewMode.isDarkMode ? palette.dark : palette.light)[slot];
 
 const logs = ref<SignalLogFile[] | null>(null);
 const selectedLog = ref('');
 const summary = ref<SignalLogSummary | null>(null);
 const opening = ref(false);
 const openError = ref('');
+const message = ref('');
 
-const view = ref<'groups' | 'subsystems'>('groups');
+const listView = ref<'groups' | 'subsystems'>('groups');
 const filter = ref('');
 const showEmpty = ref(false);
 
-const selected = ref<SignalInfo | null>(null);
-const series = ref<SignalSeries | null>(null);
-
 const signalsByKey = computed(() => new Map((summary.value?.signals ?? []).map((signal) => [signal.key, signal])));
+const full = computed<[number, number]>(() => [0, Math.max(summary.value?.duration ?? 1, 0.01)]);
+const view = computed<[number, number]>(() => plotStore.view ?? full.value);
 
-// What the list shows: plottable signals, with values unless asked, that
-// match the filter.
+// --- The signal list ---
+
 function shown(signal: SignalInfo | undefined): signal is SignalInfo {
   if (!signal || signal.kind === 'other') return false;
   if (!showEmpty.value && signal.count === 0) return false;
@@ -61,16 +71,22 @@ const subsystems = computed(() => {
 
 const withValues = computed(() => (summary.value?.signals ?? []).filter((s) => s.kind !== 'other' && s.count > 0).length);
 
+function signalLabel(signal: SignalInfo): string {
+  return signal.subsystem ? `${signal.subsystem} / ${signal.name}` : signal.name;
+}
+
 function logLabel(log: SignalLogFile): string {
   const when = formatTime(log.recorded);
   return log.match ? `${describeMatch(log.match)}, ${when}` : `${when} (${log.name})`;
 }
 
+// --- Opening a log ---
+
 async function openLog() {
   summary.value = null;
-  selected.value = null;
-  series.value = null;
   openError.value = '';
+  series.value = new Map();
+  plotStore.setView(null);
   if (!selectedLog.value) return;
   opening.value = true;
   try {
@@ -82,30 +98,139 @@ async function openLog() {
   }
 }
 
-async function select(signal: SignalInfo) {
-  selected.value = signal;
-  series.value = await window.diagnostics.readSignal(selectedLog.value, signal.key, { maxPoints });
+watch(selectedLog, openLog);
+
+// --- Putting signals on the chart ---
+
+function place(signal: SignalInfo, target?: PlotTarget) {
+  message.value = plotStore.place(signal.key, signal.kind, target);
 }
+
+// Drags carry the signal's key. From the list it's added; from the trace
+// list under the chart it's moved.
+const dragType = 'application/x-diagnostics-signal';
+const dragging = ref(false);
+const dropTarget = ref('');
+
+function onDragStart(event: DragEvent, key: string) {
+  event.dataTransfer?.setData(dragType, key);
+  event.dataTransfer?.setData('text/plain', key);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
+  dragging.value = true;
+}
+
+function onDragEnd() {
+  dragging.value = false;
+  dropTarget.value = '';
+}
+
+function onDragOverZone(event: DragEvent, zone: string) {
+  if (!event.dataTransfer?.types.includes(dragType)) return;
+  event.preventDefault();
+  dropTarget.value = zone;
+}
+
+function onDrop(event: DragEvent, target?: PlotTarget) {
+  const key = event.dataTransfer?.getData(dragType);
+  dragging.value = false;
+  dropTarget.value = '';
+  const signal = key ? signalsByKey.value.get(key) : undefined;
+  if (signal) place(signal, target);
+}
+
+const leftAxes = computed(() => plotStore.axes.filter((a) => a.side === 'left'));
+const rightAxes = computed(() => plotStore.axes.filter((a) => a.side === 'right'));
+
+function axisUnits(id: string): string {
+  const units = plotStore.traces
+    .filter((t) => t.axis === id)
+    .map((t) => signalsByKey.value.get(t.key)?.unit)
+    .filter((u): u is string => !!u);
+  return [...new Set(units)].join(', ');
+}
+
+function setAxis(key: string, choice: string) {
+  const signal = signalsByKey.value.get(key);
+  if (!signal) return;
+  const target: PlotTarget = choice === 'new-left' || choice === 'new-right'
+    ? { newAxis: choice === 'new-left' ? 'left' : 'right' as AxisSide }
+    : { axis: choice };
+  place(signal, target);
+}
+
+// --- Reading what's on the chart ---
+
+const series = shallowRef(new Map<string, SignalSeries | null>());
+const plotWidth = ref(800);
+let request = 0;
+let timer: ReturnType<typeof setTimeout> | undefined;
+
+// Re-read when the signals, the span or the size change: only the span
+// shown, at about two points a pixel. Zooming re-reads, so detail appears.
+watch(
+  () => [summary.value?.localPath, plotStore.traces.map((t) => t.key).join('\n'), view.value[0], view.value[1], plotWidth.value],
+  () => {
+    clearTimeout(timer);
+    timer = setTimeout(readTraces, 60);
+  }
+);
+
+async function readTraces() {
+  const log = summary.value?.localPath;
+  if (!log) return;
+  const mine = ++request;
+  const [start, end] = view.value;
+  const keys = plotStore.traces.map((t) => t.key);
+  const results = await Promise.all(
+    keys.map((key) =>
+      signalsByKey.value.has(key)
+        ? window.diagnostics.readSignal(log, key, { start, end, maxPoints: Math.ceil(plotWidth.value * 2) })
+        : Promise.resolve(null)
+    )
+  );
+  // A newer read has started: this one's out of date.
+  if (mine !== request) return;
+  series.value = new Map(keys.map((key, i) => [key, results[i]]));
+}
+
+const chartAxes = computed<ChartAxis[]>(() =>
+  plotStore.axes.map((a) => ({ id: a.id, side: a.side, name: plotStore.axisName(a.id) }))
+);
+
+const chartLines = computed<ChartLine[]>(() =>
+  plotStore.traces.map((trace) => {
+    const signal = signalsByKey.value.get(trace.key);
+    return {
+      key: trace.key,
+      label: signal ? signalLabel(signal) : trace.key,
+      unit: signal?.unit ?? '',
+      color: colorOf(trace.color),
+      axis: trace.axis,
+      series: series.value.get(trace.key) ?? null
+    };
+  })
+);
 
 function formatNumber(value: number, unit: string): string {
   const text = Math.abs(value) >= 1000 || value === Math.trunc(value) ? value.toFixed(0) : value.toPrecision(4);
   return unit ? `${text} ${unit}` : text;
 }
 
-const tableValues = computed(() => {
-  const s = series.value;
-  if (!s) return [];
-  return Array.from({ length: Math.min(tableRows, s.times.length) }, (_, i) => ({
-    time: s.times[i].toFixed(3),
-    value: s.kind === 'string'
-      ? (s.values as string[])[i]
-      : s.kind === 'boolean'
-        ? String((s.values as Float64Array)[i] === 1)
-        : formatNumber((s.values as Float64Array)[i], selected.value?.unit ?? '')
-  }));
-});
+// --- Zoom ---
 
-watch(selectedLog, openLog);
+function zoomTo(next: [number, number]) {
+  const [start, end] = full.value;
+  plotStore.setView(next[0] <= start && next[1] >= end ? null : next);
+}
+
+function zoomBy(factor: number) {
+  const [start, end] = view.value;
+  const middle = (start + end) / 2;
+  const span = Math.min(full.value[1] - full.value[0], Math.max(0.01, (end - start) * factor));
+  let from = middle - span / 2;
+  from = Math.max(full.value[0], Math.min(from, full.value[1] - span));
+  zoomTo([from, from + span]);
+}
 
 onMounted(async () => {
   logs.value = await window.diagnostics.getSignalLogs();
@@ -114,109 +239,197 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="card">
-    <h2>Signals</h2>
-    <p class="hint">What a WPILib data log recorded, by the robot's own names, sorted into health groups and subsystems.</p>
-
-    <p v-if="logs && logs.length === 0" class="hint">No data logs offloaded yet. They're pulled from the robot on the Logs page.</p>
-    <label v-else-if="logs" class="field">
-      <span>Log</span>
-      <select id="signal-log" v-model="selectedLog">
-        <option v-for="log in logs" :key="log.localPath" :value="log.localPath">
-          {{ logLabel(log) }} · {{ formatBytes(log.size) }}
-        </option>
-      </select>
-    </label>
-
-    <p v-if="opening" class="hint">Reading the log…</p>
-    <p v-if="openError" class="error-text">This log can't be read: {{ openError }}</p>
-    <p v-if="summary" id="log-summary" class="hint">
-      {{ Math.round(summary.duration) }} s long{{ summary.startedAt ? `, from ${formatTime(summary.startedAt)}` : '' }}.
-      {{ withValues }} signals with values, of {{ summary.signals.length }}.
-      <template v-if="summary.truncated">The end of the file is cut off.</template>
-    </p>
-  </section>
-
-  <section v-if="selected" class="card" id="signal-detail">
-    <div>
-      <h2>{{ selected.name }}</h2>
-      <p class="hint path">{{ selected.key }}</p>
-    </div>
-
-    <template v-if="series && series.times.length > 0">
-      <SignalChart v-if="series.kind !== 'string'" :series="series" :unit="selected.unit" />
-
-      <p v-if="series.stats" id="signal-stats">
-        Min <strong>{{ formatNumber(series.stats.min, selected.unit) }}</strong> ·
-        Max <strong>{{ formatNumber(series.stats.max, selected.unit) }}</strong> ·
-        Mean <strong>{{ formatNumber(series.stats.mean, selected.unit) }}</strong>
-        <span class="hint"> · {{ selected.count }} values{{ series.downsampled ? `, ${series.times.length} plotted` : '' }}</span>
+  <div class="signals-page">
+    <aside class="card sidebar">
+      <p v-if="logs && logs.length === 0" class="hint">No data logs offloaded yet. They're pulled from the robot on the Logs page.</p>
+      <label v-else-if="logs" class="field">
+        <span>Log</span>
+        <select id="signal-log" v-model="selectedLog">
+          <option v-for="log in logs" :key="log.localPath" :value="log.localPath">
+            {{ logLabel(log) }} · {{ formatBytes(log.size) }}
+          </option>
+        </select>
+      </label>
+      <p v-if="opening" class="hint">Reading the log…</p>
+      <p v-if="openError" class="error-text">This log can't be read: {{ openError }}</p>
+      <p v-if="summary" id="log-summary" class="hint">
+        {{ Math.round(summary.duration) }} s{{ summary.startedAt ? `, from ${formatTime(summary.startedAt)}` : '' }}.
+        {{ withValues }} signals with values.
+        <template v-if="summary.truncated">The end of the file is cut off.</template>
       </p>
 
-      <details :open="series.kind === 'string'">
-        <summary>Values{{ series.times.length > tableRows ? ` (the first ${tableRows}${series.downsampled ? ' plotted' : ''})` : '' }}</summary>
-        <table class="plain">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in tableValues" :key="row.time + row.value">
-              <td class="number">{{ row.time }} s</td>
-              <td class="value">{{ row.value }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </details>
-    </template>
-    <p v-else-if="series" class="hint">No values in this log.</p>
-  </section>
-
-  <section v-if="summary" class="card">
-    <div class="card-actions">
-      <md-outlined-button :class="{ active: view === 'groups' }" @click="view = 'groups'">By health group</md-outlined-button>
-      <md-outlined-button :class="{ active: view === 'subsystems' }" @click="view = 'subsystems'">By subsystem</md-outlined-button>
-    </div>
-    <TextInput id="signal-filter" :model-value="filter" label="Filter by name" @update:model-value="filter = $event"></TextInput>
-    <div class="field-row">
-      <div>Show signals with no values</div>
-      <Switch id="show-empty-switch" :model-value="showEmpty" @update:model-value="showEmpty = $event"></Switch>
-    </div>
-
-    <template v-if="view === 'groups'">
-      <details v-for="group in groups" :key="group.id" open>
-        <summary class="group-title">{{ group.name }}</summary>
-        <div v-for="metric in group.metrics" :key="metric.name" class="metric">
-          <div class="metric-name">{{ metric.name }}</div>
-          <p v-if="metric.signals.length === 0" class="hint">Not in this log.</p>
-          <button v-for="signal in metric.signals" :key="signal.key" class="signal"
-            :class="{ selected: selected?.key === signal.key }" @click="select(signal)">
-            <span class="signal-name">{{ signal.subsystem ? `${signal.subsystem} / ` : '' }}{{ signal.name }}</span>
-            <span class="hint">{{ signal.unit }}</span>
-            <span class="hint count">{{ signal.count }}</span>
-          </button>
+      <template v-if="summary">
+        <div class="toggle">
+          <button :class="{ active: listView === 'groups' }" @click="listView = 'groups'">Health groups</button>
+          <button :class="{ active: listView === 'subsystems' }" @click="listView = 'subsystems'">Subsystems</button>
         </div>
-      </details>
-    </template>
+        <TextInput id="signal-filter" :model-value="filter" label="Filter by name" @update:model-value="filter = $event"></TextInput>
+        <div class="field-row">
+          <span>Show signals with no values</span>
+          <Switch id="show-empty-switch" :model-value="showEmpty" @update:model-value="showEmpty = $event"></Switch>
+        </div>
+        <p class="hint">Drag a signal onto the chart, or click to add it.</p>
 
-    <template v-else>
-      <p v-if="subsystems.length === 0" class="hint">No signals match.</p>
-      <details v-for="[name, signals] in subsystems" :key="name">
-        <summary class="group-title">{{ name }} <span class="hint">({{ signals.length }})</span></summary>
-        <button v-for="signal in signals" :key="signal.key" class="signal"
-          :class="{ selected: selected?.key === signal.key }" @click="select(signal)">
-          <span class="signal-name">{{ signal.name }}</span>
-          <span class="hint">{{ signal.unit }}</span>
-          <span class="hint count">{{ signal.count }}</span>
-        </button>
-      </details>
-    </template>
-  </section>
+        <div class="signal-list">
+          <template v-if="listView === 'groups'">
+            <details v-for="group in groups" :key="group.id" open>
+              <summary class="group-title">{{ group.name }}</summary>
+              <div v-for="metric in group.metrics" :key="metric.name" class="metric">
+                <div class="metric-name">{{ metric.name }}</div>
+                <p v-if="metric.signals.length === 0" class="hint small">Not in this log.</p>
+                <div v-for="signal in metric.signals" :key="signal.key" class="signal" draggable="true"
+                  :title="signal.key" @dragstart="onDragStart($event, signal.key)" @dragend="onDragEnd" @click="place(signal)">
+                  <span class="swatch" :style="{ background: plotStore.trace(signal.key) ? colorOf(plotStore.trace(signal.key)!.color) : 'transparent' }"></span>
+                  <span class="signal-name">{{ signalLabel(signal) }}</span>
+                  <span class="hint small">{{ signal.unit }}</span>
+                </div>
+              </div>
+            </details>
+          </template>
+          <template v-else>
+            <p v-if="subsystems.length === 0" class="hint">No signals match.</p>
+            <details v-for="[name, list] in subsystems" :key="name">
+              <summary class="group-title">{{ name }} <span class="hint">({{ list.length }})</span></summary>
+              <div v-for="signal in list" :key="signal.key" class="signal" draggable="true" :title="signal.key"
+                @dragstart="onDragStart($event, signal.key)" @dragend="onDragEnd" @click="place(signal)">
+                <span class="swatch" :style="{ background: plotStore.trace(signal.key) ? colorOf(plotStore.trace(signal.key)!.color) : 'transparent' }"></span>
+                <span class="signal-name">{{ signal.name }}</span>
+                <span class="hint small">{{ signal.unit }}</span>
+              </div>
+            </details>
+          </template>
+        </div>
+      </template>
+    </aside>
+
+    <section class="card chart-area">
+      <div class="toolbar">
+        <md-outlined-button id="zoom-in" :disabled="!summary" @click="zoomBy(0.5)">Zoom in</md-outlined-button>
+        <md-outlined-button id="zoom-out" :disabled="!summary || !plotStore.view" @click="zoomBy(2)">Zoom out</md-outlined-button>
+        <md-outlined-button id="zoom-all" :disabled="!summary || !plotStore.view" @click="zoomTo(full)">Show all</md-outlined-button>
+        <span v-if="summary" id="view-range" class="hint">
+          {{ view[0].toFixed(2) }} – {{ view[1].toFixed(2) }} s of {{ full[1].toFixed(0) }} s
+        </span>
+        <span class="spacer"></span>
+        <md-outlined-button v-if="plotStore.traces.length" @click="plotStore.clear()">Clear chart</md-outlined-button>
+      </div>
+      <p class="hint small">Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all.</p>
+
+      <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @drop.prevent="onDrop($event)">
+        <PlotChart v-if="summary" :lines="chartLines" :axes="chartAxes" :view="view" :full="full" :height="460"
+          @zoom="zoomTo" @width="plotWidth = $event" />
+        <div v-if="summary && plotStore.traces.length === 0 && !dragging" class="empty">
+          Drag signals here, or click one in the list.
+        </div>
+
+        <!-- While dragging: where it can go. -->
+        <div v-if="dragging" class="drop-zones">
+          <div class="drop-column">
+            <div v-for="axis in leftAxes" :key="axis.id" class="drop" :class="{ over: dropTarget === axis.id }"
+              @dragover="onDragOverZone($event, axis.id)" @drop.prevent.stop="onDrop($event, { axis: axis.id })">
+              {{ plotStore.axisName(axis.id) }} <span class="hint">{{ axisUnits(axis.id) }}</span>
+            </div>
+            <div class="drop new" :class="{ over: dropTarget === 'new-left' }"
+              @dragover="onDragOverZone($event, 'new-left')" @drop.prevent.stop="onDrop($event, { newAxis: 'left' })">
+              + New left axis
+            </div>
+          </div>
+          <div class="drop center" :class="{ over: dropTarget === 'default' }"
+            @dragover="onDragOverZone($event, 'default')" @drop.prevent.stop="onDrop($event)">
+            {{ leftAxes.length ? `Add to ${plotStore.axisName(leftAxes[0].id)}` : 'Add to the chart' }}
+            <span class="hint">Text signals go in the bands above the plot.</span>
+          </div>
+          <div class="drop-column">
+            <div v-for="axis in rightAxes" :key="axis.id" class="drop" :class="{ over: dropTarget === axis.id }"
+              @dragover="onDragOverZone($event, axis.id)" @drop.prevent.stop="onDrop($event, { axis: axis.id })">
+              {{ plotStore.axisName(axis.id) }} <span class="hint">{{ axisUnits(axis.id) }}</span>
+            </div>
+            <div class="drop new" :class="{ over: dropTarget === 'new-right' }"
+              @dragover="onDragOverZone($event, 'new-right')" @drop.prevent.stop="onDrop($event, { newAxis: 'right' })">
+              + New right axis
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p v-if="message" class="error-text">{{ message }}</p>
+
+      <table v-if="plotStore.traces.length" id="trace-list" class="plain traces">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Signal</th>
+            <th>Axis</th>
+            <th class="number">Min</th>
+            <th class="number">Max</th>
+            <th class="number">Mean</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="trace in plotStore.traces" :key="trace.key" draggable="true"
+            @dragstart="onDragStart($event, trace.key)" @dragend="onDragEnd">
+            <td><span class="swatch" :style="{ background: colorOf(trace.color) }"></span></td>
+            <td class="trace-name" :title="trace.key">
+              {{ signalsByKey.get(trace.key) ? signalLabel(signalsByKey.get(trace.key)!) : trace.key }}
+              <span v-if="!signalsByKey.has(trace.key)" class="hint">(not in this log)</span>
+              <span v-else-if="series.get(trace.key)?.times.length === 0" class="hint">(no values here)</span>
+            </td>
+            <td>
+              <span v-if="trace.axis === 'lanes'" class="hint">Band</span>
+              <select v-else :value="trace.axis" :aria-label="`Axis for ${trace.key}`" @change="setAxis(trace.key, ($event.target as HTMLSelectElement).value)">
+                <option v-for="axis in plotStore.axes" :key="axis.id" :value="axis.id">{{ plotStore.axisName(axis.id) }}</option>
+                <option value="new-left">New left axis</option>
+                <option value="new-right">New right axis</option>
+              </select>
+            </td>
+            <template v-if="series.get(trace.key)?.stats">
+              <td class="number">{{ formatNumber(series.get(trace.key)!.stats!.min, signalsByKey.get(trace.key)?.unit ?? '') }}</td>
+              <td class="number">{{ formatNumber(series.get(trace.key)!.stats!.max, signalsByKey.get(trace.key)?.unit ?? '') }}</td>
+              <td class="number">{{ formatNumber(series.get(trace.key)!.stats!.mean, signalsByKey.get(trace.key)?.unit ?? '') }}</td>
+            </template>
+            <template v-else><td></td><td></td><td></td></template>
+            <td><button class="remove" :aria-label="`Remove ${trace.key}`" @click="plotStore.remove(trace.key)">✕</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-if="plotStore.traces.length" class="hint small">
+        Min, max and mean are of the span shown. Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis.
+      </p>
+    </section>
+  </div>
 </template>
 
 <style scoped>
+.signals-page {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  width: 100%;
+  align-items: start;
+}
+
+.signals-page .card {
+  max-width: none;
+}
+
+.sidebar {
+  position: sticky;
+  top: 80px;
+  max-height: calc(100vh - 112px);
+  overflow: hidden;
+  gap: 10px;
+  padding: 16px;
+}
+
+.signal-list {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  margin: 0 -8px;
+  padding: 0 8px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -224,16 +437,33 @@ onMounted(async () => {
 }
 
 select {
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 6px;
   font: inherit;
   color: inherit;
   background: var(--tile-background-color);
-  border: 1px solid currentColor;
+  border: 1px solid rgba(127, 127, 127, 0.6);
 }
 
-md-outlined-button.active {
-  --md-outlined-button-outline-width: 2px;
+.toggle {
+  display: flex;
+  border: 1px solid rgba(127, 127, 127, 0.5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.toggle button {
+  flex: 1;
+  padding: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle button.active {
+  background: rgba(127, 127, 127, 0.2);
   font-weight: 600;
 }
 
@@ -244,31 +474,25 @@ md-outlined-button.active {
 }
 
 .metric {
-  margin: 8px 0 8px 12px;
+  margin: 4px 0 8px 8px;
 }
 
 .metric-name {
-  opacity: 0.8;
-  margin-bottom: 4px;
+  font-size: 0.85rem;
+  opacity: 0.75;
 }
 
 .signal {
   display: flex;
-  width: 100%;
-  gap: 8px;
-  align-items: baseline;
-  padding: 4px 8px;
-  border: none;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 6px;
   border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  font-size: 0.9rem;
+  cursor: grab;
 }
 
-.signal:hover,
-.signal.selected {
+.signal:hover {
   background: rgba(127, 127, 127, 0.15);
 }
 
@@ -277,12 +501,112 @@ md-outlined-button.active {
   overflow-wrap: anywhere;
 }
 
-.count {
-  font-variant-numeric: tabular-nums;
+.small {
+  font-size: 0.8rem;
 }
 
-td.value {
-  white-space: pre-wrap;
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.chart-area {
+  gap: 10px;
+  padding: 16px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.chart-wrap {
+  position: relative;
+  min-height: 460px;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0.6;
+  font-size: 1.1rem;
+}
+
+.drop-zones {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 8px;
+}
+
+.drop-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drop {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 2px dashed rgba(127, 127, 127, 0.6);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tile-background-color) 85%, transparent);
+  font-weight: 600;
+  text-align: center;
+  padding: 8px;
+}
+
+.drop.new {
+  flex: 0 0 auto;
+  min-height: 56px;
+  font-weight: 500;
+}
+
+.drop.over {
+  border-color: #2a78d6;
+  background: color-mix(in srgb, #2a78d6 15%, var(--tile-background-color));
+}
+
+.traces td {
+  vertical-align: middle;
+}
+
+.traces tr[draggable='true'] {
+  cursor: grab;
+}
+
+.trace-name {
   overflow-wrap: anywhere;
+}
+
+.remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 1rem;
+}
+
+.remove:hover {
+  opacity: 1;
 }
 </style>
