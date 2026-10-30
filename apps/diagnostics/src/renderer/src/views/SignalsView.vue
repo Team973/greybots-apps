@@ -287,10 +287,14 @@ function zoomBy(factor: number) {
   zoomTo([from, from + span]);
 }
 
-onMounted(async () => {
+// Lists the data logs again (new ones copied in, offloads since), keeping
+// the open one if it's still there.
+async function loadLogs() {
   logs.value = await window.diagnostics.getSignalLogs();
-  if (logs.value.length > 0) selectedLog.value = logs.value[0].localPath;
-});
+  if (!logs.value.some((log) => log.localPath === selectedLog.value)) selectedLog.value = logs.value[0]?.localPath ?? '';
+}
+
+onMounted(loadLogs);
 </script>
 
 <template>
@@ -299,12 +303,16 @@ onMounted(async () => {
       <p v-if="logs && logs.length === 0" class="hint">No data logs offloaded yet. They're pulled from the robot on the Logs page.</p>
       <label v-else-if="logs" class="field">
         <span>Log</span>
-        <select id="signal-log" v-model="selectedLog">
-          <option v-for="log in logs" :key="log.localPath" :value="log.localPath">
-            {{ logLabel(log) }} · {{ formatBytes(log.size) }}
-          </option>
-        </select>
+        <span class="log-row">
+          <select id="signal-log" v-model="selectedLog">
+            <option v-for="log in logs" :key="log.localPath" :value="log.localPath">
+              {{ logLabel(log) }} · {{ formatBytes(log.size) }}
+            </option>
+          </select>
+          <button id="refresh-logs" class="icon-button" title="Look for new logs" aria-label="Look for new logs" @click.prevent="loadLogs">↻</button>
+        </span>
       </label>
+      <p v-if="logs" class="hint small">Data logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand.</p>
       <p v-if="opening" class="hint">Reading the log…</p>
       <p v-if="openError" class="error-text">This log can't be read: {{ openError }}</p>
       <p v-if="summary" id="log-summary" class="hint">
@@ -469,6 +477,31 @@ onMounted(async () => {
   flex: 1;
   margin: 0 -8px;
   padding: 0 8px;
+}
+
+.log-row {
+  display: flex;
+  gap: 6px;
+}
+
+.log-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-button {
+  flex: none;
+  width: 36px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: rgba(127, 127, 127, 0.15);
 }
 
 .field {

@@ -50,9 +50,10 @@ export interface MatchInfo {
   event: string;
   type: MatchType;
   number: number;
-  // A replayed match's replay number (E13.2), as WPILib adds it. 0 or
-  // missing for the first time a match is played.
-  replay?: number;
+  // WPILib adds .N to a log's name (Q27.2) when a log by that name is
+  // already there: the robot rebooted, or the log was deleted and started
+  // again, during the match. Not a replay. Missing when there's none.
+  suffix?: number;
 }
 
 export interface LogNameInfo {
@@ -63,15 +64,15 @@ export interface LogNameInfo {
 
 const matchTypes: Record<string, MatchType> = { P: 'practice', Q: 'qualification', E: 'elimination' };
 
-function matchFrom(event: string, type: string, number: string, replay: string | undefined): MatchInfo {
+function matchFrom(event: string, type: string, number: string, suffix: string | undefined): MatchInfo {
   const match: MatchInfo = { event, type: matchTypes[type.toUpperCase()], number: Number(number) };
-  if (replay !== undefined && Number(replay) > 0) match.replay = Number(replay);
+  if (suffix !== undefined && Number(suffix) > 0) match.suffix = Number(suffix);
   return match;
 }
 
 // DataLogManager names its files FRC_<yyyyMMdd>_<HHmmss>.wpilog, in UTC, once
 // the Driver Station has set the robot's clock, and adds _<event>_<Q42> once
-// FMS has said which match it is (_E13.2 for a replay). Before the clock is
+// FMS has said which match it is (and .N if that name is taken). Before the clock is
 // set it's FRC_TBD_<id>.
 //
 // CTRE's SignalLogger names Hoot logs <event>_<Q42>_<CAN bus>_<date>_<time>.hoot
@@ -101,8 +102,8 @@ export function isUnnamedLog(fileName: string): boolean {
 }
 
 export function describeMatch(match: MatchInfo): string {
-  const replay = match.replay ? ` (replay ${match.replay})` : '';
-  return `${match.event} ${match.type[0].toUpperCase()}${match.number}${replay}`;
+  const suffix = match.suffix ? ` (.${match.suffix})` : '';
+  return `${match.event} ${match.type[0].toUpperCase()}${match.number}${suffix}`;
 }
 
 // One file that has been offloaded, as recorded in index/offloaded.json.
