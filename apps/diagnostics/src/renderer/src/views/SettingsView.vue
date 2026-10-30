@@ -82,11 +82,30 @@ onMounted(async () => {
     <div class="field-row">
       <div>
         Find the robot by mDNS
-        <p class="hint">Looks for the robot and its coprocessors by name on the network.</p>
+        <p class="hint">Looks for the robot by its name on the network, as well as its address.</p>
       </div>
       <Switch id="mdns-switch" :model-value="draft.mdnsEnabled"
         @update:model-value="edit({ mdnsEnabled: $event })"></Switch>
     </div>
+
+    <div class="field-row">
+      <div>
+        Offload logs automatically
+        <p class="hint">Pulls the robot's logs as soon as it connects. They can always be pulled from the Logs page.</p>
+      </div>
+      <Switch id="auto-offload-switch" :model-value="draft.autoOffload"
+        @update:model-value="edit({ autoOffload: $event })"></Switch>
+    </div>
+
+    <div class="field-row">
+      <div>
+        Only pull logs from the last
+        <p class="hint">In days. Older logs stay on the robot. 0 pulls every log.</p>
+      </div>
+      <NumberInput id="offload-days" :model-value="draft.offloadDays" label="Days"
+        @update:model-value="edit({ offloadDays: $event })"></NumberInput>
+    </div>
+    <p v-if="errors.offloadDays" class="error-text">{{ errors.offloadDays }}</p>
 
     <p class="hint">
       With these settings the robot is looked for at:

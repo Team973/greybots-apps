@@ -4,6 +4,7 @@ import '@material/web/button/filled-button';
 
 import type { AppInfo, ConnectionReport, StorageInfo } from '@shared/ipc';
 import { robotAddresses } from '@shared/robot-address';
+import { formatBytes } from '@/format';
 import { useSettingsStore } from '@/stores/settings-store';
 
 const store = useSettingsStore();
@@ -27,17 +28,6 @@ async function checkConnection() {
 
 async function openFolder() {
   storageMessage.value = await window.diagnostics.openDataDirectory();
-}
-
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
 onMounted(async () => {

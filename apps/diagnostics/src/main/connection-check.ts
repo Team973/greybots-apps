@@ -14,7 +14,7 @@ const robotPorts = [
 
 const timeoutMs = 1500;
 
-function checkPort(host: string, port: number, service: string): Promise<PortCheck> {
+export function checkPort(host: string, port: number, service: string): Promise<PortCheck> {
   return new Promise((resolve) => {
     const started = Date.now();
     const socket = connect({ host, port });

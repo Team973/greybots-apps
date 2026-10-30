@@ -11,9 +11,14 @@ export interface Settings {
   addressMode: AddressMode;
   // An IP address or hostname. Only used in manual mode.
   manualAddress: string;
-  // Whether to look for the robot and its coprocessors by mDNS. Discovery
-  // itself comes with the log offload work (issue #91).
+  // Whether to look for the robot by its mDNS name. Finding coprocessors by
+  // mDNS comes later (issue #91).
   mdnsEnabled: boolean;
+  // Whether to pull the robot's logs as soon as it shows up on the network.
+  autoOffload: boolean;
+  // Only logs recorded in this many days are pulled; 0 pulls everything. A
+  // robot can hold gigabytes of old logs, which shouldn't hold up today's.
+  offloadDays: number;
   // Where logs and results are kept. Empty means the default folder, which
   // only the main process can name (it depends on the operating system).
   dataDirectory: string;
@@ -24,10 +29,14 @@ export const defaultSettings: Settings = {
   addressMode: 'team',
   manualAddress: '',
   mdnsEnabled: true,
+  autoOffload: true,
+  offloadDays: 7,
   dataDirectory: ''
 };
 
 export const maxTeamNumber = 99999;
+
+export const maxOffloadDays = 3650;
 
 export type SettingsErrors = Partial<Record<keyof Settings, string>>;
 
@@ -37,6 +46,10 @@ export function settingsErrors(settings: Settings): SettingsErrors {
 
   if (!Number.isInteger(settings.teamNumber) || settings.teamNumber < 1 || settings.teamNumber > maxTeamNumber) {
     errors.teamNumber = `Enter a team number from 1 to ${maxTeamNumber}.`;
+  }
+
+  if (!Number.isInteger(settings.offloadDays) || settings.offloadDays < 0 || settings.offloadDays > maxOffloadDays) {
+    errors.offloadDays = `Enter a number of days from 0 to ${maxOffloadDays}, or 0 for all logs.`;
   }
 
   if (settings.addressMode === 'manual') {
@@ -61,6 +74,10 @@ export function normalizeSettings(raw: unknown): Settings {
     addressMode: input.addressMode === 'manual' ? 'manual' : 'team',
     manualAddress: typeof input.manualAddress === 'string' ? input.manualAddress.trim() : defaultSettings.manualAddress,
     mdnsEnabled: typeof input.mdnsEnabled === 'boolean' ? input.mdnsEnabled : defaultSettings.mdnsEnabled,
+    autoOffload: typeof input.autoOffload === 'boolean' ? input.autoOffload : defaultSettings.autoOffload,
+    offloadDays: typeof input.offloadDays === 'number' && Number.isFinite(input.offloadDays)
+      ? Math.trunc(input.offloadDays)
+      : defaultSettings.offloadDays,
     dataDirectory: typeof input.dataDirectory === 'string' ? input.dataDirectory.trim() : defaultSettings.dataDirectory
   };
 }

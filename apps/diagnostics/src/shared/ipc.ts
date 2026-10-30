@@ -2,6 +2,7 @@
 // one function per entry as `window.diagnostics`; the main process handles
 // each on the channel of the same name.
 
+import type { OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
 
 export interface AppInfo {
@@ -57,6 +58,12 @@ export interface ConnectionReport {
   addresses: AddressCheck[];
 }
 
+export interface OffloadedFiles {
+  total: number;
+  // The most recently changed, newest first.
+  recent: OffloadedFile[];
+}
+
 export interface DiagnosticsApi {
   getAppInfo(): Promise<AppInfo>;
   getSettings(): Promise<Settings>;
@@ -67,6 +74,10 @@ export interface DiagnosticsApi {
   // Opens the data folder in the file manager. Resolves to an error message, or ''.
   openDataDirectory(): Promise<string>;
   checkConnection(): Promise<ConnectionReport>;
+  getOffloadStatus(): Promise<OffloadStatus>;
+  // Starts an offload and resolves when it's done, to why it didn't start or ''.
+  startOffload(): Promise<string>;
+  getOffloadedFiles(): Promise<OffloadedFiles>;
 }
 
 export const ipcChannels: (keyof DiagnosticsApi)[] = [
@@ -76,5 +87,8 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'chooseDataDirectory',
   'getStorageInfo',
   'openDataDirectory',
-  'checkConnection'
+  'checkConnection',
+  'getOffloadStatus',
+  'startOffload',
+  'getOffloadedFiles'
 ];

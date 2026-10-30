@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { DiagnosticsApi } from '@shared/ipc';
 import { normalizeSettings, settingsErrors } from '@shared/settings';
 import { checkConnection } from './connection-check';
+import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { loadSettings, storeSettings } from './settings-store';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
 
@@ -79,6 +80,15 @@ const handlers: DiagnosticsApi = {
   },
   async checkConnection() {
     return checkConnection(await loadSettings());
+  },
+  async getOffloadStatus() {
+    return offloadStatus();
+  },
+  async startOffload() {
+    return runOffload(false);
+  },
+  async getOffloadedFiles() {
+    return offloadedFiles(await loadSettings());
   }
 };
 
@@ -103,6 +113,7 @@ if (!app.requestSingleInstanceLock()) {
     await ensureStorageLayout(dataDirectory(await loadSettings())).catch((error) => console.error(error));
 
     createWindow();
+    watchForRobot();
 
     // macOS: clicking the dock icon with no windows open makes one.
     app.on('activate', () => {

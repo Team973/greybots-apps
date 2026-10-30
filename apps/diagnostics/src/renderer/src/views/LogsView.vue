@@ -1,0 +1,186 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import '@material/web/button/filled-button';
+
+import type { OffloadedFiles } from '@shared/ipc';
+import { describeMatch, type OffloadStatus } from '@shared/offload';
+import { formatBytes, formatTime } from '@/format';
+
+// The main process does the offloading, and doesn't tell the window as it
+// goes; the window asks this often while the page is open.
+const refreshMs = 1000;
+
+const status = ref<OffloadStatus | null>(null);
+const files = ref<OffloadedFiles | null>(null);
+const startMessage = ref('');
+let timer: ReturnType<typeof setInterval> | undefined;
+
+const filesLeft = computed(() => {
+  const current = status.value?.current;
+  return current ? current.filesTotal - current.filesDone : 0;
+});
+
+const sourceNames: Record<string, string> = {
+  roborio: 'roboRIO',
+  'driver-station': 'Driver Station',
+  'ctre-hoot': 'CTRE Hoot'
+};
+
+function fileName(localPath: string): string {
+  return localPath.slice(localPath.lastIndexOf('/') + 1);
+}
+
+// Download speed, in bytes a second, from how far the byte count moved
+// between refreshes, smoothed so it doesn't jump about.
+const speed = ref<number | null>(null);
+let lastSample: { label: string; bytes: number; time: number } | null = null;
+
+function measureSpeed(current: OffloadStatus['current']) {
+  const now = performance.now();
+  if (!current || !lastSample || lastSample.label !== current.label || current.bytesDone < lastSample.bytes) {
+    speed.value = null;
+  } else if (now > lastSample.time) {
+    const latest = ((current.bytesDone - lastSample.bytes) / (now - lastSample.time)) * 1000;
+    speed.value = speed.value === null ? latest : 0.7 * speed.value + 0.3 * latest;
+  }
+  lastSample = current ? { label: current.label, bytes: current.bytesDone, time: now } : null;
+}
+
+function runSeconds(run: NonNullable<OffloadStatus['lastRun']>): number {
+  return Math.max(0, Math.round((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000));
+}
+
+async function refresh() {
+  const wasRunning = status.value?.running ?? false;
+  status.value = await window.diagnostics.getOffloadStatus();
+  measureSpeed(status.value.current);
+  // The list only changes when a run finishes (or one has just started).
+  if (wasRunning !== status.value.running || files.value === null) {
+    files.value = await window.diagnostics.getOffloadedFiles();
+  }
+}
+
+async function offloadNow() {
+  startMessage.value = '';
+  const offload = window.diagnostics.startOffload();
+  // Shows the run as started straight away rather than at the next refresh.
+  await refresh();
+  startMessage.value = await offload;
+  await refresh();
+}
+
+onMounted(() => {
+  refresh();
+  timer = setInterval(refresh, refreshMs);
+});
+
+onUnmounted(() => clearInterval(timer));
+</script>
+
+<template>
+  <section class="card">
+    <h2>Offload</h2>
+    <template v-if="status">
+      <p v-if="status.robotHost" id="robot-status" class="success-text">Robot connected at {{ status.robotHost }}.</p>
+      <p v-else id="robot-status" class="hint">No robot connected.</p>
+      <p class="hint">
+        <template v-if="status.autoOffload">Logs are pulled automatically when the robot connects.</template>
+        <template v-else>Automatic offload is off in Settings.</template>
+        Logs already on this computer aren't pulled again.
+      </p>
+
+      <div v-if="status.current" id="offload-progress" class="progress">
+        <div>{{ status.current.label }}</div>
+        <label class="bar">
+          <span>
+            {{ status.current.filesDone }} of {{ status.current.filesTotal }} files
+            <span class="hint">({{ filesLeft }} left)</span>
+          </span>
+          <progress id="files-progress" :value="status.current.filesDone" :max="Math.max(status.current.filesTotal, 1)"></progress>
+        </label>
+        <label class="bar">
+          <span>
+            {{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}
+            <span v-if="speed !== null" id="offload-speed" class="hint">({{ formatBytes(speed) }}/s)</span>
+          </span>
+          <progress id="bytes-progress" :value="status.current.bytesDone" :max="Math.max(status.current.bytesTotal, 1)"></progress>
+        </label>
+        <div v-for="name in status.current.active" :key="name" class="hint path">{{ name }}</div>
+      </div>
+
+      <div class="card-actions">
+        <md-filled-button id="offload-now" :disabled="status.running" @click="offloadNow">
+          {{ status.running ? 'Offloading…' : 'Offload now' }}
+        </md-filled-button>
+        <span v-if="startMessage" class="error-text">{{ startMessage }}</span>
+      </div>
+
+      <div v-if="status.lastRun && !status.running" id="last-run">
+        <p>
+          Last offload {{ formatTime(status.lastRun.finishedAt) }}{{ status.lastRun.automatic ? ' (automatic)' : '' }}:
+          {{ status.lastRun.copied }} copied ({{ formatBytes(status.lastRun.bytes) }}),
+          {{ status.lastRun.skipped }} already here<template v-if="status.lastRun.tooOld">,
+          {{ status.lastRun.tooOld }} older than the Settings limit not pulled</template>.
+          Took {{ runSeconds(status.lastRun) }} s.
+        </p>
+        <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
+      </div>
+    </template>
+  </section>
+
+  <section class="card">
+    <h2>Offloaded logs</h2>
+    <template v-if="files">
+      <p v-if="files.total === 0" class="hint">Nothing offloaded yet.</p>
+      <template v-else>
+        <p class="hint">
+          {{ files.total }} {{ files.total === 1 ? 'file' : 'files' }}.
+          <template v-if="files.total > files.recent.length">The newest {{ files.recent.length }} are shown.</template>
+        </p>
+        <table class="plain" id="offloaded-files">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>From</th>
+              <th>Match</th>
+              <th>Last changed</th>
+              <th>Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="file in files.recent" :key="file.localPath">
+              <td class="path" :title="file.localPath">{{ fileName(file.localPath) }}</td>
+              <td>{{ sourceNames[file.source] ?? file.source }}</td>
+              <td>{{ file.match ? describeMatch(file.match) : '' }}</td>
+              <td>{{ formatTime(file.modified) }}</td>
+              <td class="number">{{ formatBytes(file.size) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </template>
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The count above its bar. */
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bar .hint {
+  display: inline;
+}
+
+progress {
+  width: 100%;
+}
+</style>
