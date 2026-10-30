@@ -111,6 +111,50 @@ Measured in October 2026: against a local OpenSSH server the app's reader runs a
 
 ssh2 has two optional native add-ons (faster ciphers and CPU detection). The build leaves them out (`electron.vite.config.ts`) and ssh2 uses its plain JavaScript code, so there's still nothing native to build for each system.
 
+## Signals
+
+One signal layer serves log review, live view, and automated tests (#92), so a dashboard works with any of them. The Signals page plots it from offloaded data logs.
+
+**The Signals page.** The chart is the main part, with the log's signals beside it.
+
+- **The signal list** is one tree of the signals' own paths. A folder holding only one folder is shown as one (`Robot / robot`), each folder shows how many signals it holds, and the filter opens everything that matches. The top level starts open.
+- **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …) and for a new left or right axis. Clicking a signal adds it to L1.
+- **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
+- **Text signals** (subsystem states) are drawn as bands of labelled spans above the plot.
+- **Under the chart:** a list of what's plotted, with each signal's colour, its axis (changeable, including to a new one), and its min, max, and mean over the span shown. Rows can be dragged onto the chart to move them.
+- **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
+- **Hover:** shows every signal's value at that moment (the last value at or before it).
+- **Warnings:** opening a log warns when DogLog's queue filled up (its `QueueRemainingCapacity` reached 0), since DogLog drops values while it's full.
+- **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
+- **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
+
+**Reading data logs.** `src/main/signals/wpilog.ts` reads WPILib data logs (`.wpilog`, [format](https://github.com/wpilibsuite/allwpilib/blob/main/wpiutil/doc/datalog.adoc)) in plain TypeScript, with no Node or Electron. `structs.ts` decodes `struct:` values (Pose2d, team-defined structs) from the schemas the log carries: nested structs, fixed arrays, enums, and bitfields. A 15 MB log of about 1M values opens in about 250 ms. The log is held in memory whole, one at a time.
+
+**The catalog** (`src/shared/signals.ts`, built by `src/main/signals/log-source.ts`) is built from what the log holds, not hard-coded, so team-defined subsystem metrics show up on their own. Each signal has:
+
+- **A key:** the entry's name, such as `/Robot/robot/shooter/state`.
+- **A subsystem:** the first path segment after container segments such as DogLog's `/Robot/robot/`, AdvantageKit's `RealOutputs/`, and `SmartDashboard/`.
+- **A display name:** the rest of the path.
+- **Its type and kind:** number, boolean, string, or other.
+- **A unit:** from the metadata (DogLog's `unit`, NetworkTables' `properties.unit`), or from how the name ends (`MPS` is m/s, `Rot` is rot, `Deg` is °). Fields of WPILib's geometry structs have known units: a translation in m, a rotation in rad.
+- **How many values it has:** DogLog creates entries that may never get a value.
+
+Each numeric field of a struct, and each element of a numeric array (up to 32), becomes its own signal, keyed by path: `…/pose/translation/x`.
+
+**Time series.** `read(key, { start, end, maxPoints })` gives times in seconds from the log's first value, and values as numbers (booleans are 0 and 1) or strings. It also gives min, max, and mean over every value in the range. Past `maxPoints`, it keeps each stretch's smallest and largest value, so spikes and dips still show. When the log has DataLogManager's `systemTime`, the catalog also gives when the log started by the clock. Live NetworkTables (#93) is to offer the same `catalog()` and `read()`.
+
+**Values hold until the next one.** WPILib's log entries, which DogLog writes through, skip a value equal to the last one, so a signal only has a record when it changes. A motor stopped at 0 for five minutes is one record. So:
+
+- the chart draws every signal as steps, with the last value held to the end of the log;
+- stats count the value carried into a span from before it;
+- the mean is weighted by how long each value held, not by how many times it was logged.
+
+Few records for a signal usually means it rarely changed, not that data is missing.
+
+**Built-in groups.** Power, CAN / motor controllers, Robot performance, and Drivetrain, with the metrics listed in the requirements (§3.2), are found by name patterns (`builtInGroups`), so no robot code is assumed. They were tuned on team 973's logs (DogLog, CTRE swerve). A log summary carries them for dashboards and match summaries (#95, #97); the Signals page lists signals by path instead.
+
+**What's not in data logs.** Team 973's logs carry battery, CAN bus, rails, CPU temperature, gyro, poses, and module targets. Motor temperatures and most motor currents are only in the CTRE Hoot logs, which need CTRE's converter first (#140).
+
 ## Installers
 
 `npm run dist:diagnostics` builds an installer for the computer it's run on into `apps/diagnostics/release`. The Diagnostics CI workflow does this on Windows, Linux and macOS for every change and attaches the three installers to the workflow run:
@@ -125,8 +169,9 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 
 ## Left open
 
-- **The rest of [#91](https://github.com/Team973/greybots-apps/issues/91)**: coprocessor and vision logs (and finding coprocessors by mDNS), custom paths, associating logs other than data logs with matches, and reporting offload status to Preflight (#103).
-- **The index format.** Offload keeps one JSON file. Whether results need something like SQLite is decided with the signal framework (#92).
+- **The rest of log offload** is [#140](https://github.com/Team973/greybots-apps/issues/140): coprocessor and vision logs, custom paths, more match association, Hoot conversion, and reporting to Preflight (#103). Clearing logs off the robot is #139.
+- **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal), and live NetworkTables signals (#93) behind the same interface.
+- **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
 - **Sign-in.** The app has none: it works with no internet and holds nothing private. If #103 syncs through Supabase, it will need the account link Preflight's kiosk mode uses.
 - **Updates.** There is no auto-update; a new version is installed by hand from a CI run.

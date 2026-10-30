@@ -2,6 +2,7 @@ import type { OffloadedFiles } from '@shared/ipc';
 import {
   driverStationExtensions,
   driverStationLogDirectory,
+  parseLogName,
   robotFolderName,
   robotLogLocations,
   type OffloadRunSummary,
@@ -148,7 +149,11 @@ export function watchForRobot() {
 }
 
 export async function offloadedFiles(settings: Settings): Promise<OffloadedFiles> {
-  const files = Object.values((await loadIndex(dataDirectory(settings))).files);
+  const files = Object.values((await loadIndex(dataDirectory(settings))).files).map((file) => ({
+    ...file,
+    // Files offloaded before the app could read their match from the name.
+    match: file.match ?? parseLogName(file.localPath.slice(file.localPath.lastIndexOf('/') + 1)).match
+  }));
   files.sort((a, b) => b.modified.localeCompare(a.modified));
   return { total: files.length, recent: files.slice(0, recentFileCount) };
 }
