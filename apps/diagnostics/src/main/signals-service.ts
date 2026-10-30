@@ -49,6 +49,23 @@ async function openSource(settings: Settings, localPath: string): Promise<LogSig
   return source;
 }
 
+// DogLog queues values for a background thread to write. When the queue is
+// full, new values are dropped, and DogLog logs how full it is: each time
+// its free space reached 0 is a stretch where values are missing.
+function dogLogWarnings(source: LogSignalSource): string[] {
+  const key = source.catalog().find((s) => s.key.endsWith('DogLog/QueueRemainingCapacity'))?.key;
+  const free = key ? source.read(key) : null;
+  if (!free || !free.stats) return [];
+  const values = free.values as Float64Array;
+  let times = 0;
+  for (let i = 0; i < values.length; i++) if (values[i] === 0 && (i === 0 || values[i - 1] !== 0)) times += 1;
+  if (times === 0) return [];
+  return [
+    `DogLog's queue filled up ${times === 1 ? 'once' : `${times} times`} (it holds ${free.stats.max}), so some values were dropped then. ` +
+      "A bigger logEntryQueueCapacity in the robot code's DogLogOptions stops this."
+  ];
+}
+
 export async function openSignalLog(settings: Settings, localPath: string): Promise<SignalLogSummary> {
   const source = await openSource(settings, localPath);
   const signals = source.catalog();
@@ -58,7 +75,8 @@ export async function openSignalLog(settings: Settings, localPath: string): Prom
     startedAt: source.startedAt,
     truncated: source.truncated,
     signals,
-    groups: groupSignals(signals)
+    groups: groupSignals(signals),
+    warnings: dogLogWarnings(source)
   };
 }
 

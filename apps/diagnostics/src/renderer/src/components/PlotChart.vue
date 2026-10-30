@@ -130,21 +130,21 @@ function axisUnits(axis: ChartAxis): string {
 const xTicks = computed(() => ticks(props.view[0], props.view[1], Math.max(2, Math.floor(plot.value.width / 100))));
 const gridAxis = computed(() => leftAxes.value[0] ?? rightAxes.value[0]);
 
-// Booleans hold their value until the next one, so they're steps.
+// Steps: a value is only logged when it changes, so it holds until the
+// next one, and the last one holds to the end of the log. A straight line
+// between two values minutes apart would show a ramp that never happened.
 function linePath(line: ChartLine): string {
   const scale = scales.value.get(line.axis);
-  if (!line.series || !scale) return '';
+  if (!line.series || !scale || line.series.times.length === 0) return '';
   const { times } = line.series;
   const values = line.series.values as Float64Array;
-  const steps = line.series.kind === 'boolean';
   let d = '';
   for (let i = 0; i < times.length; i++) {
     const px = x(times[i]).toFixed(1);
     const py = scale.y(values[i]).toFixed(1);
-    if (i === 0) d += `M${px},${py}`;
-    else d += steps ? `H${px}V${py}` : `L${px},${py}`;
+    d += i === 0 ? `M${px},${py}` : `H${px}V${py}`;
   }
-  return d;
+  return `${d}H${x(Math.max(props.full[1], times[times.length - 1])).toFixed(1)}`;
 }
 
 // Text signals: one band each, a span per value, labelled where there's room.

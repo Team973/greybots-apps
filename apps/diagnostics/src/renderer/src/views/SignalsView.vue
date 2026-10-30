@@ -32,7 +32,6 @@ const opening = ref(false);
 const openError = ref('');
 const message = ref('');
 
-const listView = ref<'groups' | 'subsystems'>('groups');
 const filter = ref('');
 const showEmpty = ref(false);
 
@@ -49,25 +48,81 @@ function shown(signal: SignalInfo | undefined): signal is SignalInfo {
   return text === '' || signal.key.toLowerCase().includes(text);
 }
 
-const groups = computed(() =>
-  (summary.value?.groups ?? []).map((group) => ({
-    ...group,
-    metrics: group.metrics.map((metric) => ({
-      name: metric.name,
-      signals: metric.keys.map((key) => signalsByKey.value.get(key)).filter(shown)
-    }))
-  }))
-);
+// --- The signal tree: the signals' own paths, folders and all ---
 
-const subsystems = computed(() => {
-  const bySubsystem = new Map<string, SignalInfo[]>();
+interface TreeNode {
+  name: string;
+  path: string;
+  signal: SignalInfo | null;
+  children: Map<string, TreeNode>;
+  count: number;
+}
+
+type TreeRow =
+  | { type: 'folder'; path: string; name: string; depth: number; count: number; open: boolean }
+  | { type: 'signal'; signal: SignalInfo; name: string; depth: number };
+
+// Folders the person has opened (or, for the top level, closed).
+const toggled = ref(new Set<string>());
+
+const tree = computed(() => {
+  const root: TreeNode = { name: '', path: '', signal: null, children: new Map(), count: 0 };
   for (const signal of summary.value?.signals ?? []) {
     if (!shown(signal)) continue;
-    const name = signal.subsystem || 'Other';
-    bySubsystem.set(name, [...(bySubsystem.get(name) ?? []), signal]);
+    const segments = signal.key.replace(/^NT:/, '').split('/').filter((s) => s !== '');
+    let node = root;
+    node.count += 1;
+    for (const [i, segment] of segments.entries()) {
+      let child = node.children.get(segment);
+      if (!child) {
+        child = { name: segment, path: `${node.path}/${segment}`, signal: null, children: new Map(), count: 0 };
+        node.children.set(segment, child);
+      }
+      child.count += 1;
+      if (i === segments.length - 1) child.signal = signal;
+      node = child;
+    }
   }
-  return [...bySubsystem].sort(([a], [b]) => a.localeCompare(b));
+  return root;
 });
+
+const treeRows = computed<TreeRow[]>(() => {
+  const rows: TreeRow[] = [];
+  const filtering = filter.value.trim() !== '';
+  const byName = (a: TreeNode, b: TreeNode) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+
+  const visit = (node: TreeNode, depth: number) => {
+    const children = [...node.children.values()];
+    const folders = children.filter((c) => c.children.size > 0).sort(byName);
+    const leaves = children.filter((c) => c.children.size === 0).sort(byName);
+    for (const folder of folders) {
+      // A folder holding just one folder is shown as one: Robot / robot.
+      let shownFolder = folder;
+      let name = folder.name;
+      while (!shownFolder.signal && shownFolder.children.size === 1) {
+        const only = [...shownFolder.children.values()][0];
+        if (only.children.size === 0) break;
+        shownFolder = only;
+        name += ` / ${only.name}`;
+      }
+      // The top level starts open; everything opens while filtering.
+      const open = filtering || (depth === 0 ? !toggled.value.has(shownFolder.path) : toggled.value.has(shownFolder.path));
+      rows.push({ type: 'folder', path: shownFolder.path, name, depth, count: shownFolder.count, open });
+      if (shownFolder.signal) rows.push({ type: 'signal', signal: shownFolder.signal, name: '(value)', depth: depth + 1 });
+      if (open) visit(shownFolder, depth + 1);
+    }
+    for (const leaf of leaves) if (leaf.signal) rows.push({ type: 'signal', signal: leaf.signal, name: leaf.name, depth });
+  };
+  visit(tree.value, 0);
+  return rows;
+});
+
+function toggleFolder(path: string) {
+  const next = new Set(toggled.value);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  toggled.value = next;
+}
 
 const withValues = computed(() => (summary.value?.signals ?? []).filter((s) => s.kind !== 'other' && s.count > 0).length);
 
@@ -257,12 +312,9 @@ onMounted(async () => {
         {{ withValues }} signals with values.
         <template v-if="summary.truncated">The end of the file is cut off.</template>
       </p>
+      <p v-for="warning in summary?.warnings ?? []" :key="warning" class="warning-text">{{ warning }}</p>
 
       <template v-if="summary">
-        <div class="toggle">
-          <button :class="{ active: listView === 'groups' }" @click="listView = 'groups'">Health groups</button>
-          <button :class="{ active: listView === 'subsystems' }" @click="listView = 'subsystems'">Subsystems</button>
-        </div>
         <TextInput id="signal-filter" :model-value="filter" label="Filter by name" @update:model-value="filter = $event"></TextInput>
         <div class="field-row">
           <span>Show signals with no values</span>
@@ -270,33 +322,22 @@ onMounted(async () => {
         </div>
         <p class="hint">Drag a signal onto the chart, or click to add it.</p>
 
-        <div class="signal-list">
-          <template v-if="listView === 'groups'">
-            <details v-for="group in groups" :key="group.id" open>
-              <summary class="group-title">{{ group.name }}</summary>
-              <div v-for="metric in group.metrics" :key="metric.name" class="metric">
-                <div class="metric-name">{{ metric.name }}</div>
-                <p v-if="metric.signals.length === 0" class="hint small">Not in this log.</p>
-                <div v-for="signal in metric.signals" :key="signal.key" class="signal" draggable="true"
-                  :title="signal.key" @dragstart="onDragStart($event, signal.key)" @dragend="onDragEnd" @click="place(signal)">
-                  <span class="swatch" :style="{ background: plotStore.trace(signal.key) ? colorOf(plotStore.trace(signal.key)!.color) : 'transparent' }"></span>
-                  <span class="signal-name">{{ signalLabel(signal) }}</span>
-                  <span class="hint small">{{ signal.unit }}</span>
-                </div>
-              </div>
-            </details>
-          </template>
-          <template v-else>
-            <p v-if="subsystems.length === 0" class="hint">No signals match.</p>
-            <details v-for="[name, list] in subsystems" :key="name">
-              <summary class="group-title">{{ name }} <span class="hint">({{ list.length }})</span></summary>
-              <div v-for="signal in list" :key="signal.key" class="signal" draggable="true" :title="signal.key"
-                @dragstart="onDragStart($event, signal.key)" @dragend="onDragEnd" @click="place(signal)">
-                <span class="swatch" :style="{ background: plotStore.trace(signal.key) ? colorOf(plotStore.trace(signal.key)!.color) : 'transparent' }"></span>
-                <span class="signal-name">{{ signal.name }}</span>
-                <span class="hint small">{{ signal.unit }}</span>
-              </div>
-            </details>
+        <div class="signal-list" role="tree">
+          <p v-if="treeRows.length === 0" class="hint">No signals match.</p>
+          <template v-for="row in treeRows" :key="row.type === 'folder' ? `f${row.path}` : `s${row.signal.key}`">
+            <button v-if="row.type === 'folder'" class="folder" :style="{ paddingLeft: `${row.depth * 14 + 4}px` }"
+              :aria-expanded="row.open" @click="toggleFolder(row.path)">
+              <span class="chevron" :class="{ closed: !row.open }">▾</span>
+              <span class="signal-name">{{ row.name }}</span>
+              <span class="hint small">{{ row.count }}</span>
+            </button>
+            <div v-else class="signal" draggable="true" :title="row.signal.key"
+              :style="{ paddingLeft: `${row.depth * 14 + 20}px` }"
+              @dragstart="onDragStart($event, row.signal.key)" @dragend="onDragEnd" @click="place(row.signal)">
+              <span class="swatch" :style="{ background: plotStore.trace(row.signal.key) ? colorOf(plotStore.trace(row.signal.key)!.color) : 'transparent' }"></span>
+              <span class="signal-name">{{ row.name }}</span>
+              <span class="hint small">{{ row.signal.unit }}</span>
+            </div>
           </template>
         </div>
       </template>
@@ -445,41 +486,35 @@ select {
   border: 1px solid rgba(127, 127, 127, 0.6);
 }
 
-.toggle {
+.folder {
   display: flex;
-  border: 1px solid rgba(127, 127, 127, 0.5);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.toggle button {
-  flex: 1;
-  padding: 6px;
+  width: 100%;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 6px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: left;
   cursor: pointer;
 }
 
-.toggle button.active {
-  background: rgba(127, 127, 127, 0.2);
-  font-weight: 600;
+.folder:hover {
+  background: rgba(127, 127, 127, 0.12);
 }
 
-.group-title {
-  font-weight: 600;
-  cursor: pointer;
-  padding: 4px 0;
+.chevron {
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.1s;
 }
 
-.metric {
-  margin: 4px 0 8px 8px;
-}
-
-.metric-name {
-  font-size: 0.85rem;
-  opacity: 0.75;
+.chevron.closed {
+  transform: rotate(-90deg);
 }
 
 .signal {
@@ -503,6 +538,14 @@ select {
 
 .small {
   font-size: 0.8rem;
+}
+
+.warning-text {
+  margin: 0;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  border-left: 3px solid #fab219;
+  background: rgba(250, 178, 25, 0.12);
 }
 
 .swatch {

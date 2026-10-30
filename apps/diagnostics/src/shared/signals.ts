@@ -40,8 +40,10 @@ export interface SignalSeries {
   // Whether values were dropped to fit `maxPoints` (the smallest and
   // largest of each stretch are kept, so peaks still show).
   downsampled: boolean;
-  // Over the range read, of every value, not only those sent. Null for
-  // strings, or when there are none.
+  // Of what held during the range read, of every value, not only those
+  // sent: the value carried in from before the start counts, and the mean
+  // is weighted by how long each value held (values are only logged when
+  // they change). Null for strings, or when there are none.
   stats: { min: number; max: number; mean: number } | null;
 }
 

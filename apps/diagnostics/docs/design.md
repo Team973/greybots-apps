@@ -115,14 +115,16 @@ ssh2 has two optional native add-ons (faster ciphers and CPU detection). The bui
 
 One signal layer serves log review, live view, and automated tests (#92), so a dashboard works with any of them. The Signals page plots it from offloaded data logs.
 
-**The Signals page.** The chart is the main part, with the log's signals in a list beside it.
+**The Signals page.** The chart is the main part, with the log's signals beside it.
 
+- **The signal list** is one tree of the signals' own paths. A folder holding only one folder is shown as one (`Robot / robot`), each folder shows how many signals it holds, and the filter opens everything that matches. The top level starts open.
 - **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …) and for a new left or right axis. Clicking a signal adds it to L1.
 - **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
 - **Text signals** (subsystem states) are drawn as bands of labelled spans above the plot.
 - **Under the chart:** a list of what's plotted, with each signal's colour, its axis (changeable, including to a new one), and its min, max, and mean over the span shown. Rows can be dragged onto the chart to move them.
 - **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
 - **Hover:** shows every signal's value at that moment (the last value at or before it).
+- **Warnings:** opening a log warns when DogLog's queue filled up (its `QueueRemainingCapacity` reached 0), since DogLog drops values while it's full.
 - **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
 - **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
 
@@ -141,7 +143,15 @@ Each numeric field of a struct, and each element of a numeric array (up to 32), 
 
 **Time series.** `read(key, { start, end, maxPoints })` gives times in seconds from the log's first value, and values as numbers (booleans are 0 and 1) or strings. It also gives min, max, and mean over every value in the range. Past `maxPoints`, it keeps each stretch's smallest and largest value, so spikes and dips still show. When the log has DataLogManager's `systemTime`, the catalog also gives when the log started by the clock. Live NetworkTables (#93) is to offer the same `catalog()` and `read()`.
 
-**Built-in groups.** Power, CAN / motor controllers, Robot performance, and Drivetrain, with the metrics listed in the requirements (§3.2), are found by name patterns (`builtInGroups`), so no robot code is assumed. They were tuned on team 973's logs (DogLog, CTRE swerve). A metric that isn't in a log says so. Subsystem metrics need no rules: they're grouped by subsystem.
+**Values hold until the next one.** WPILib's log entries, which DogLog writes through, skip a value equal to the last one, so a signal only has a record when it changes. A motor stopped at 0 for five minutes is one record. So:
+
+- the chart draws every signal as steps, with the last value held to the end of the log;
+- stats count the value carried into a span from before it;
+- the mean is weighted by how long each value held, not by how many times it was logged.
+
+Few records for a signal usually means it rarely changed, not that data is missing.
+
+**Built-in groups.** Power, CAN / motor controllers, Robot performance, and Drivetrain, with the metrics listed in the requirements (§3.2), are found by name patterns (`builtInGroups`), so no robot code is assumed. They were tuned on team 973's logs (DogLog, CTRE swerve). A log summary carries them for dashboards and match summaries (#95, #97); the Signals page lists signals by path instead.
 
 **What's not in data logs.** Team 973's logs carry battery, CAN bus, rails, CPU temperature, gyro, poses, and module targets. Motor temperatures and most motor currents are only in the CTRE Hoot logs, which need CTRE's converter first (#140).
 

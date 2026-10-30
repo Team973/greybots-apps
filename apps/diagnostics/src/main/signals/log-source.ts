@@ -193,8 +193,7 @@ export class LogSignalSource {
 
     // Entries are nearly always written in time order; then the range is
     // found by binary search, and the value just outside each end is
-    // included so a zoomed-in line reaches the edges. Stats are of the
-    // range only.
+    // included so a zoomed-in line reaches the edges.
     const sorted = this.inTimeOrder(location.entry);
     const timeAt = (i: number) => records[i].timestamp / 1e6 - this.firstTime;
     let first = 0;
@@ -207,10 +206,6 @@ export class LogSignalSource {
     const times: number[] = [];
     const strings: string[] = [];
     const numbers: number[] = [];
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
-    let counted = 0;
     for (let i = first; i < last; i++) {
       const time = timeAt(i);
       const inRange = time >= start && time <= end;
@@ -224,12 +219,6 @@ export class LogSignalSource {
         const number = asNumber(value);
         if (number === null) continue;
         numbers.push(number);
-        if (inRange) {
-          if (number < min) min = number;
-          if (number > max) max = number;
-          sum += number;
-          counted += 1;
-        }
       }
       times.push(time);
     }
@@ -238,7 +227,9 @@ export class LogSignalSource {
       return { key, kind: location.kind, times: Float64Array.from(times), values: strings, downsampled: false, stats: null };
     }
 
-    const stats: SignalSeries['stats'] = counted > 0 ? { min, max, mean: sum / counted } : null;
+    const stats = sorted
+      ? heldStats(times, numbers, start, end, this.lastTime - this.firstTime)
+      : sampleStats(times, numbers, start, end);
 
     const maxPoints = range.maxPoints ?? Infinity;
     if (numbers.length <= maxPoints) {
@@ -247,6 +238,50 @@ export class LogSignalSource {
     const reduced = downsample(times, numbers, maxPoints);
     return { key, kind: location.kind, times: reduced.times, values: reduced.values, downsampled: true, stats };
   }
+}
+
+// WPILib's log entries skip a value equal to the last, so a value holds
+// until the next one: a motor stopped at 0 for five minutes is one record.
+// Stats are of what held during [start, end]: the value carried in from
+// before the start counts, and the mean is weighted by how long each value
+// held. `logEnd` is when the last value stops holding.
+export function heldStats(times: number[], values: number[], start: number, end: number, logEnd: number): SignalSeries['stats'] {
+  let min = Infinity;
+  let max = -Infinity;
+  let weighted = 0;
+  let total = 0;
+  for (let i = 0; i < times.length; i++) {
+    const next = i + 1 < times.length ? times[i + 1] : Math.max(logEnd, times[i]);
+    // Replaced before the range starts, or not yet logged by its end.
+    if (next <= start && i + 1 < times.length) continue;
+    if (times[i] > end) break;
+    const from = Math.max(times[i], start);
+    const to = Math.min(next, end);
+    if (values[i] < min) min = values[i];
+    if (values[i] > max) max = values[i];
+    if (to > from) {
+      weighted += values[i] * (to - from);
+      total += to - from;
+    }
+  }
+  if (!Number.isFinite(min)) return null;
+  return { min, max, mean: total > 0 ? weighted / total : (min + max) / 2 };
+}
+
+// For values not in time order: plain stats of those inside the range.
+function sampleStats(times: number[], values: number[], start: number, end: number): SignalSeries['stats'] {
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < times.length; i++) {
+    if (times[i] < start || times[i] > end) continue;
+    if (values[i] < min) min = values[i];
+    if (values[i] > max) max = values[i];
+    sum += values[i];
+    count += 1;
+  }
+  return count > 0 ? { min, max, mean: sum / count } : null;
 }
 
 // The first index whose time is at or after `time` (after it, with

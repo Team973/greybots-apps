@@ -87,6 +87,9 @@ export interface SignalLogSummary {
   truncated: boolean;
   signals: SignalInfo[];
   groups: GroupedSignals[];
+  // Things about the log worth knowing before trusting it (values the
+  // logger dropped, ...).
+  warnings: string[];
 }
 
 export interface DiagnosticsApi {
