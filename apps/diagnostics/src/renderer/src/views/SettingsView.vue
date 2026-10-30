@@ -97,6 +97,16 @@ onMounted(async () => {
         @update:model-value="edit({ autoOffload: $event })"></Switch>
     </div>
 
+    <div class="field-row">
+      <div>
+        Only pull logs from the last
+        <p class="hint">In days. Older logs stay on the robot. 0 pulls every log.</p>
+      </div>
+      <NumberInput id="offload-days" :model-value="draft.offloadDays" label="Days"
+        @update:model-value="edit({ offloadDays: $event })"></NumberInput>
+    </div>
+    <p v-if="errors.offloadDays" class="error-text">{{ errors.offloadDays }}</p>
+
     <p class="hint">
       With these settings the robot is looked for at:
       <span v-for="(address, i) in addresses" :key="address.host" class="path">{{ i > 0 ? ', ' : ' ' }}{{ address.host }}</span>

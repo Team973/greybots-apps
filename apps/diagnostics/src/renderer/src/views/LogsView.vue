@@ -119,7 +119,9 @@ onUnmounted(() => clearInterval(timer));
         <p>
           Last offload {{ formatTime(status.lastRun.finishedAt) }}{{ status.lastRun.automatic ? ' (automatic)' : '' }}:
           {{ status.lastRun.copied }} copied ({{ formatBytes(status.lastRun.bytes) }}),
-          {{ status.lastRun.skipped }} already here. Took {{ runSeconds(status.lastRun) }} s.
+          {{ status.lastRun.skipped }} already here<template v-if="status.lastRun.tooOld">,
+          {{ status.lastRun.tooOld }} older than the Settings limit not pulled</template>.
+          Took {{ runSeconds(status.lastRun) }} s.
         </p>
         <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
       </div>

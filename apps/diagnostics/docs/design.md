@@ -50,6 +50,7 @@ Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagno
 | `manualAddress` | (empty) | An IP address or hostname, for a bench network or a simulator. |
 | `mdnsEnabled` | on | Whether to also look for the robot by its mDNS name. The operating system resolves the name (Windows 10 and later, macOS, and Linux with Avahi do). Finding coprocessors by mDNS is still to come ([#91](https://github.com/Team973/greybots-apps/issues/91)). |
 | `autoOffload` | on | Whether to offload the robot's logs as soon as it shows up. |
+| `offloadDays` | 7 | Only logs recorded in this many days are pulled; older ones are left where they are. 0 pulls everything. |
 | `dataDirectory` | (empty) | Where data is kept. Empty means the default folder. |
 
 In team mode the robot is looked for at `10.TE.AM.2` (973 → `10.9.73.2`), at `roboRIO-<team>-FRC.local` when mDNS is on, and at the USB address `172.22.11.2` (`src/shared/robot-address.ts`).
@@ -100,7 +101,11 @@ Data logs still named `FRC_TBD_…` are skipped. WPILib renames a log once the D
 
 **Not pulling twice.** `index/offloaded.json` has one entry per offloaded copy: where it came from, its size and time there, and where it was put. A file is skipped when it's already on disk at the same size and time. A file that changed (still being written last time, or the program log on a new day) is pulled again; if it now belongs to a different day it gets a new copy, and the old one is kept. If the index is lost, files already in `logs/` are recognized by their size and not pulled again.
 
-**Speed.** Four files are pulled at once, newest first. Over the radio, round trips are what's slow rather than bandwidth. ssh2's own read stream waits for each 32 KB chunk before asking for the next, so the app keeps 32 reads in flight per file instead (as ssh2's `fastGet` does) and puts the chunks back in order. The index is written at most once a second while files come in, and again at the end.
+**Order and age.** Data logs are pulled first, then the robot program log, then Hoot logs; newest first within each. A robot can hold gigabytes of logs (team 973's held 6.4 GB in 230 files in October 2026, mostly Hoot logs of 100-250 MB each), so the small files with the most in them shouldn't wait behind those. Logs recorded more than `offloadDays` ago aren't pulled at all, so an old backlog doesn't hold up today's matches.
+
+**Speed.** Four files are pulled at once. Over the radio, round trips are what's slow rather than bandwidth. ssh2's own read stream waits for each 32 KB chunk before asking for the next, so the app keeps 32 reads in flight per file instead (as ssh2's `fastGet` does) and puts the chunks back in order. The index is written at most once a second while files come in, and again at the end.
+
+Measured in October 2026: against a local OpenSSH server the app's reader runs at 70-80 MB/s inside Electron, so the app isn't the limit. Against team 973's roboRIO over the radio it got 2.7 MB/s with one connection and only 3.2 MB/s with three, so the limit is shared (the link, or the robot's CPU while robot code runs) rather than one core per connection, and more connections aren't worth it. The roboRIO's SSH server has compression switched off. A faster cipher for the roboRIO's CPU (ChaCha20) would need ssh2's native add-on, since Electron's crypto library doesn't have it.
 
 **Resuming.** A file is downloaded to `<name>.part` and renamed when complete. The index notes each download in progress, so if the connection drops, the next run carries on from the end of the `.part` file, provided the file on the robot hasn't changed. A download that started less than a second before the app stopped may not be noted yet; it starts over.
 

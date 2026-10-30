@@ -60,6 +60,7 @@ async function findRobot(settings: Settings): Promise<string | null> {
 function addResult(summary: OffloadRunSummary, result: OffloadResult) {
   summary.copied += result.copied;
   summary.skipped += result.skipped;
+  summary.tooOld += result.tooOld;
   summary.bytes += result.bytes;
   summary.errors.push(...result.errors);
 }
@@ -78,6 +79,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     automatic,
     copied: 0,
     skipped: 0,
+    tooOld: 0,
     bytes: 0,
     errors: []
   };
@@ -88,6 +90,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     const directory = dataDirectory(settings);
     await ensureStorageLayout(directory);
     const robot = robotFolderName(settings);
+    const since = settings.offloadDays > 0 ? new Date(Date.now() - settings.offloadDays * 24 * 60 * 60 * 1000) : null;
 
     const robotHost = host === undefined ? await findRobot(settings) : host;
     status.robotHost = robotHost;
@@ -96,7 +99,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
       let reader: SftpReader | null = null;
       try {
         reader = await SftpReader.connect(robotHost);
-        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations };
+        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since };
         addResult(summary, await offloadLogs(directory, job, onProgress));
       } catch (error) {
         summary.errors.push(`${reader ? 'Offload from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
@@ -109,7 +112,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
 
     if (process.platform === 'win32') {
       const reader = new LocalReader();
-      const job = { label: 'Driver Station logs', reader, origin: 'local' as const, robot, locations: driverStationLocations };
+      const job = { label: 'Driver Station logs', reader, origin: 'local' as const, robot, locations: driverStationLocations, since };
       addResult(summary, await offloadLogs(directory, job, onProgress));
     }
   } catch (error) {

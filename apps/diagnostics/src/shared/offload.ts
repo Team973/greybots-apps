@@ -20,11 +20,14 @@ export interface RobotLogLocation {
 // otherwise. Hoot files go in a folder per session, hence the depth.
 const robotLogDirectories = ['/home/lvuser/logs', '/u/logs'];
 
+// Pulled in this order (newest first within each): the small files with
+// the most in them first, so they aren't stuck behind Hoot logs, which can
+// be hundreds of MB each.
 export const robotLogLocations: RobotLogLocation[] = [
   { source: 'roborio', label: 'WPILib data logs', directories: robotLogDirectories, extensions: ['.wpilog'], depth: 2 },
-  { source: 'ctre-hoot', label: 'CTRE Hoot logs', directories: robotLogDirectories, extensions: ['.hoot'], depth: 2 },
   // stdout and stderr of the robot program.
-  { source: 'roborio', label: 'Robot program log', directories: ['/home/lvuser'], extensions: ['.log'], depth: 0 }
+  { source: 'roborio', label: 'Robot program log', directories: ['/home/lvuser'], extensions: ['.log'], depth: 0 },
+  { source: 'ctre-hoot', label: 'CTRE Hoot logs', directories: robotLogDirectories, extensions: ['.hoot'], depth: 2 }
 ];
 
 // The Driver Station writes its logs here when this computer is the driver
@@ -110,6 +113,8 @@ export interface OffloadRunSummary {
   automatic: boolean;
   copied: number;
   skipped: number;
+  // Not pulled because they're older than the Settings limit.
+  tooOld: number;
   bytes: number;
   errors: string[];
 }

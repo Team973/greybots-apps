@@ -15,12 +15,16 @@ export interface OffloadJob {
   reader: FileReader;
   origin: OffloadedFile['origin'];
   robot: string;
+  // Pulled in this order.
   locations: RobotLogLocation[];
+  // Files recorded before this are left where they are. Null for all.
+  since: Date | null;
 }
 
 export interface OffloadResult {
   copied: number;
   skipped: number;
+  tooOld: number;
   bytes: number;
   errors: string[];
 }
@@ -109,7 +113,7 @@ export async function offloadLogs(
   onProgress: (progress: OffloadProgress) => void,
   now = new Date()
 ): Promise<OffloadResult> {
-  const result: OffloadResult = { copied: 0, skipped: 0, bytes: 0, errors: [] };
+  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [] };
   const index = await loadIndex(dataDirectory);
   const writer = indexWriter(dataDirectory, index);
   const absolute = (localPath: string) => join(dataDirectory, ...localPath.split('/'));
@@ -129,10 +133,10 @@ export async function offloadLogs(
     writer.changed();
   };
 
-  // Everything there is, newest first: the match that just finished is the
-  // one wanted soonest.
-  const found: { file: FoundFile; location: RobotLogLocation }[] = [];
-  for (const location of job.locations) {
+  // Everything there is, by location in the job's order, then newest first:
+  // the match that just finished is the one wanted soonest.
+  const found: { file: FoundFile; location: RobotLogLocation; order: number }[] = [];
+  for (const [order, location] of job.locations.entries()) {
     // /u is a link to the USB drive, so the same folder can be listed twice.
     const seen = new Set<string>();
     for (const directory of location.directories) {
@@ -140,11 +144,11 @@ export async function offloadLogs(
       if (real === null || seen.has(real)) continue;
       seen.add(real);
       for (const file of await job.reader.find(directory, location.extensions, location.depth)) {
-        if (!isUnnamedLog(file.name)) found.push({ file, location });
+        if (!isUnnamedLog(file.name)) found.push({ file, location, order });
       }
     }
   }
-  found.sort((a, b) => b.file.modified.getTime() - a.file.modified.getTime());
+  found.sort((a, b) => a.order - b.order || b.file.modified.getTime() - a.file.modified.getTime());
 
   // What isn't here yet.
   const downloads: Download[] = [];
@@ -152,7 +156,12 @@ export async function offloadLogs(
   for (const { file, location } of found) {
     // A file that changes over days (the robot program log) gets a copy per
     // day, each with its own entry in the index.
-    const localPath = logPathSegments(job.robot, recordedTime(file, now), location.source, file.name).join('/');
+    const recorded = recordedTime(file, now);
+    if (job.since && recorded < job.since) {
+      result.tooOld += 1;
+      continue;
+    }
+    const localPath = logPathSegments(job.robot, recorded, location.source, file.name).join('/');
     const download = { file, location, localPath, key: indexKey(job.origin, file.path, localPath) };
     const known = index.files[download.key];
 
