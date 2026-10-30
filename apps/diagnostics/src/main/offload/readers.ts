@@ -113,7 +113,8 @@ export class SftpReader implements FileReader {
     // Reads `length` bytes at `offset`. A server may send fewer than asked;
     // the rest is asked for again.
     const readAt = async (handle: Buffer, offset: number, length: number): Promise<Buffer> => {
-      const buffer = Buffer.alloc(length);
+      // Not zeroed: every byte is written before it's used.
+      const buffer = Buffer.allocUnsafe(length);
       let got = 0;
       while (got < length) {
         const count = await call<number>((cb) =>

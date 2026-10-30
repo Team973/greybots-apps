@@ -8,7 +8,7 @@ import {
   type OffloadStatus,
   type RobotLogLocation
 } from '@shared/offload';
-import { robotAddresses } from '@shared/robot-address';
+import { robotAddresses, usbAddress } from '@shared/robot-address';
 import type { Settings } from '@shared/settings';
 import { checkPort } from './connection-check';
 import { loadIndex } from './offload/offload-index';
@@ -46,11 +46,14 @@ export function offloadStatus(): OffloadStatus {
   return structuredClone(status);
 }
 
-// The first address where the robot answers on the SSH port, or null.
+// Where the robot answers on the SSH port, or null. USB if it answers
+// there: a cable is faster and steadier than the radio. Otherwise the first
+// address, in the order they're listed.
 async function findRobot(settings: Settings): Promise<string | null> {
   const hosts = await Promise.all(
     robotAddresses(settings).map(async ({ host }) => ((await checkPort(host, 22, 'SSH')).open ? host : null))
   );
+  if (hosts.includes(usbAddress)) return usbAddress;
   return hosts.find((host) => host !== null) ?? null;
 }
 

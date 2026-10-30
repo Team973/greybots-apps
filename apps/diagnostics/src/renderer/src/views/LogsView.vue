@@ -30,9 +30,30 @@ function fileName(localPath: string): string {
   return localPath.slice(localPath.lastIndexOf('/') + 1);
 }
 
+// Download speed, in bytes a second, from how far the byte count moved
+// between refreshes, smoothed so it doesn't jump about.
+const speed = ref<number | null>(null);
+let lastSample: { label: string; bytes: number; time: number } | null = null;
+
+function measureSpeed(current: OffloadStatus['current']) {
+  const now = performance.now();
+  if (!current || !lastSample || lastSample.label !== current.label || current.bytesDone < lastSample.bytes) {
+    speed.value = null;
+  } else if (now > lastSample.time) {
+    const latest = ((current.bytesDone - lastSample.bytes) / (now - lastSample.time)) * 1000;
+    speed.value = speed.value === null ? latest : 0.7 * speed.value + 0.3 * latest;
+  }
+  lastSample = current ? { label: current.label, bytes: current.bytesDone, time: now } : null;
+}
+
+function runSeconds(run: NonNullable<OffloadStatus['lastRun']>): number {
+  return Math.max(0, Math.round((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000));
+}
+
 async function refresh() {
   const wasRunning = status.value?.running ?? false;
   status.value = await window.diagnostics.getOffloadStatus();
+  measureSpeed(status.value.current);
   // The list only changes when a run finishes (or one has just started).
   if (wasRunning !== status.value.running || files.value === null) {
     files.value = await window.diagnostics.getOffloadedFiles();
@@ -78,7 +99,10 @@ onUnmounted(() => clearInterval(timer));
           <progress id="files-progress" :value="status.current.filesDone" :max="Math.max(status.current.filesTotal, 1)"></progress>
         </label>
         <label class="bar">
-          <span>{{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}</span>
+          <span>
+            {{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}
+            <span v-if="speed !== null" id="offload-speed" class="hint">({{ formatBytes(speed) }}/s)</span>
+          </span>
           <progress id="bytes-progress" :value="status.current.bytesDone" :max="Math.max(status.current.bytesTotal, 1)"></progress>
         </label>
         <div v-for="name in status.current.active" :key="name" class="hint path">{{ name }}</div>
@@ -95,7 +119,7 @@ onUnmounted(() => clearInterval(timer));
         <p>
           Last offload {{ formatTime(status.lastRun.finishedAt) }}{{ status.lastRun.automatic ? ' (automatic)' : '' }}:
           {{ status.lastRun.copied }} copied ({{ formatBytes(status.lastRun.bytes) }}),
-          {{ status.lastRun.skipped }} already here.
+          {{ status.lastRun.skipped }} already here. Took {{ runSeconds(status.lastRun) }} s.
         </p>
         <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
       </div>

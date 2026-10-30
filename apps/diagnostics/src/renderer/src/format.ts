@@ -6,7 +6,7 @@ export function formatBytes(bytes: number): string {
     value /= 1024;
     unit += 1;
   }
-  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+  return `${unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
 // A time as the person's computer shows dates and times, without seconds.
