@@ -2,8 +2,9 @@
 // one function per entry as `window.diagnostics`; the main process handles
 // each on the channel of the same name.
 
-import type { OffloadedFile, OffloadStatus } from './offload';
+import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
+import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries } from './signals';
 
 export interface AppInfo {
   version: string;
@@ -64,6 +65,30 @@ export interface OffloadedFiles {
   recent: OffloadedFile[];
 }
 
+// An offloaded data log that signals can be read from.
+export interface SignalLogFile {
+  // Below the data folder, as in the offload index.
+  localPath: string;
+  name: string;
+  robot: string;
+  size: number;
+  // When recording started (ISO), as near as is known.
+  recorded: string;
+  match: MatchInfo | null;
+}
+
+export interface SignalLogSummary {
+  localPath: string;
+  // Seconds from the first value to the last.
+  duration: number;
+  // When the log started, by the clock (ISO), if the log says.
+  startedAt: string | null;
+  // Whether the end of the file was cut off.
+  truncated: boolean;
+  signals: SignalInfo[];
+  groups: GroupedSignals[];
+}
+
 export interface DiagnosticsApi {
   getAppInfo(): Promise<AppInfo>;
   getSettings(): Promise<Settings>;
@@ -78,6 +103,11 @@ export interface DiagnosticsApi {
   // Starts an offload and resolves when it's done, to why it didn't start or ''.
   startOffload(): Promise<string>;
   getOffloadedFiles(): Promise<OffloadedFiles>;
+  getSignalLogs(): Promise<SignalLogFile[]>;
+  // Opens a log for reading signals; rejects if it can't be read.
+  openSignalLog(localPath: string): Promise<SignalLogSummary>;
+  // Null if the log has no such signal.
+  readSignal(localPath: string, key: string, range: SignalRange): Promise<SignalSeries | null>;
 }
 
 export const ipcChannels: (keyof DiagnosticsApi)[] = [
@@ -90,5 +120,8 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'checkConnection',
   'getOffloadStatus',
   'startOffload',
-  'getOffloadedFiles'
+  'getOffloadedFiles',
+  'getSignalLogs',
+  'openSignalLog',
+  'readSignal'
 ];

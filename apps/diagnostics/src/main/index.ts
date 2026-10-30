@@ -6,6 +6,7 @@ import { normalizeSettings, settingsErrors } from '@shared/settings';
 import { checkConnection } from './connection-check';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { loadSettings, storeSettings } from './settings-store';
+import { openSignalLog, readSignal, signalLogs } from './signals-service';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
 
 let mainWindow: BrowserWindow | null = null;
@@ -89,6 +90,15 @@ const handlers: DiagnosticsApi = {
   },
   async getOffloadedFiles() {
     return offloadedFiles(await loadSettings());
+  },
+  async getSignalLogs() {
+    return signalLogs(await loadSettings());
+  },
+  async openSignalLog(localPath) {
+    return openSignalLog(await loadSettings(), localPath);
+  },
+  async readSignal(localPath, key, range) {
+    return readSignal(await loadSettings(), localPath, key, range);
   }
 };
 
