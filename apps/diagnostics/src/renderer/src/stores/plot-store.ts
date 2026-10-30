@@ -79,6 +79,16 @@ export const usePlotStore = defineStore('plot', {
       this.prune();
       return '';
     },
+    // A signal's type, once read, when it wasn't known before (Hoot logs):
+    // text goes to the bands, numbers to an axis.
+    setKind(key: string, kind: SignalKind) {
+      const trace = this.traces.find((t) => t.key === key);
+      if (!trace || kind === 'other') return;
+      trace.kind = kind;
+      if (kind === 'string') trace.axis = 'lanes';
+      else if (trace.axis === 'lanes') trace.axis = this.resolve(undefined);
+      this.prune();
+    },
     remove(key: string) {
       this.traces = this.traces.filter((t) => t.key !== key);
       this.prune();

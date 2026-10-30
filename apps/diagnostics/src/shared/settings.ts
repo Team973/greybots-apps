@@ -19,6 +19,9 @@ export interface Settings {
   // Only logs recorded in this many days are pulled; 0 pulls everything. A
   // robot can hold gigabytes of old logs, which shouldn't hold up today's.
   offloadDays: number;
+  // Whether the person accepted CTRE's licence, which owlet (the tool that
+  // reads Hoot logs) comes under. Owlet isn't downloaded until they do.
+  ctreLicenseAccepted: boolean;
   // Where logs and results are kept. Empty means the default folder, which
   // only the main process can name (it depends on the operating system).
   dataDirectory: string;
@@ -31,6 +34,7 @@ export const defaultSettings: Settings = {
   mdnsEnabled: true,
   autoOffload: true,
   offloadDays: 7,
+  ctreLicenseAccepted: false,
   dataDirectory: ''
 };
 
@@ -75,6 +79,7 @@ export function normalizeSettings(raw: unknown): Settings {
     manualAddress: typeof input.manualAddress === 'string' ? input.manualAddress.trim() : defaultSettings.manualAddress,
     mdnsEnabled: typeof input.mdnsEnabled === 'boolean' ? input.mdnsEnabled : defaultSettings.mdnsEnabled,
     autoOffload: typeof input.autoOffload === 'boolean' ? input.autoOffload : defaultSettings.autoOffload,
+    ctreLicenseAccepted: input.ctreLicenseAccepted === true,
     offloadDays: typeof input.offloadDays === 'number' && Number.isFinite(input.offloadDays)
       ? Math.trunc(input.offloadDays)
       : defaultSettings.offloadDays,
