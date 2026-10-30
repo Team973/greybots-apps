@@ -39,7 +39,7 @@ To start Preflight in development mode (or use `serve:preflight` to test the off
 npm run dev:preflight
 ```
 
-To start Greybots Diagnostics (a desktop app) in development mode, or build an installer for the computer you're on into `apps/diagnostics/release`:
+To start Greybots Diagnostics (a desktop app) in development mode, or build an installer for the computer you're on into `apps/diagnostics/release`. In development mode, changes to the window reload it, and changes to the main process or preload script restart the app:
 ```bash
 npm run dev:diagnostics
 npm run dist:diagnostics
