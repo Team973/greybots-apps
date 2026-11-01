@@ -71,6 +71,11 @@ export class HootLog {
     return this.manifest?.signals ?? [];
   }
 
+  // Whether a signal's been exported already (reading it costs nothing more).
+  isExported(id: string): boolean {
+    return !!this.manifest?.exports[id];
+  }
+
   get pro(): boolean | null {
     return this.manifest?.pro ?? null;
   }

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { DiagnosticsApi } from '@shared/ipc';
 import { normalizeSettings, settingsErrors } from '@shared/settings';
 import { checkConnection } from './connection-check';
+import { chooseImport, importStatus, runImport } from './import-service';
+import { liveStatus } from './live-service';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { loadSettings, storeSettings } from './settings-store';
 import {
@@ -11,6 +13,7 @@ import {
   downloadOwlet,
   hootStatus,
   openSignalLog,
+  readValues,
   owletStatus,
   readSignal,
   signalLogs,
@@ -75,6 +78,15 @@ const handlers: DiagnosticsApi = {
     await storeSettings(next);
     return { settings: next, errors };
   },
+  async importLogs(paths, fallbackTeam) {
+    return runImport(paths, fallbackTeam);
+  },
+  async getImportStatus() {
+    return importStatus();
+  },
+  async chooseImport(folders) {
+    return chooseImport(folders);
+  },
   async chooseDataDirectory() {
     const options: Electron.OpenDialogOptions = {
       title: 'Choose where diagnostics data is kept',
@@ -99,8 +111,8 @@ const handlers: DiagnosticsApi = {
   async startOffload() {
     return runOffload(false);
   },
-  async getOffloadedFiles() {
-    return offloadedFiles(await loadSettings());
+  async getOffloadedFiles(query) {
+    return offloadedFiles(await loadSettings(), query);
   },
   async getSignalLogs() {
     return signalLogs(await loadSettings());
@@ -113,6 +125,12 @@ const handlers: DiagnosticsApi = {
   },
   async getHootStatus(id) {
     return hootStatus(await loadSettings(), id);
+  },
+  async readValues(id, keys, time) {
+    return readValues(await loadSettings(), id, keys, time);
+  },
+  async getLiveStatus(id) {
+    return liveStatus(id);
   },
   async getOwletStatus() {
     return owletStatus();
@@ -142,7 +160,7 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     // A data folder that can't be made (a missing drive, say) mustn't stop
-    // the app from opening: the Overview page reports it.
+    // the app from opening: the Storage page reports it.
     await ensureStorageLayout(dataDirectory(await loadSettings())).catch((error) => console.error(error));
 
     createWindow();

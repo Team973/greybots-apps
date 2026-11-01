@@ -1,17 +1,36 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import '@material/web/button/filled-button';
+import '@material/web/button/outlined-button';
 
-import type { OffloadedFiles } from '@shared/ipc';
-import { describeMatch, type OffloadStatus } from '@shared/offload';
+import type { ConnectionReport } from '@shared/ipc';
+import type { OffloadStatus } from '@shared/offload';
+import { robotAddresses } from '@shared/robot-address';
 import { formatBytes, formatTime } from '@/format';
+import { useSettingsStore } from '@/stores/settings-store';
+
+// The robot: where it's looked for, whether it's there, and pulling its logs.
+
+const store = useSettingsStore();
+const addresses = computed(() => robotAddresses(store.settings));
+
+const report = ref<ConnectionReport | null>(null);
+const checking = ref(false);
+
+async function checkConnection() {
+  checking.value = true;
+  try {
+    report.value = await window.diagnostics.checkConnection();
+  } finally {
+    checking.value = false;
+  }
+}
 
 // The main process does the offloading, and doesn't tell the window as it
 // goes; the window asks this often while the page is open.
 const refreshMs = 1000;
 
 const status = ref<OffloadStatus | null>(null);
-const files = ref<OffloadedFiles | null>(null);
 const startMessage = ref('');
 let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -19,16 +38,6 @@ const filesLeft = computed(() => {
   const current = status.value?.current;
   return current ? current.filesTotal - current.filesDone : 0;
 });
-
-const sourceNames: Record<string, string> = {
-  roborio: 'roboRIO',
-  'driver-station': 'Driver Station',
-  'ctre-hoot': 'CTRE Hoot'
-};
-
-function fileName(localPath: string): string {
-  return localPath.slice(localPath.lastIndexOf('/') + 1);
-}
 
 // Download speed, in bytes a second, from how far the byte count moved
 // between refreshes, smoothed so it doesn't jump about.
@@ -51,13 +60,8 @@ function runSeconds(run: NonNullable<OffloadStatus['lastRun']>): number {
 }
 
 async function refresh() {
-  const wasRunning = status.value?.running ?? false;
   status.value = await window.diagnostics.getOffloadStatus();
   measureSpeed(status.value.current);
-  // The list only changes when a run finishes (or one has just started).
-  if (wasRunning !== status.value.running || files.value === null) {
-    files.value = await window.diagnostics.getOffloadedFiles();
-  }
 }
 
 async function offloadNow() {
@@ -70,6 +74,7 @@ async function offloadNow() {
 }
 
 onMounted(() => {
+  store.load();
   refresh();
   timer = setInterval(refresh, refreshMs);
 });
@@ -79,14 +84,64 @@ onUnmounted(() => clearInterval(timer));
 
 <template>
   <section class="card">
-    <h2>Offload</h2>
+    <h2>Robot</h2>
     <template v-if="status">
       <p v-if="status.robotHost" id="robot-status" class="success-text">Robot connected at {{ status.robotHost }}.</p>
       <p v-else id="robot-status" class="hint">No robot connected.</p>
+    </template>
+    <p v-if="store.settings.addressMode === 'team'" class="hint">
+      Team {{ store.settings.teamNumber }}. The robot is looked for at these addresses:
+    </p>
+    <p v-else class="hint">Using the address set in Settings:</p>
+
+    <table class="plain">
+      <tbody>
+        <tr v-for="address in addresses" :key="address.host">
+          <td>{{ address.label }}</td>
+          <td class="path">{{ address.host }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="card-actions">
+      <md-outlined-button id="check-connection" :disabled="checking" @click="checkConnection">
+        {{ checking ? 'Checking…' : 'Check connection' }}
+      </md-outlined-button>
+      <template v-if="report && !checking">
+        <span v-if="report.reachable" id="connection-result" class="success-text">Robot reached.</span>
+        <span v-else id="connection-result" class="error-text">No robot found.</span>
+      </template>
+    </div>
+
+    <table v-if="report" class="plain">
+      <thead>
+        <tr>
+          <th>Address</th>
+          <th>Service</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template v-for="address in report.addresses" :key="address.host">
+          <tr v-for="port in address.ports" :key="`${address.host}:${port.port}`">
+            <td class="path">{{ address.host }}</td>
+            <td>{{ port.service }} ({{ port.port }})</td>
+            <td v-if="port.open" class="success-text">Open ({{ port.milliseconds }} ms)</td>
+            <td v-else>{{ port.error }}</td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Offload</h2>
+    <template v-if="status">
       <p class="hint">
         <template v-if="status.autoOffload">Logs are pulled automatically when the robot connects.</template>
         <template v-else>Automatic offload is off in Settings.</template>
-        Logs already on this computer aren't pulled again.
+        Logs already on this computer aren't pulled again. What's been pulled is on the
+        <RouterLink to="/storage">Storage</RouterLink> page.
       </p>
 
       <div v-if="status.current" id="offload-progress" class="progress">
@@ -125,39 +180,6 @@ onUnmounted(() => clearInterval(timer));
         </p>
         <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
       </div>
-    </template>
-  </section>
-
-  <section class="card">
-    <h2>Offloaded logs</h2>
-    <template v-if="files">
-      <p v-if="files.total === 0" class="hint">Nothing offloaded yet.</p>
-      <template v-else>
-        <p class="hint">
-          {{ files.total }} {{ files.total === 1 ? 'file' : 'files' }}.
-          <template v-if="files.total > files.recent.length">The newest {{ files.recent.length }} are shown.</template>
-        </p>
-        <table class="plain" id="offloaded-files">
-          <thead>
-            <tr>
-              <th>File</th>
-              <th>From</th>
-              <th>Match</th>
-              <th>Last changed</th>
-              <th>Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="file in files.recent" :key="file.localPath">
-              <td class="path" :title="file.localPath">{{ fileName(file.localPath) }}</td>
-              <td>{{ sourceNames[file.source] ?? file.source }}</td>
-              <td>{{ file.match ? describeMatch(file.match) : '' }}</td>
-              <td>{{ formatTime(file.modified) }}</td>
-              <td class="number">{{ formatBytes(file.size) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </template>
     </template>
   </section>
 </template>

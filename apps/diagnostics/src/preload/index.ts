@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import { ipcChannels, type DiagnosticsApi } from '@shared/ipc';
 
@@ -10,3 +10,9 @@ const api = Object.fromEntries(
 ) as unknown as DiagnosticsApi;
 
 contextBridge.exposeInMainWorld('diagnostics', api);
+
+// A dropped file's path on disk, which the window can't see otherwise (and
+// the main process needs, to import it).
+contextBridge.exposeInMainWorld('droppedFiles', {
+  pathFor: (file: File) => webUtils.getPathForFile(file)
+});

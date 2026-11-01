@@ -6,5 +6,6 @@ declare global {
   interface Window {
     // Put there by the preload script (src/preload/index.ts).
     diagnostics: DiagnosticsApi;
+    droppedFiles: { pathFor(file: File): string };
   }
 }

@@ -1,6 +1,6 @@
 // Signals read from a WPILib data log: the catalog of what's in it, and the
-// values of any one signal over time. Live signals from the robot (#93) are
-// to offer the same two things.
+// values of any one signal over time. Live signals from the robot
+// (../live/live-source.ts) offer the same two things.
 
 import {
   parseMetadata,
@@ -25,7 +25,7 @@ const kinds: Record<string, SignalKind> = {
 };
 
 // Arrays longer than this aren't split into one signal per element.
-const maxElements = 32;
+export const maxElements = 32;
 
 // Where a signal's values come from: an entry, and for a struct field or an
 // array element, the path into each decoded value.
@@ -36,7 +36,7 @@ interface Location {
 }
 
 // The value at `path` inside a decoded struct or array.
-function pick(value: LogValue, path: (string | number)[]): LogValue | undefined {
+export function pick(value: LogValue, path: (string | number)[]): LogValue | undefined {
   let at: LogValue | undefined = value;
   for (const step of path) {
     if (at === undefined || at === null || typeof at !== 'object' || at instanceof Uint8Array) return undefined;
@@ -45,7 +45,7 @@ function pick(value: LogValue, path: (string | number)[]): LogValue | undefined 
   return at;
 }
 
-function asNumber(value: LogValue | undefined): number | null {
+export function asNumber(value: LogValue | undefined): number | null {
   if (typeof value === 'number') return value;
   if (typeof value === 'boolean') return value ? 1 : 0;
   return null;
@@ -150,36 +150,9 @@ export class LogSignalSource {
       // shaped like the first value.
       if (kind !== 'other' || records.length === 0) continue;
       const sample = decodeValue(this.bytes, records[0], entry.type, this.structs);
-      if (sample instanceof Uint8Array || typeof sample !== 'object') continue;
-      this.addChildren(info, index, sample, [], records.length);
-    }
-  }
-
-  private addChildren(parent: SignalInfo, entry: number, value: LogValue, path: (string | number)[], count: number) {
-    if (Array.isArray(value) && value.length > maxElements) return;
-    const parts: [string | number, LogValue][] = Array.isArray(value)
-      ? value.map((item, i) => [i, item])
-      : Object.entries(value as Record<string, LogValue>);
-
-    for (const [step, item] of parts) {
-      const childPath = [...path, step];
-      if (typeof item === 'number' || typeof item === 'boolean') {
-        const key = `${parent.key}/${childPath.join('/')}`;
-        const kind: SignalKind = typeof item === 'number' ? 'number' : 'boolean';
-        this.signals.push({
-          key,
-          name: `${parent.name} / ${childPath.join(' / ')}`,
-          subsystem: parent.subsystem,
-          type: parent.type,
-          kind,
-          unit: kind === 'number' ? structFieldUnit(parent.type.replace(/\[\]$/, ''), childPath.filter((s) => typeof s === 'string').join('/')) : '',
-          count,
-          source: parent.source,
-          parent: parent.key
-        });
-        this.locations.set(key, { entry, path: childPath, kind });
-      } else if (item && typeof item === 'object' && !(item instanceof Uint8Array)) {
-        this.addChildren(parent, entry, item, childPath, count);
+      for (const field of fieldSignals(info, sample)) {
+        this.signals.push(field.info);
+        this.locations.set(field.info.key, { entry: index, path: field.path, kind: field.info.kind });
       }
     }
   }
@@ -241,6 +214,41 @@ export class LogSignalSource {
   }
 }
 
+// A struct's or an array's numbers and booleans, each a signal of its own,
+// shaped like `sample` (a decoded value of `parent`).
+export function fieldSignals(parent: SignalInfo, sample: LogValue, path: (string | number)[] = []): { info: SignalInfo; path: (string | number)[] }[] {
+  if (sample === null || typeof sample !== 'object' || sample instanceof Uint8Array) return [];
+  if (Array.isArray(sample) && sample.length > maxElements) return [];
+  const parts: [string | number, LogValue][] = Array.isArray(sample)
+    ? sample.map((item, i) => [i, item])
+    : Object.entries(sample as Record<string, LogValue>);
+
+  const out: { info: SignalInfo; path: (string | number)[] }[] = [];
+  for (const [step, item] of parts) {
+    const childPath = [...path, step];
+    if (typeof item === 'number' || typeof item === 'boolean') {
+      const kind: SignalKind = typeof item === 'number' ? 'number' : 'boolean';
+      out.push({
+        path: childPath,
+        info: {
+          key: `${parent.key}/${childPath.join('/')}`,
+          name: `${parent.name} / ${childPath.join(' / ')}`,
+          subsystem: parent.subsystem,
+          type: parent.type,
+          kind,
+          unit: kind === 'number' ? structFieldUnit(parent.type.replace(/\[\]$/, ''), childPath.filter((s) => typeof s === 'string').join('/')) : '',
+          count: parent.count,
+          source: parent.source,
+          parent: parent.key
+        }
+      });
+    } else {
+      out.push(...fieldSignals(parent, item, childPath));
+    }
+  }
+  return out;
+}
+
 // WPILib's log entries skip a value equal to the last, so a value holds
 // until the next one: a motor stopped at 0 for five minutes is one record.
 // Stats are of what held during [start, end]: the value carried in from
@@ -270,7 +278,7 @@ export function heldStats(times: number[], values: number[], start: number, end:
 }
 
 // For values not in time order: plain stats of those inside the range.
-function sampleStats(times: number[], values: number[], start: number, end: number): SignalSeries['stats'] {
+export function sampleStats(times: number[], values: number[], start: number, end: number): SignalSeries['stats'] {
   let min = Infinity;
   let max = -Infinity;
   let sum = 0;
@@ -287,7 +295,7 @@ function sampleStats(times: number[], values: number[], start: number, end: numb
 
 // The first index whose time is at or after `time` (after it, with
 // `after`), in times sorted ascending; `count` if there's none.
-function firstAtOrAfter(count: number, timeAt: (i: number) => number, time: number, after = false): number {
+export function firstAtOrAfter(count: number, timeAt: (i: number) => number, time: number, after = false): number {
   let low = 0;
   let high = count;
   while (low < high) {

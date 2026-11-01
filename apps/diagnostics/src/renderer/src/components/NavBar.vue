@@ -10,9 +10,9 @@ const toggleTheme = () => viewMode.setThemePreference(viewMode.isDarkMode ? 'lig
   <header class="nav">
     <span class="brand">Greybots Diagnostics</span>
     <span class="spacer"></span>
-    <RouterLink to="/" class="nav-button">Overview</RouterLink>
-    <RouterLink to="/logs" class="nav-button">Logs</RouterLink>
     <RouterLink to="/signals" class="nav-button">Signals</RouterLink>
+    <RouterLink to="/offload" class="nav-button">Offload</RouterLink>
+    <RouterLink to="/storage" class="nav-button">Storage</RouterLink>
     <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
     <button
       class="nav-button theme-button"

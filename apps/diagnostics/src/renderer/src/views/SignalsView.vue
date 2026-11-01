@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useSettingsStore } from '@/stores/settings-store';
 import '@material/web/button/outlined-button';
 import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
+import { isLiveId, liveKeepSeconds, liveSessions, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
-import type { SignalInfo, SignalSeries } from '@shared/signals';
+import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
 import ColorPicker from '@/components/ColorPicker.vue';
-import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChart.vue';
+import PlotChart, { type ChartAxis, type ChartLine, type ZoomGesture } from '@/components/PlotChart.vue';
 import { formatBytes, formatTime } from '@/format';
 import { maxTraces, usePlotStore, type AxisSide, type BandSide, type PlotTarget, type TraceColor } from '@/stores/plot-store';
 
@@ -23,6 +26,7 @@ const palette = {
 };
 
 const plotStore = usePlotStore();
+const settingsStore = useSettingsStore();
 const viewMode = useViewModeStore();
 const themePalette = computed(() => (viewMode.isDarkMode ? palette.dark : palette.light));
 // A palette slot takes this theme's step; a colour the person chose is as is.
@@ -48,20 +52,42 @@ function storedFlag(key: string, initial: boolean) {
 const sidebarOpen = storedFlag('signals.sidebarOpen', true);
 const detailsOpen = storedFlag('signals.detailsOpen', true);
 const selectedLabel = computed(() => {
+  const live = liveSessions.find((l) => l.id === selectedLog.value);
+  if (live) return live.label;
   const log = logs.value?.find((l) => l.id === selectedLog.value);
   return log ? logLabel(log) : '';
 });
+
+// Live: the robot's or a simulator's signals as they change. While
+// following, the chart shows the last `liveWindow` seconds up to now (null:
+// everything kept); zooming the wheel changes how much. Panning back, or
+// dragging across the chart, holds it still until Follow.
+const isLive = computed(() => isLiveId(selectedLog.value));
+const liveStatus = ref<LiveStatus | null>(null);
+const liveWindow = ref<number | null>(30);
+const following = computed(() => isLive.value && plotStore.view === null);
 
 const signalsByKey = computed(() => new Map((summary.value?.signals ?? []).map((signal) => [signal.key, signal])));
 // The session's span: Hoot logs often start before the data log, so it
 // can start before 0 once they're lined up.
 const hootStatus = ref<HootSessionStatus | null>(null);
 const full = computed<[number, number]>(() => {
+  // Live: as far back as is kept, so the window can be widened before
+  // there's that much.
+  if (isLive.value) {
+    const end = liveStatus.value?.end ?? 0;
+    return [Math.min(liveStatus.value?.start ?? 0, end - liveKeepSeconds), Math.max(end, 0.01)];
+  }
   const start = hootStatus.value?.start ?? 0;
   const end = hootStatus.value?.end ?? summary.value?.duration ?? 1;
   return [start, Math.max(end, start + 0.01)];
 });
-const view = computed<[number, number]>(() => plotStore.view ?? full.value);
+const view = computed<[number, number]>(() => {
+  if (plotStore.view) return plotStore.view;
+  if (!isLive.value) return full.value;
+  const end = full.value[1];
+  return [liveWindow.value === null ? Math.min(liveStatus.value?.start ?? 0, end - 1) : end - liveWindow.value, end];
+});
 
 // --- The signal list ---
 
@@ -179,6 +205,8 @@ function describeAlignment(hoot: HootSessionStatus['hoots'][number]): string {
 async function openLog() {
   summary.value = null;
   hootStatus.value = null;
+  liveStatus.value = null;
+  clearTimeout(liveTimer);
   openError.value = '';
   series.value = new Map();
   plotStore.setView(null);
@@ -186,6 +214,7 @@ async function openLog() {
   opening.value = true;
   try {
     summary.value = await window.diagnostics.openSignalLog(selectedLog.value);
+    if (isLive.value) pollLive();
     if (logs.value?.find((log) => log.id === selectedLog.value)?.hoots.length) pollHoots();
   } catch (error) {
     openError.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -210,6 +239,38 @@ async function pollHoots() {
   if (busy) hootTimer = setTimeout(pollHoots, 500);
 }
 onUnmounted(() => clearTimeout(hootTimer));
+
+// Live: ten times a second, how far the timeline goes (which moves the
+// chart along) and whether it's connected. Signals turn up as the robot
+// code first logs them, so the list is looked at again every few seconds.
+const livePollMs = 100;
+const liveCatalogMs = 2000;
+let liveTimer: ReturnType<typeof setTimeout> | undefined;
+let catalogAt = 0;
+async function pollLive() {
+  clearTimeout(liveTimer);
+  const id = selectedLog.value;
+  if (!isLiveId(id)) return;
+  try {
+    const status = await window.diagnostics.getLiveStatus(id);
+    if (selectedLog.value !== id) return;
+    liveStatus.value = status;
+    if (status.signals !== summary.value?.signals.length || Date.now() - catalogAt > liveCatalogMs) {
+      catalogAt = Date.now();
+      const next = await window.diagnostics.openSignalLog(id);
+      if (selectedLog.value === id) summary.value = next;
+    }
+  } finally {
+    if (selectedLog.value === id) liveTimer = setTimeout(pollLive, livePollMs);
+  }
+}
+onUnmounted(() => clearTimeout(liveTimer));
+
+function describeLive(status: LiveStatus | null): string {
+  if (!status || status.state === 'connecting') return 'Connecting…';
+  if (status.state === 'connected') return `Connected to ${status.host}`;
+  return 'Not connected';
+}
 
 // --- Putting signals on the chart ---
 
@@ -379,14 +440,116 @@ function formatNumber(value: number, unit: string): string {
   return unit ? `${text} ${unit}` : text;
 }
 
+function formatValue(value: SignalValue, kind: SignalKind | undefined, unit: string): string {
+  if (value === null) return '—';
+  if (typeof value === 'string') return value;
+  if (kind === 'boolean') return value ? 'true' : 'false';
+  return formatNumber(value, unit);
+}
+
+// --- Values: the latest while following live, otherwise at the right edge
+// of the span shown ---
+
+const valueHeading = computed(() => (following.value ? 'Now' : `At ${view.value[1].toFixed(2)} s`));
+
+// The list under the chart: each signal's value, and whichever of its
+// stats over the span shown the person adds. Kept between visits.
+type Column = 'value' | 'min' | 'max' | 'mean';
+const columnChoices: { id: Column; label: string }[] = [
+  { id: 'value', label: 'Value' },
+  { id: 'min', label: 'Min' },
+  { id: 'max', label: 'Max' },
+  { id: 'mean', label: 'Mean' }
+];
+function storedColumns(): Column[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem('signals.columns') ?? 'null') as Column[] | null;
+    if (Array.isArray(saved)) return columnChoices.map((c) => c.id).filter((id) => saved.includes(id));
+  } catch {
+    // Fall through to the default.
+  }
+  return ['value'];
+}
+const columns = ref<Column[]>(storedColumns());
+watch(columns, (value) => localStorage.setItem('signals.columns', JSON.stringify(value)));
+function toggleColumn(id: Column) {
+  const next = columns.value.includes(id) ? columns.value.filter((c) => c !== id) : [...columns.value, id];
+  columns.value = columnChoices.map((c) => c.id).filter((c) => next.includes(c));
+}
+const showsStats = computed(() => columns.value.some((c) => c !== 'value'));
+
+function cell(key: string, column: Column): string {
+  const line = series.value.get(key);
+  if (!line) return '';
+  const unit = unitOf(key);
+  if (column === 'value') return formatValue(valueAtTime(line, view.value[1]), line.kind, unit);
+  return line.stats ? formatNumber(line.stats[column], unit) : '';
+}
+
+// The signal list: each signal shown gets its value too. Asked of the
+// main process for just the rows on screen, a few times a second at most.
+const leafValues = shallowRef(new Map<string, SignalValue>());
+const shownLeaves = computed(() =>
+  treeRows.value.flatMap((row) => (row.type === 'signal' ? [row.signal.key] : [])).slice(0, 500)
+);
+const valuesEveryMs = 250;
+let valuesTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleValues() {
+  valuesTimer ??= setTimeout(readLeafValues, valuesEveryMs);
+}
+async function readLeafValues() {
+  valuesTimer = undefined;
+  const id = summary.value?.id;
+  const keys = shownLeaves.value;
+  if (!id || keys.length === 0) return;
+  const result = await window.diagnostics.readValues(id, [...keys], view.value[1]).catch(() => null);
+  if (result && summary.value?.id === id) leafValues.value = new Map(Object.entries(result));
+}
+watch([() => summary.value?.id, () => shownLeaves.value.join('\n'), () => view.value[1]], scheduleValues);
+onUnmounted(() => clearTimeout(valuesTimer));
+
+function leafText(signal: SignalInfo): string {
+  const value = leafValues.value.get(signal.key);
+  if (value === undefined || value === null) return signal.unit;
+  return formatValue(value, signal.kind, signal.unit);
+}
+
 // --- Zoom ---
 
-function zoomTo(next: [number, number]) {
+function zoomTo(next: [number, number], gesture?: ZoomGesture) {
   const [start, end] = full.value;
+  if (isLive.value) {
+    const span = next[1] - next[0];
+    if (gesture === 'all') {
+      liveWindow.value = null;
+      plotStore.setView(null);
+    } else if ((following.value && gesture === 'wheel') || (gesture === 'pan' && next[1] >= end - span * 0.01)) {
+      // Still up to now: keep following, showing this much.
+      liveWindow.value = span;
+      plotStore.setView(null);
+    } else {
+      plotStore.setView(next);
+    }
+    return;
+  }
   plotStore.setView(next[0] <= start && next[1] >= end ? null : next);
 }
 
+function formatSpan(seconds: number): string {
+  if (seconds >= 120) return `${Number((seconds / 60).toFixed(1))} min`;
+  return `${Number(seconds.toPrecision(seconds < 10 ? 2 : 3))} s`;
+}
+
+function follow() {
+  plotStore.setView(null);
+}
+
 function zoomBy(factor: number) {
+  if (following.value) {
+    const span = (liveWindow.value ?? view.value[1] - view.value[0]) * factor;
+    liveWindow.value = Math.min(liveKeepSeconds, Math.max(0.5, span));
+    return;
+  }
   const [start, end] = view.value;
   const middle = (start + end) / 2;
   const span = Math.min(full.value[1] - full.value[0], Math.max(0.01, (end - start) * factor));
@@ -399,10 +562,21 @@ function zoomBy(factor: number) {
 // the open one if it's still there.
 async function loadLogs() {
   logs.value = await window.diagnostics.getSignalLogs();
-  if (!logs.value.some((log) => log.id === selectedLog.value)) selectedLog.value = logs.value[0]?.id ?? '';
+  if (!isLiveId(selectedLog.value) && !logs.value.some((log) => log.id === selectedLog.value)) selectedLog.value = logs.value[0]?.id ?? '';
 }
 
 onMounted(loadLogs);
+
+// A live session asked for by its keyboard shortcut (App.vue), as
+// ?session=live:robot. Taken off the address once used, so the shortcut
+// works again.
+const route = useRoute();
+const router = useRouter();
+watch(() => route.query.session, (session) => {
+  if (typeof session !== 'string' || !liveSessions.some((live) => live.id === session)) return;
+  selectedLog.value = session;
+  router.replace({ query: {} });
+}, { immediate: true });
 </script>
 
 <template>
@@ -426,19 +600,29 @@ onMounted(loadLogs);
       </div>
 
       <template v-if="detailsOpen">
-        <p v-if="logs && logs.length === 0" class="hint">No data logs offloaded yet. They're pulled from the robot on the Logs page.</p>
-        <label v-else-if="logs" class="field">
+        <label v-if="logs" class="field">
           <span class="log-row">
             <select id="signal-log" v-model="selectedLog" aria-label="Log">
-              <option v-for="log in logs" :key="log.id" :value="log.id">
-                {{ logLabel(log) }} · {{ formatBytes(log.size) }}
-              </option>
+              <optgroup label="Live">
+                <option v-for="live in liveSessions" :key="live.id" :value="live.id">{{ live.label }}{{ settingsStore.settings.shortcuts[live.shortcut] ? ` (${settingsStore.settings.shortcuts[live.shortcut]})` : '' }}</option>
+              </optgroup>
+              <optgroup v-if="logs.length" label="Logs">
+                <option v-for="log in logs" :key="log.id" :value="log.id">
+                  {{ logLabel(log) }} · {{ formatBytes(log.size) }}
+                </option>
+              </optgroup>
             </select>
             <button id="refresh-logs" class="icon-button" title="Look for new logs" aria-label="Look for new logs" @click.prevent="loadLogs">↻</button>
           </span>
         </label>
-        <p v-if="logs" class="hint small">Data logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand.</p>
-        <p v-if="summary" id="log-summary" class="hint">
+        <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're pulled from the robot on the Offload page, or imported on the Storage page.</p>
+        <p v-else-if="logs && !isLive" class="hint small">Data logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand.</p>
+        <p v-if="isLive" id="log-summary" class="hint">
+          Signals the robot code publishes to NetworkTables (DogLog does, under <span class="path">/Robot</span>), as they change.
+          The last {{ liveKeepSeconds / 60 }} minutes are kept while this is open.
+          <template v-if="summary">{{ withValues }} signals with values so far.</template>
+        </p>
+        <p v-else-if="summary" id="log-summary" class="hint">
           {{ Math.round(summary.duration) }} s{{ summary.startedAt ? `, from ${formatTime(summary.startedAt)}` : '' }}.
           {{ withValues }} signals with values.
           <template v-if="summary.truncated">The end of the file is cut off.</template>
@@ -465,7 +649,12 @@ onMounted(loadLogs);
       </template>
 
       <!-- Shown even with the details put away. -->
-      <p v-if="opening" class="hint">Reading the log…</p>
+      <div v-if="isLive" id="live-status" class="live-status" :class="liveStatus?.state ?? 'connecting'">
+        <span class="dot"></span>
+        <span>{{ describeLive(liveStatus) }}</span>
+      </div>
+      <p v-if="isLive && liveStatus?.message" class="hint small">{{ liveStatus.message }}</p>
+      <p v-if="opening && !isLive" class="hint">Reading the log…</p>
       <p v-if="openError" class="error-text">This log can't be read: {{ openError }}</p>
       <div v-if="hootStatus?.progress" class="extracting">
         <span class="small">
@@ -492,7 +681,7 @@ onMounted(loadLogs);
               @dragstart="onDragStart($event, row.signal.key)" @dragend="onDragEnd" @click="place(row.signal)">
               <span class="swatch" :style="{ background: plotStore.trace(row.signal.key) ? colorOf(plotStore.trace(row.signal.key)!.color) : 'transparent' }"></span>
               <span class="signal-name">{{ row.name }}</span>
-              <span class="hint small">{{ row.signal.unit }}</span>
+              <span class="leaf-value small" :title="leafText(row.signal)">{{ leafText(row.signal) }}</span>
             </div>
           </template>
         </div>
@@ -502,15 +691,25 @@ onMounted(loadLogs);
     <section class="card chart-area">
       <div class="toolbar">
         <md-outlined-button id="zoom-in" :disabled="!summary" @click="zoomBy(0.5)">Zoom in</md-outlined-button>
-        <md-outlined-button id="zoom-out" :disabled="!summary || !plotStore.view" @click="zoomBy(2)">Zoom out</md-outlined-button>
-        <md-outlined-button id="zoom-all" :disabled="!summary || !plotStore.view" @click="zoomTo(full)">Show all</md-outlined-button>
-        <span v-if="summary" id="view-range" class="hint">
+        <md-outlined-button id="zoom-out" :disabled="!summary || (!plotStore.view && !isLive)" @click="zoomBy(2)">Zoom out</md-outlined-button>
+        <md-outlined-button id="zoom-all" :disabled="!summary || (!plotStore.view && !isLive)" @click="zoomTo(full, 'all')">Show all</md-outlined-button>
+        <md-outlined-button v-if="isLive && !following" id="follow" @click="follow">Follow live</md-outlined-button>
+        <span v-if="summary && following" id="view-range" class="hint">
+          {{ liveWindow === null ? 'Everything kept' : `The last ${formatSpan(liveWindow)}` }}, following
+        </span>
+        <span v-else-if="summary && isLive" id="view-range" class="hint">
+          {{ view[0].toFixed(2) }} – {{ view[1].toFixed(2) }} s, held still (now {{ full[1].toFixed(0) }} s)
+        </span>
+        <span v-else-if="summary" id="view-range" class="hint">
           {{ view[0].toFixed(2) }} – {{ view[1].toFixed(2) }} s of {{ full[1].toFixed(0) }} s
         </span>
         <span class="spacer"></span>
         <md-outlined-button v-if="plotStore.traces.length" @click="plotStore.clear()">Clear chart</md-outlined-button>
       </div>
-      <p class="hint small">Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all.</p>
+      <p v-if="isLive" class="hint small">
+        Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
+      </p>
+      <p v-else class="hint small">Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all.</p>
 
       <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @drop.prevent="onDrop($event)">
         <PlotChart v-if="summary" :lines="chartLines" :axes="chartAxes" :view="view" :full="full" :height="460"
@@ -572,6 +771,11 @@ onMounted(loadLogs);
       <p v-if="message" class="error-text">{{ message }}</p>
       <p v-if="readError" class="error-text">{{ readError }}</p>
 
+      <div v-if="plotStore.traces.length" id="trace-columns" class="trace-columns">
+        <span class="hint small">Show</span>
+        <button v-for="choice in columnChoices" :key="choice.id" class="chip" :aria-pressed="columns.includes(choice.id)"
+          @click="toggleColumn(choice.id)">{{ choice.label }}</button>
+      </div>
       <div v-if="plotStore.traces.length" ref="traceBox" class="trace-scroll"
         :style="{ maxHeight: traceBoxHeight === null ? 'none' : `${traceBoxHeight}px` }">
         <table id="trace-list" class="plain traces">
@@ -580,9 +784,9 @@ onMounted(loadLogs);
               <th></th>
               <th>Signal</th>
               <th>Axis</th>
-              <th class="number">Min</th>
-              <th class="number">Max</th>
-              <th class="number">Mean</th>
+              <th v-for="column in columns" :key="column" class="number">
+                {{ column === 'value' ? valueHeading : columnChoices.find((c) => c.id === column)!.label }}
+              </th>
               <th></th>
             </tr>
           </thead>
@@ -610,19 +814,15 @@ onMounted(loadLogs);
                   <option value="band-bottom">Bottom band</option>
                 </select>
               </td>
-              <template v-if="series.get(trace.key)?.stats">
-                <td class="number">{{ formatNumber(series.get(trace.key)!.stats!.min, unitOf(trace.key)) }}</td>
-                <td class="number">{{ formatNumber(series.get(trace.key)!.stats!.max, unitOf(trace.key)) }}</td>
-                <td class="number">{{ formatNumber(series.get(trace.key)!.stats!.mean, unitOf(trace.key)) }}</td>
-              </template>
-              <template v-else><td></td><td></td><td></td></template>
+              <td v-for="column in columns" :key="column" class="number">{{ cell(trace.key, column) }}</td>
               <td><button class="remove" :aria-label="`Remove ${trace.key}`" @click="plotStore.remove(trace.key)">✕</button></td>
             </tr>
           </tbody>
         </table>
       </div>
       <p v-if="plotStore.traces.length" class="hint small">
-        Min, max and mean are of the span shown. Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
+        {{ following ? 'Values are the latest.' : 'Values are at the right edge of the span shown.' }}
+        <template v-if="showsStats">Min, max and mean are of the span shown.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
         or band, and click a colour to change it.
       </p>
     </section>
@@ -814,6 +1014,28 @@ select {
   font-size: 0.8rem;
 }
 
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.live-status .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #eda100;
+}
+
+.live-status.connected .dot {
+  background: #1baf7a;
+}
+
+.live-status.disconnected .dot {
+  background: #e34948;
+}
+
 .hoots {
   display: flex;
   flex-direction: column;
@@ -921,6 +1143,39 @@ select {
 .drop.over {
   border-color: #2a78d6;
   background: color-mix(in srgb, #2a78d6 15%, var(--tile-background-color));
+}
+
+.leaf-value {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.trace-columns {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.chip {
+  padding: 2px 10px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: #2a78d6;
+  background: color-mix(in srgb, #2a78d6 18%, transparent);
 }
 
 .trace-scroll {

@@ -1,10 +1,11 @@
-import type { OffloadedFiles } from '@shared/ipc';
+import type { OffloadedFiles, OffloadedFilesQuery } from '@shared/ipc';
 import {
   driverStationExtensions,
   driverStationLogDirectory,
   parseLogName,
   robotFolderName,
   robotLogLocations,
+  type OffloadedFile,
   type OffloadRunSummary,
   type OffloadStatus,
   type RobotLogLocation
@@ -23,7 +24,6 @@ import { dataDirectory, ensureStorageLayout } from './storage';
 const watchIntervalMs = 10_000;
 
 // How many offloaded files the window is sent: the newest.
-const recentFileCount = 200;
 
 const driverStationLocations: RobotLogLocation[] = [
   {
@@ -108,7 +108,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
         reader?.close();
       }
     } else if (!automatic) {
-      summary.errors.push('No robot found. Check connection on the Overview page shows where it was looked for.');
+      summary.errors.push('No robot found. Check connection on the Offload page shows where it was looked for.');
     }
 
     if (process.platform === 'win32') {
@@ -148,12 +148,38 @@ export function watchForRobot() {
   setInterval(tick, watchIntervalMs);
 }
 
-export async function offloadedFiles(settings: Settings): Promise<OffloadedFiles> {
-  const files = Object.values((await loadIndex(dataDirectory(settings))).files).map((file) => ({
-    ...file,
-    // Files offloaded before the app could read their match from the name.
-    match: file.match ?? parseLogName(file.localPath.slice(file.localPath.lastIndexOf('/') + 1)).match
-  }));
-  files.sort((a, b) => b.modified.localeCompare(a.modified));
-  return { total: files.length, recent: files.slice(0, recentFileCount) };
+const matchTypeOrder = { practice: 0, qualification: 1, elimination: 2 };
+
+// By match: event, then practice, qualification, elimination, then number
+// and .N; files from no match after all of those. Then by time.
+function byMatch(a: OffloadedFile, b: OffloadedFile): number {
+  if (!a.match || !b.match) return (a.match ? 0 : 1) - (b.match ? 0 : 1);
+  return a.match.event.localeCompare(b.match.event) ||
+    matchTypeOrder[a.match.type] - matchTypeOrder[b.match.type] ||
+    a.match.number - b.match.number ||
+    (a.match.suffix ?? 0) - (b.match.suffix ?? 0);
+}
+
+export async function offloadedFiles(settings: Settings, query: OffloadedFilesQuery): Promise<OffloadedFiles> {
+  // One row per file here: a file offloaded and also imported is one file.
+  const byPath = new Map<string, OffloadedFile>();
+  for (const file of Object.values((await loadIndex(dataDirectory(settings))).files)) {
+    if (byPath.has(file.localPath)) continue;
+    byPath.set(file.localPath, {
+      ...file,
+      // Files offloaded before the app could read their match from the name.
+      match: file.match ?? parseLogName(file.localPath.slice(file.localPath.lastIndexOf('/') + 1)).match
+    });
+  }
+  const files = [...byPath.values()];
+  const direction = query.descending ? -1 : 1;
+  files.sort((a, b) => {
+    const order = query.sort === 'match' ? byMatch(a, b) : 0;
+    // Files from no match stay last either way.
+    if (order !== 0 && (!a.match || !b.match)) return order;
+    return direction * (order || a.modified.localeCompare(b.modified));
+  });
+  const pageSize = Math.max(1, Math.min(100, Math.trunc(query.pageSize) || 10));
+  const page = Math.max(0, Math.trunc(query.page) || 0);
+  return { total: files.length, files: files.slice(page * pageSize, (page + 1) * pageSize) };
 }

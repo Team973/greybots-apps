@@ -110,9 +110,9 @@ export function describeMatch(match: MatchInfo): string {
 export interface OffloadedFile {
   robot: string;
   source: LogSource;
-  // Where it came from: a path on the robot, or on this computer for
-  // Driver Station logs.
-  origin: 'robot' | 'local';
+  // Where it came from: a path on the robot, on this computer for Driver
+  // Station logs, or what was imported (a file, or a file in a zip).
+  origin: 'robot' | 'local' | 'import';
   originPath: string;
   size: number;
   // When it last changed where it came from, as an ISO time.

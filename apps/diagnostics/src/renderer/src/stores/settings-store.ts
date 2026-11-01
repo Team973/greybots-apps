@@ -16,9 +16,9 @@ export const useSettingsStore = defineStore('settings', {
     },
     // Resolves to what was wrong, by field. Empty when the settings were saved.
     async save(settings: Settings): Promise<SettingsErrors> {
-      // A plain copy: what's handed over may be a reactive object, which
-      // can't be sent to the main process.
-      const result = await window.diagnostics.saveSettings({ ...settings });
+      // A plain copy, all the way down: what's handed over may be a reactive
+      // object, which can't be sent to the main process.
+      const result = await window.diagnostics.saveSettings(JSON.parse(JSON.stringify(settings)) as Settings);
       this.settings = result.settings;
       return result.errors;
     }
