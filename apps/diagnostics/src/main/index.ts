@@ -1,11 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, shell } from 'electron';
 import { join } from 'node:path';
 
 import type { DiagnosticsApi } from '@shared/ipc';
 import { normalizeSettings, settingsErrors } from '@shared/settings';
 import { checkConnection } from './connection-check';
 import { chooseImport, importStatus, runImport } from './import-service';
-import { liveStatus } from './live-service';
+import { earlierRuns, liveStatus } from './live-service';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { loadSettings, storeSettings } from './settings-store';
 import {
@@ -129,8 +129,19 @@ const handlers: DiagnosticsApi = {
   async readValues(id, keys, time) {
     return readValues(await loadSettings(), id, keys, time);
   },
+  async copyImage(png) {
+    // Only a PNG: the window says what goes on the clipboard, not anything.
+    const bytes = new Uint8Array(png);
+    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    if (!signature.every((byte, i) => bytes[i] === byte)) return "That isn't an image.";
+    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
+    return '';
+  },
   async getLiveStatus(id) {
     return liveStatus(id);
+  },
+  async getEarlierRuns() {
+    return earlierRuns();
   },
   async getOwletStatus() {
     return owletStatus();

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import type { SignalSeries } from '@shared/signals';
+import type { ChartSnapshot } from '@/chart-image';
 
 export interface ChartLine {
   key: string;
@@ -279,6 +280,25 @@ function onKey(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKey));
 onUnmounted(() => window.removeEventListener('keydown', onKey));
 
+// What a copy of the chart as an image needs (chart-image.ts).
+const svgElement = ref<SVGSVGElement | null>(null);
+function snapshot(): ChartSnapshot | null {
+  if (!svgElement.value) return null;
+  const pin = pinReadout.value;
+  return {
+    svg: svgElement.value,
+    pinned: pin && pin.rows.length
+      ? {
+          title: `Pinned at ${pin.t.toFixed(3)} s${pin.x === null ? ', out of view' : ''}`,
+          left: pin.left,
+          bottom: props.height - plot.value.bottom + 4,
+          rows: pin.rows.map((row) => ({ color: row.color, label: row.label, value: row.value }))
+        }
+      : null
+  };
+}
+defineExpose({ snapshot });
+
 const formatDelta = (seconds: number) => `${seconds >= 0 ? '+' : '−'}${Math.abs(seconds).toFixed(3)} s`;
 
 function clampView(start: number, end: number): [number, number] {
@@ -340,7 +360,7 @@ function onWheel(event: WheelEvent) {
 
 <template>
   <div ref="box" class="plot-chart" :style="{ height: `${height}px` }">
-    <svg :width="width" :height="height" role="img" aria-label="Signals over time"
+    <svg ref="svgElement" :width="width" :height="height" role="img" aria-label="Signals over time"
       @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp"
       @pointerleave="hoverX = dragFrom === null ? null : hoverX" @wheel.prevent="onWheel">
       <defs>

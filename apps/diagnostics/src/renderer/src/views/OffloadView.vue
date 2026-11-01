@@ -2,17 +2,23 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
+import NumberInput from '@greybots/common/components/Number.vue';
+import Switch from '@greybots/common/components/Switch.vue';
+import TextInput from '@greybots/common/components/TextInput.vue';
 
 import type { ConnectionReport } from '@shared/ipc';
 import type { OffloadStatus } from '@shared/offload';
 import { robotAddresses } from '@shared/robot-address';
+import SaveStatus from '@/components/SaveStatus.vue';
 import { formatBytes, formatTime } from '@/format';
-import { useSettingsStore } from '@/stores/settings-store';
+import { useSettingsDraft } from '@/settings-draft';
 
-// The robot: where it's looked for, whether it's there, and pulling its logs.
+// The robot: how to reach it (saved as it's changed), whether it's there,
+// and pulling its logs.
 
-const store = useSettingsStore();
-const addresses = computed(() => robotAddresses(store.settings));
+const { draft, errors, saveState, edit, typed } = useSettingsDraft();
+const manual = computed(() => draft.value.addressMode === 'manual');
+const addresses = computed(() => robotAddresses(draft.value));
 
 const report = ref<ConnectionReport | null>(null);
 const checking = ref(false);
@@ -74,7 +80,6 @@ async function offloadNow() {
 }
 
 onMounted(() => {
-  store.load();
   refresh();
   timer = setInterval(refresh, refreshMs);
 });
@@ -89,10 +94,39 @@ onUnmounted(() => clearInterval(timer));
       <p v-if="status.robotHost" id="robot-status" class="success-text">Robot connected at {{ status.robotHost }}.</p>
       <p v-else id="robot-status" class="hint">No robot connected.</p>
     </template>
-    <p v-if="store.settings.addressMode === 'team'" class="hint">
-      Team {{ store.settings.teamNumber }}. The robot is looked for at these addresses:
-    </p>
-    <p v-else class="hint">Using the address set in Settings:</p>
+
+    <div class="field-row">
+      <NumberInput id="team-number" :model-value="draft.teamNumber" label="Team number"
+        @update:model-value="typed({ teamNumber: $event })"></NumberInput>
+    </div>
+    <p v-if="errors.teamNumber" class="error-text">{{ errors.teamNumber }}</p>
+
+    <div class="field-row">
+      <div>
+        Use a set address
+        <p class="hint">For a robot that isn't at its usual team address, or a simulator.</p>
+      </div>
+      <Switch id="manual-address-switch" :model-value="manual"
+        @update:model-value="edit({ addressMode: $event ? 'manual' : 'team' })"></Switch>
+    </div>
+
+    <template v-if="manual">
+      <TextInput id="manual-address" :model-value="draft.manualAddress" label="IP address or hostname"
+        @update:model-value="typed({ manualAddress: $event })"></TextInput>
+      <p v-if="errors.manualAddress" class="error-text">{{ errors.manualAddress }}</p>
+    </template>
+
+    <div class="field-row">
+      <div>
+        Find the robot by mDNS
+        <p class="hint">Looks for the robot by its name on the network, as well as its address.</p>
+      </div>
+      <Switch id="mdns-switch" :model-value="draft.mdnsEnabled"
+        @update:model-value="edit({ mdnsEnabled: $event })"></Switch>
+    </div>
+    <SaveStatus id="connection-saved" :state="saveState" />
+
+    <p class="hint">The robot is looked for at:</p>
 
     <table class="plain">
       <tbody>
@@ -139,7 +173,7 @@ onUnmounted(() => clearInterval(timer));
     <template v-if="status">
       <p class="hint">
         <template v-if="status.autoOffload">Logs are pulled automatically when the robot connects.</template>
-        <template v-else>Automatic offload is off in Settings.</template>
+        <template v-else>Automatic offload is off in <RouterLink to="/settings">Settings</RouterLink>.</template>
         Logs already on this computer aren't pulled again. What's been pulled is on the
         <RouterLink to="/storage">Storage</RouterLink> page.
       </p>

@@ -41,9 +41,9 @@ Electron is pinned to an exact version in `package.json` because electron-builde
 
 ## Robot connection settings
 
-Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`), edited on the Settings page. The type and its validation are in `src/shared/settings.ts`.
+Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Offload page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
 
-The Settings page saves each change as it's made: a switch or a choice at once, a text or number box once typing pauses (600 ms). A change with something wrong with it shows why and isn't saved until it's put right; the top of the page says which.
+Both pages save each change as it's made (`src/renderer/src/settings-draft.ts`): a switch or a choice at once, a text or number box once typing pauses (600 ms). A change with something wrong with it shows why and isn't saved until it's put right; the top of the page says which.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -84,9 +84,9 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 ## Pages
 
 - **Signals** (what the app opens on): logs and live signals, plotted.
-- **Offload:** the robot's connection (where it's looked for, Check connection) and offloading from it.
+- **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
 - **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
-- **Settings.**
+- **Settings:** automatic offload and how far back, the data folder, keyboard shortcuts, and CTRE's licence.
 
 ## Log offload
 
@@ -151,6 +151,7 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 - **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
 - **Hover:** shows every signal's value at that moment (the last value at or before it).
 - **Pinning a moment:** a click on the chart pins that moment with a dashed line, and its values stay in their own readout at the bottom of the plot while hover reads elsewhere (with how far it is from the pin) and, live, while the chart moves along. Once the moment's out of view, its readout keeps the values last seen. A click elsewhere moves it; its ✕ or Escape lets it go. Clicks and double-clicks are told apart from pointer-ups rather than the browser's click events, which don't fire while the chart redraws under the pointer (live).
+- **Copying as an image:** the copy button (Material's two-sheets icon) puts the chart on the clipboard as a PNG, for pasting into a PR or a message: a caption naming the log and span, the chart (with any pinned readout), and a legend of every signal with its colour and value. It's drawn off screen (`src/renderer/src/chart-image.ts`): the chart's own SVG, with the page's styles copied onto it, on a canvas at twice the size for sharpness, with the caption, readout and legend drawn around it. So nothing on the page moves while it's made, and it's the same however the page is scrolled. The main process only puts it on the clipboard, and only a PNG.
 - **Warnings:** opening a log warns when DogLog's queue filled up (its `QueueRemainingCapacity` reached 0), since DogLog drops values while it's full.
 - **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Clicking a colour in the list under the chart picks another palette colour or any colour; the choice is kept by signal, between visits, so the signal gets it back when added again. Any colour picked is the same in both themes. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
 - **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
@@ -220,8 +221,10 @@ The Signals page's list starts with two live sessions: **the robot**, and **a si
 - **The protocol:** NetworkTables 4 (`nt4-client.ts`), over Node's own WebSocket, with a small MessagePack reader (`msgpack.ts`). It asks for every topic and every change (`all`), not only the latest each period, so nothing between two reads is missed. NT4 version 4.0 is used rather than 4.1, which needs WebSocket pings Node can't send; a dead connection is found by time sync replies stopping for 6 s instead.
 - **Time:** seconds since connecting, by the robot's clock (NT4's server time). A value set before connecting starts at 0, since that's what was holding.
 - **What's kept** (`live-source.ts`): the last 10 minutes of every topic, and the value still holding before that. Struct values are decoded with the schemas the robot publishes under `/.schema/`, and struct fields and array elements are signals of their own, as in a data log.
-- **Dropouts:** what was kept stays through a dropout, and the connection comes back on its own. If the robot's clock went back (robot code restarted in a simulator), the timeline starts afresh.
+- **Dropouts:** what was kept stays through a dropout, and the connection comes back on its own. The signal list stays as it was, dimmed and marked stale, with each signal's last value.
+- **A new run:** if the robot's clock went back (robot code restarted), a new run starts on a new timeline. Until it's had 1.5 s to say what it has, the last run's list stands (with the new run's signals added as they come), so the list doesn't empty and refill.
 - **Letting go:** the window asks for the connection's state ten times a second while it's showing a live session. When it stops for 15 s (another page, another session, closed), the connection is closed.
+- **Earlier runs:** a run isn't thrown away when a new one starts or the connection is let go. The last three are kept, until the app closes, as **Earlier live runs** in the log list: any signal in them can be plotted after the fact, as from a log, before the robot's logs are pulled. Coming back to a robot whose clock carried on (it wasn't restarted) picks its run up again.
 
 **Following.** While live, the chart shows the last 30 s up to now and moves along. Scrolling the wheel, or Zoom in and Zoom out, show more or less of the latest and keep following; **Show all** (or double-click) follows everything kept. Shift+scrolling back, or dragging across the chart, holds it still to look at something; **Follow live**, or Shift+scrolling back to now, follows again. New signals appear in the list as robot code first publishes them.
 

@@ -3,14 +3,16 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSettingsStore } from '@/stores/settings-store';
 import '@material/web/button/outlined-button';
+import '@material/web/iconbutton/outlined-icon-button';
 import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
-import { isLiveId, liveKeepSeconds, liveSessions, type LiveStatus } from '@shared/live';
+import { isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
+import { chartPng } from '@/chart-image';
 import ColorPicker from '@/components/ColorPicker.vue';
 import PlotChart, { type ChartAxis, type ChartLine, type ZoomGesture } from '@/components/PlotChart.vue';
 import { formatBytes, formatTime } from '@/format';
@@ -51,9 +53,21 @@ function storedFlag(key: string, initial: boolean) {
 }
 const sidebarOpen = storedFlag('signals.sidebarOpen', true);
 const detailsOpen = storedFlag('signals.detailsOpen', true);
+// Runs recorded live and kept (the robot code restarted, or the page was
+// left), to plot from after the fact until the app closes.
+const earlierRuns = ref<EarlierRun[]>([]);
+
+function runLabel(run: EarlierRun): string {
+  const from = liveSessions.find((l) => l.id === run.target)?.label.replace(/^Live: /, '') ?? run.target;
+  const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `Earlier run from ${from}, ${time(run.startedAt)}–${time(run.endedAt)}`;
+}
+
 const selectedLabel = computed(() => {
   const live = liveSessions.find((l) => l.id === selectedLog.value);
   if (live) return live.label;
+  const run = earlierRuns.value.find((r) => r.id === selectedLog.value);
+  if (run) return runLabel(run);
   const log = logs.value?.find((l) => l.id === selectedLog.value);
   return log ? logLabel(log) : '';
 });
@@ -62,7 +76,7 @@ const selectedLabel = computed(() => {
 // following, the chart shows the last `liveWindow` seconds up to now (null:
 // everything kept); zooming the wheel changes how much. Panning back, or
 // dragging across the chart, holds it still until Follow.
-const isLive = computed(() => isLiveId(selectedLog.value));
+const isLive = computed(() => isLiveNow(selectedLog.value));
 const liveStatus = ref<LiveStatus | null>(null);
 const liveWindow = ref<number | null>(30);
 const following = computed(() => isLive.value && plotStore.view === null);
@@ -78,8 +92,8 @@ const full = computed<[number, number]>(() => {
     const end = liveStatus.value?.end ?? 0;
     return [Math.min(liveStatus.value?.start ?? 0, end - liveKeepSeconds), Math.max(end, 0.01)];
   }
-  const start = hootStatus.value?.start ?? 0;
-  const end = hootStatus.value?.end ?? summary.value?.duration ?? 1;
+  const start = hootStatus.value?.start ?? summary.value?.start ?? 0;
+  const end = hootStatus.value?.end ?? (summary.value ? (summary.value.start ?? 0) + summary.value.duration : 1);
   return [start, Math.max(end, start + 0.01)];
 });
 const view = computed<[number, number]>(() => {
@@ -250,10 +264,11 @@ let catalogAt = 0;
 async function pollLive() {
   clearTimeout(liveTimer);
   const id = selectedLog.value;
-  if (!isLiveId(id)) return;
+  if (!isLiveNow(id)) return;
   try {
     const status = await window.diagnostics.getLiveStatus(id);
     if (selectedLog.value !== id) return;
+    if (status.earlierRuns !== earlierRuns.value.length) earlierRuns.value = await window.diagnostics.getEarlierRuns();
     liveStatus.value = status;
     if (status.signals !== summary.value?.signals.length || Date.now() - catalogAt > liveCatalogMs) {
       catalogAt = Date.now();
@@ -535,6 +550,57 @@ function zoomTo(next: [number, number], gesture?: ZoomGesture) {
   plotStore.setView(next[0] <= start && next[1] >= end ? null : next);
 }
 
+// Copying the chart as an image, to paste into a PR or a message: a caption
+// saying what it's of, the chart with its pinned readout, and a legend of
+// every signal with its value. Drawn off screen (chart-image.ts), so the
+// page doesn't change while it's made.
+const copying = ref(false);
+const copyState = ref<'idle' | 'copied' | string>('idle');
+const chartElement = ref<InstanceType<typeof PlotChart> | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+const captureCaption = computed(() => {
+  const span = following.value
+    ? `${liveWindow.value === null ? 'everything kept' : `the last ${formatSpan(liveWindow.value)}`}, live`
+    : `${view.value[0].toFixed(2)} – ${view.value[1].toFixed(2)} s`;
+  return `${selectedLabel.value} · ${span}`;
+});
+
+async function copyImage() {
+  const snapshot = chartElement.value?.snapshot();
+  if (!snapshot) return;
+  copying.value = true;
+  try {
+    const legend = plotStore.traces.map((trace) => {
+      const signal = signalsByKey.value.get(trace.key);
+      return {
+        color: colorOf(trace.color),
+        label: signal ? signalLabel(signal) : trace.key,
+        note: trace.axis === 'lanes' ? `(${trace.band} band)` : plotStore.axes.length > 1 ? `(${plotStore.axisName(trace.axis)})` : '',
+        value: cell(trace.key, 'value')
+      };
+    });
+    if (legend.length) legend.push({ color: 'transparent', label: following.value ? 'Values latest' : `Values at ${view.value[1].toFixed(2)} s`, note: '', value: '' });
+    const card = getComputedStyle(snapshot.svg.closest('.card') ?? document.body);
+    const png = await chartPng(snapshot, {
+      caption: captureCaption.value,
+      legend,
+      background: card.backgroundColor,
+      text: card.color,
+      fontFamily: card.fontFamily
+    });
+    const problem = await window.diagnostics.copyImage(png);
+    copyState.value = problem || 'copied';
+  } catch (error) {
+    copyState.value = (error as Error).message;
+  } finally {
+    copying.value = false;
+  }
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => { copyState.value = 'idle'; }, 2500);
+}
+onUnmounted(() => clearTimeout(copyTimer));
+
 function formatSpan(seconds: number): string {
   if (seconds >= 120) return `${Number((seconds / 60).toFixed(1))} min`;
   return `${Number(seconds.toPrecision(seconds < 10 ? 2 : 3))} s`;
@@ -561,11 +627,20 @@ function zoomBy(factor: number) {
 // Lists the data logs again (new ones copied in, offloads since), keeping
 // the open one if it's still there.
 async function loadLogs() {
-  logs.value = await window.diagnostics.getSignalLogs();
-  if (!isLiveId(selectedLog.value) && !logs.value.some((log) => log.id === selectedLog.value)) selectedLog.value = logs.value[0]?.id ?? '';
+  [logs.value, earlierRuns.value] = await Promise.all([window.diagnostics.getSignalLogs(), window.diagnostics.getEarlierRuns()]);
+  const there = isLiveNow(selectedLog.value) || logs.value.some((log) => log.id === selectedLog.value) ||
+    earlierRuns.value.some((run) => run.id === selectedLog.value);
+  if (!there) selectedLog.value = logs.value[0]?.id ?? '';
 }
 
 onMounted(loadLogs);
+
+// A live run is kept a little after it's left (or when the robot code
+// restarts), so the list of them is looked at again now and then.
+const runsTimer = setInterval(async () => {
+  earlierRuns.value = await window.diagnostics.getEarlierRuns();
+}, 5000);
+onUnmounted(() => clearInterval(runsTimer));
 
 // A live session asked for by its keyboard shortcut (App.vue), as
 // ?session=live:robot. Taken off the address once used, so the shortcut
@@ -605,6 +680,9 @@ watch(() => route.query.session, (session) => {
             <select id="signal-log" v-model="selectedLog" aria-label="Log">
               <optgroup label="Live">
                 <option v-for="live in liveSessions" :key="live.id" :value="live.id">{{ live.label }}{{ settingsStore.settings.shortcuts[live.shortcut] ? ` (${settingsStore.settings.shortcuts[live.shortcut]})` : '' }}</option>
+              </optgroup>
+              <optgroup v-if="earlierRuns.length" label="Earlier live runs (kept until the app closes)">
+                <option v-for="run in earlierRuns" :key="run.id" :value="run.id">{{ runLabel(run) }}</option>
               </optgroup>
               <optgroup v-if="logs.length" label="Logs">
                 <option v-for="log in logs" :key="log.id" :value="log.id">
@@ -654,6 +732,10 @@ watch(() => route.query.session, (session) => {
         <span>{{ describeLive(liveStatus) }}</span>
       </div>
       <p v-if="isLive && liveStatus?.message" class="hint small">{{ liveStatus.message }}</p>
+      <p v-if="isLive && liveStatus?.stale && summary?.signals.length" id="stale-note" class="warning-text">
+        {{ liveStatus.state === 'connected' ? 'A new run: until it has said what it has,' : 'Not connected:' }}
+        these are the signals it last had, and their last values.
+      </p>
       <p v-if="opening && !isLive" class="hint">Reading the log…</p>
       <p v-if="openError" class="error-text">This log can't be read: {{ openError }}</p>
       <div v-if="hootStatus?.progress" class="extracting">
@@ -667,7 +749,7 @@ watch(() => route.query.session, (session) => {
       <template v-if="summary">
         <TextInput id="signal-filter" :model-value="filter" label="Filter by name" @update:model-value="filter = $event"></TextInput>
 
-        <div class="signal-list" role="tree">
+        <div class="signal-list" :class="{ stale: isLive && liveStatus?.stale }" role="tree">
           <p v-if="treeRows.length === 0" class="hint">No signals match.</p>
           <template v-for="row in treeRows" :key="row.type === 'folder' ? `f${row.path}` : `s${row.signal.key}`">
             <button v-if="row.type === 'folder'" class="folder" :style="{ paddingLeft: `${row.depth * 14 + 4}px` }"
@@ -690,8 +772,19 @@ watch(() => route.query.session, (session) => {
 
     <section class="card chart-area">
       <div class="toolbar">
-        <md-outlined-button id="zoom-in" :disabled="!summary" @click="zoomBy(0.5)">Zoom in</md-outlined-button>
-        <md-outlined-button id="zoom-out" :disabled="!summary || (!plotStore.view && !isLive)" @click="zoomBy(2)">Zoom out</md-outlined-button>
+        <!-- Material's zoom_in and zoom_out icons, drawn here (no icon font: the
+          app has to work offline). -->
+        <md-outlined-icon-button id="zoom-in" :disabled="!summary" title="Zoom in" aria-label="Zoom in" @click="zoomBy(0.5)">
+          <svg viewBox="0 -960 960 960" width="20" height="20" aria-hidden="true">
+            <path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Zm-40-60v-80h-80v-80h80v-80h80v80h80v80h-80v80h-80Z" />
+          </svg>
+        </md-outlined-icon-button>
+        <md-outlined-icon-button id="zoom-out" :disabled="!summary || (!plotStore.view && !isLive)" title="Zoom out" aria-label="Zoom out"
+          @click="zoomBy(2)">
+          <svg viewBox="0 -960 960 960" width="20" height="20" aria-hidden="true">
+            <path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400ZM280-540v-80h200v80H280Z" />
+          </svg>
+        </md-outlined-icon-button>
         <md-outlined-button id="zoom-all" :disabled="!summary || (!plotStore.view && !isLive)" @click="zoomTo(full, 'all')">Show all</md-outlined-button>
         <md-outlined-button v-if="isLive && !following" id="follow" @click="follow">Follow live</md-outlined-button>
         <span v-if="summary && following" id="view-range" class="hint">
@@ -704,15 +797,26 @@ watch(() => route.query.session, (session) => {
           {{ view[0].toFixed(2) }} – {{ view[1].toFixed(2) }} s of {{ full[1].toFixed(0) }} s
         </span>
         <span class="spacer"></span>
+        <md-outlined-icon-button v-if="summary" id="copy-image" :disabled="copying"
+          :title="copyState === 'copied' ? 'Copied' : 'Copy the chart and its signals as an image, to paste into a PR'"
+          :aria-label="copyState === 'copied' ? 'Copied' : 'Copy the chart as an image'" @click="copyImage">
+          <svg viewBox="0 -960 960 960" width="20" height="20" aria-hidden="true">
+            <path v-if="copyState === 'copied'" d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z" />
+            <path v-else
+              d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z" />
+          </svg>
+        </md-outlined-icon-button>
         <md-outlined-button v-if="plotStore.traces.length" @click="plotStore.clear()">Clear chart</md-outlined-button>
       </div>
+      <p v-if="copyState !== 'idle' && copyState !== 'copied'" class="error-text">{{ copyState }}</p>
       <p v-if="isLive" class="hint small">
         Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
       </p>
       <p v-else class="hint small">Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all.</p>
 
+      <div class="chart-body">
       <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @drop.prevent="onDrop($event)">
-        <PlotChart v-if="summary" :lines="chartLines" :axes="chartAxes" :view="view" :full="full" :height="460"
+        <PlotChart v-if="summary" ref="chartElement" :lines="chartLines" :axes="chartAxes" :view="view" :full="full" :height="460"
           @zoom="zoomTo" @width="plotWidth = $event" />
         <div v-if="summary && plotStore.traces.length === 0 && !dragging" class="empty">
           Drag signals here, or click one in the list.
@@ -820,6 +924,7 @@ watch(() => route.query.session, (session) => {
           </tbody>
         </table>
       </div>
+      </div>
       <p v-if="plotStore.traces.length" class="hint small">
         {{ following ? 'Values are the latest.' : 'Values are at the right edge of the span shown.' }}
         <template v-if="showsStats">Min, max and mean are of the span shown.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
@@ -918,6 +1023,10 @@ watch(() => route.query.session, (session) => {
   flex: 1;
   margin: 0 -8px;
   padding: 0 8px;
+}
+
+.signal-list.stale {
+  opacity: 0.6;
 }
 
 .log-row {
@@ -1176,6 +1285,16 @@ select {
 .chip[aria-pressed='true'] {
   border-color: #2a78d6;
   background: color-mix(in srgb, #2a78d6 18%, transparent);
+}
+
+.chart-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toolbar md-outlined-icon-button svg {
+  fill: currentColor;
 }
 
 .trace-scroll {

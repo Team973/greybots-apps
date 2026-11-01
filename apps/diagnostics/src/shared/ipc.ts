@@ -4,7 +4,7 @@
 
 import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { ImportStatus, ImportSummary } from './import';
-import type { LiveStatus } from './live';
+import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
@@ -118,6 +118,9 @@ export interface SignalLogSummary {
   id: string;
   // Seconds from the first value to the last.
   duration: number;
+  // Where the timeline starts, when not 0 (an earlier live run whose first
+  // minutes were let go).
+  start?: number;
   // When the log started, by the clock (ISO), if the log says.
   startedAt: string | null;
   // Whether the end of the file was cut off.
@@ -160,9 +163,13 @@ export interface DiagnosticsApi {
   // list; null where there's none. Hoot signals not read yet are null.
   readValues(id: string, keys: string[], time: number): Promise<Record<string, SignalValue>>;
   getHootStatus(id: string): Promise<HootSessionStatus>;
+  // Puts a PNG on the clipboard. Resolves to an error message, or ''.
+  copyImage(png: Uint8Array): Promise<string>;
   // A live session's connection, and how far its timeline goes. Asking keeps
   // it connected.
   getLiveStatus(id: string): Promise<LiveStatus>;
+  // Runs recorded live and kept, newest first, to open like logs.
+  getEarlierRuns(): Promise<EarlierRun[]>;
   getOwletStatus(): Promise<OwletStatus>;
   // Records that CTRE's licence was accepted, and gets owlet.
   acceptCtreLicense(): Promise<OwletStatus>;
@@ -189,7 +196,9 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'readSignal',
   'readValues',
   'getHootStatus',
+  'copyImage',
   'getLiveStatus',
+  'getEarlierRuns',
   'getOwletStatus',
   'acceptCtreLicense',
   'downloadOwlet'
