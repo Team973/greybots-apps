@@ -3,9 +3,11 @@
 // each on the channel of the same name.
 
 import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
+import type { ImportStatus, ImportSummary } from './import';
+import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
-import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries } from './signals';
+import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
 
 export interface AppInfo {
   version: string;
@@ -60,10 +62,22 @@ export interface ConnectionReport {
   addresses: AddressCheck[];
 }
 
+// The offloaded and imported files list, a page at a time.
+export type OffloadedSort = 'changed' | 'match';
+
+export interface OffloadedFilesQuery {
+  // From 0.
+  page: number;
+  pageSize: number;
+  sort: OffloadedSort;
+  // Newest (or latest match) first when true.
+  descending: boolean;
+}
+
 export interface OffloadedFiles {
   total: number;
-  // The most recently changed, newest first.
-  recent: OffloadedFile[];
+  // The page asked for, sorted.
+  files: OffloadedFile[];
 }
 
 export interface SessionHoot {
@@ -104,6 +118,9 @@ export interface SignalLogSummary {
   id: string;
   // Seconds from the first value to the last.
   duration: number;
+  // Where the timeline starts, when not 0 (an earlier live run whose first
+  // minutes were let go).
+  start?: number;
   // When the log started, by the clock (ISO), if the log says.
   startedAt: string | null;
   // Whether the end of the file was cut off.
@@ -128,14 +145,31 @@ export interface DiagnosticsApi {
   getOffloadStatus(): Promise<OffloadStatus>;
   // Starts an offload and resolves when it's done, to why it didn't start or ''.
   startOffload(): Promise<string>;
-  getOffloadedFiles(): Promise<OffloadedFiles>;
+  getOffloadedFiles(query: OffloadedFilesQuery): Promise<OffloadedFiles>;
+  // Files a person dropped or picked (logs, folders, zip files), filed into
+  // the archive. Resolves when done, to what happened or why it didn't start.
+  importLogs(paths: string[], fallbackTeam: number): Promise<ImportSummary | string>;
+  getImportStatus(): Promise<ImportStatus>;
+  // A picker for logs and zip files, or for folders. [] if cancelled.
+  chooseImport(folders: boolean): Promise<string[]>;
   getSignalLogs(): Promise<SignalLogFile[]>;
-  // Opens a session for reading signals; rejects if it can't be read.
+  // Opens a session for reading signals; rejects if it can't be read. A
+  // live session's id (live.ts) connects to the robot or a simulator.
   openSignalLog(id: string): Promise<SignalLogSummary>;
   // Null if the session has no such signal. A Hoot signal not read before is
   // exported first, which can take a while for a big log.
   readSignal(id: string, key: string, range: SignalRange): Promise<SignalSeries | null>;
+  // Each signal's value at one time (seconds, as in series), for the signal
+  // list; null where there's none. Hoot signals not read yet are null.
+  readValues(id: string, keys: string[], time: number): Promise<Record<string, SignalValue>>;
   getHootStatus(id: string): Promise<HootSessionStatus>;
+  // Puts a PNG on the clipboard. Resolves to an error message, or ''.
+  copyImage(png: Uint8Array): Promise<string>;
+  // A live session's connection, and how far its timeline goes. Asking keeps
+  // it connected.
+  getLiveStatus(id: string): Promise<LiveStatus>;
+  // Runs recorded live and kept, newest first, to open like logs.
+  getEarlierRuns(): Promise<EarlierRun[]>;
   getOwletStatus(): Promise<OwletStatus>;
   // Records that CTRE's licence was accepted, and gets owlet.
   acceptCtreLicense(): Promise<OwletStatus>;
@@ -154,10 +188,17 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getOffloadStatus',
   'startOffload',
   'getOffloadedFiles',
+  'importLogs',
+  'getImportStatus',
+  'chooseImport',
   'getSignalLogs',
   'openSignalLog',
   'readSignal',
+  'readValues',
   'getHootStatus',
+  'copyImage',
+  'getLiveStatus',
+  'getEarlierRuns',
   'getOwletStatus',
   'acceptCtreLicense',
   'downloadOwlet'

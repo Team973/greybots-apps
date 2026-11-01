@@ -41,7 +41,9 @@ Electron is pinned to an exact version in `package.json` because electron-builde
 
 ## Robot connection settings
 
-Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`), edited on the Settings page. The type and its validation are in `src/shared/settings.ts`.
+Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Offload page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
+
+Both pages save each change as it's made (`src/renderer/src/settings-draft.ts`): a switch or a choice at once, a text or number box once typing pauses (600 ms). A change with something wrong with it shows why and isn't saved until it's put right; the top of the page says which.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -53,10 +55,11 @@ Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagno
 | `offloadDays` | 7 | Only logs recorded in this many days are pulled; older ones are left where they are. 0 pulls everything. |
 | `ctreLicenseAccepted` | off | Whether CTRE's licence was accepted, so owlet can be downloaded to read Hoot logs. Set only by the Settings page's accept button. |
 | `dataDirectory` | (empty) | Where data is kept. Empty means the default folder. |
+| `shortcuts` | Ctrl+K, Ctrl+Shift+K | Keyboard shortcuts that work on any page (`src/shared/shortcuts.ts`): the robot's live signals, and a simulator's. Set on the Settings page by clicking one and pressing the keys (with Ctrl, Alt or Cmd); Backspace turns one off. Two actions can't share keys. |
 
 In team mode the robot is looked for at `10.TE.AM.2` (973 → `10.9.73.2`), at `roboRIO-<team>-FRC.local` when mDNS is on, and at the USB address `172.22.11.2` (`src/shared/robot-address.ts`).
 
-**Check connection** on the Overview page tries a TCP connection from the main process to each address on the NetworkTables port (5810) and the SSH port (22). It only says whether something answered; it doesn't speak either protocol yet.
+**Check connection** on the Offload page tries a TCP connection from the main process to each address on the NetworkTables port (5810) and the SSH port (22). It only says whether something answered; it doesn't speak either protocol yet.
 
 ## Local storage layout
 
@@ -78,9 +81,16 @@ Which event, match, or test run a log belongs to is recorded in the index, not i
 
 The folder is self-contained: copying it backs it up or moves it to another computer.
 
+## Pages
+
+- **Signals** (what the app opens on): logs and live signals, plotted.
+- **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
+- **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
+- **Settings:** automatic offload and how far back, the data folder, keyboard shortcuts, and CTRE's licence.
+
 ## Log offload
 
-The Logs page shows offload status and the offloaded files. The work is done in the main process (`src/main/offload-service.ts`, `src/main/offload/`).
+The Offload page shows offload status. The work is done in the main process (`src/main/offload-service.ts`, `src/main/offload/`).
 
 **Finding the robot.** Every 10 seconds the app checks the SSH port at each robot address (the same addresses as Check connection). When the robot appears, and `autoOffload` is on, it offloads. It offloads once per appearance: a robot that stays connected isn't offloaded from again until it goes away and comes back, or someone presses **Offload now**.
 
@@ -110,6 +120,19 @@ Measured in October 2026: against a local OpenSSH server the app's reader runs a
 
 **Resuming.** A file is downloaded to `<name>.part` and renamed when complete. The index notes each download in progress, so if the connection drops, the next run carries on from the end of the `.part` file, provided the file on the robot hasn't changed. A download that started less than a second before the app stopped may not be noted yet; it starts over.
 
+## Importing logs
+
+Logs from anywhere (a teammate's laptop, a USB drive, a download) are filed into the archive on the Storage page: dropped on it, or picked with **Choose files…** or **Choose a folder…** (`src/main/import/`). Data logs, Hoot logs and Driver Station logs are taken, loose, in folders (eight deep), or in zip files, which are read as they are (`zip.ts`: stored and deflated files, zip64 too). Each goes where an offload would have put it, `logs/frc<team>/<day>/<source>/`, by the same day rules, and is recorded in the index (`origin: 'import'`). A file already there at the same size is skipped; a different file of the same name is left alone and reported.
+
+**Which team.** A log rarely says outright, so, in order:
+
+1. **Its path**, from what was dropped on: `frc973`, `roboRIO-973-FRC`, `team973`. The folders above what was dropped aren't looked at; a person's own folders say nothing about the log. `frc2015` to `frc2049` are taken as seasons.
+2. **The log itself:** addresses on a robot's network are `10.TE.AM.x`, and robot code logs its cameras' and the Driver Station's. Team 973's Q39 data log has `10.9.73.11`, `.12`, `.13` and `.23`. The team seen most wins. Data logs and Driver Station logs are searched.
+3. **A Hoot log's CANivore,** if its id was seen in a team's Hoot logs here or in the same import, or **the Hoot log it started with** (a robot's rio and CANivore logs start within a second of each other).
+4. **Otherwise the team given** on the Storage page (Settings' team to start with), and the results say which logs that was.
+
+Each file is copied into `index/importing/` first, since a zip's files can only be read through once, looked at, then moved into place. Driver Station logs don't name a team or an address, so they usually take the team given.
+
 ssh2 has two optional native add-ons (faster ciphers and CPU detection). The build leaves them out (`electron.vite.config.ts`) and ssh2 uses its plain JavaScript code, so there's still nothing native to build for each system.
 
 ## Signals
@@ -122,10 +145,13 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 - **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …), for a new left or right axis, and for the top and bottom bands (only the bands, for text). Clicking a signal adds it to L1.
 - **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
 - **Bands:** text signals (subsystem states) are drawn as bands of labelled spans in the signal's colour, above the plot or below it. Any other signal can go in a band too, to show a number as states: a 0/1 flag as false/true (true darker), or a mode number. A value repeated is one span.
-- **Under the chart:** a list of what's plotted, with each signal's colour, its axis or band (changeable, including to a new axis), and its min, max, and mean over the span shown. Rows can be dragged onto the chart to move them.
+- **Under the chart:** a list of what's plotted, with each signal's colour, its axis or band (changeable, including to a new axis), and its value: the latest while following live, otherwise at the right edge of the span shown. **Show** adds its min, max or mean over the span shown; the choice is kept between visits. Four signals show before the list scrolls. Rows can be dragged onto the chart to move them.
+- **Values in the signal list:** each signal in the tree shows its value too, at the same moment as the list under the chart, a few times a second at most. They're read for just the rows showing (`readValues`). A Hoot signal's shows once it's been exported (plotted), since exporting is slow.
 - **Room:** the sidebar can be hidden to a thin strip, and the log's details at its top folded away to give the signal list more room. Both are kept between visits.
 - **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
 - **Hover:** shows every signal's value at that moment (the last value at or before it).
+- **Pinning a moment:** a click on the chart pins that moment with a dashed line, and its values stay in their own readout at the bottom of the plot while hover reads elsewhere (with how far it is from the pin) and, live, while the chart moves along. Once the moment's out of view, its readout keeps the values last seen. A click elsewhere moves it; its ✕ or Escape lets it go. Clicks and double-clicks are told apart from pointer-ups rather than the browser's click events, which don't fire while the chart redraws under the pointer (live).
+- **Copying as an image:** the copy button (Material's two-sheets icon) puts the chart on the clipboard as a PNG, for pasting into a PR or a message: a caption naming the log and span, the chart (with any pinned readout), and a legend of every signal with its colour and value. It's drawn off screen (`src/renderer/src/chart-image.ts`): the chart's own SVG, with the page's styles copied onto it, on a canvas at twice the size for sharpness, with the caption, readout and legend drawn around it. So nothing on the page moves while it's made, and it's the same however the page is scrolled. The main process only puts it on the clipboard, and only a PNG.
 - **Warnings:** opening a log warns when DogLog's queue filled up (its `QueueRemainingCapacity` reached 0), since DogLog drops values while it's full.
 - **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Clicking a colour in the list under the chart picks another palette colour or any colour; the choice is kept by signal, between visits, so the signal gets it back when added again. Any colour picked is the same in both themes. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
 - **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
@@ -143,7 +169,7 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 
 Each numeric field of a struct, and each element of a numeric array (up to 32), becomes its own signal, keyed by path: `…/pose/translation/x`.
 
-**Time series.** `read(key, { start, end, maxPoints })` gives times in seconds from the log's first value, and values as numbers (booleans are 0 and 1) or strings. It also gives min, max, and mean over every value in the range. Past `maxPoints`, it keeps each stretch's smallest and largest value, so spikes and dips still show. When the log has DataLogManager's `systemTime`, the catalog also gives when the log started by the clock. Live NetworkTables (#93) is to offer the same `catalog()` and `read()`.
+**Time series.** `read(key, { start, end, maxPoints })` gives times in seconds from the log's first value, and values as numbers (booleans are 0 and 1) or strings. It also gives min, max, and mean over every value in the range. Past `maxPoints`, it keeps each stretch's smallest and largest value, so spikes and dips still show. When the log has DataLogManager's `systemTime`, the catalog also gives when the log started by the clock. Live signals (below) offer the same `catalog()` and `read()`.
 
 **Values hold until the next one.** WPILib's log entries, which DogLog writes through, skip a value equal to the last one, so a signal only has a record when it changes. A motor stopped at 0 for five minutes is one record. So:
 
@@ -187,6 +213,23 @@ Hoot logs (`.hoot`) are CTRE's format for what Phoenix devices report: TalonFXs,
 
 A Hoot signal's type and unit come from owlet's export, so the list guesses them from the name until the signal is first read.
 
+## Live signals
+
+The Signals page's list starts with two live sessions: **the robot**, and **a simulator on this computer**. Either shows the signals robot code publishes to NetworkTables as they change, on the same chart as logs. From any page, **Ctrl+K** opens the robot's and **Ctrl+Shift+K** the simulator's, unless changed in Settings. DogLog publishes everything it logs under `/Robot`. `src/main/live/`:
+
+- **Connecting:** the robot's addresses (the same as Check connection) are tried at once on port 5810, and the first in order that answers is used. A simulator is `127.0.0.1`. Until one answers, the page says so and keeps trying every 1.5 s.
+- **The protocol:** NetworkTables 4 (`nt4-client.ts`), over Node's own WebSocket, with a small MessagePack reader (`msgpack.ts`). It asks for every topic and every change (`all`), not only the latest each period, so nothing between two reads is missed. NT4 version 4.0 is used rather than 4.1, which needs WebSocket pings Node can't send; a dead connection is found by time sync replies stopping for 6 s instead.
+- **Time:** seconds since connecting, by the robot's clock (NT4's server time). A value set before connecting starts at 0, since that's what was holding.
+- **What's kept** (`live-source.ts`): the last 10 minutes of every topic, and the value still holding before that. Struct values are decoded with the schemas the robot publishes under `/.schema/`, and struct fields and array elements are signals of their own, as in a data log.
+- **Dropouts:** what was kept stays through a dropout, and the connection comes back on its own. The signal list stays as it was, dimmed and marked stale, with each signal's last value.
+- **A new run:** if the robot's clock went back (robot code restarted), a new run starts on a new timeline. Until it's had 1.5 s to say what it has, the last run's list stands (with the new run's signals added as they come), so the list doesn't empty and refill.
+- **Letting go:** the window asks for the connection's state ten times a second while it's showing a live session. When it stops for 15 s (another page, another session, closed), the connection is closed.
+- **Earlier runs:** a run isn't thrown away when a new one starts or the connection is let go. The last three are kept, until the app closes, as **Earlier live runs** in the log list: any signal in them can be plotted after the fact, as from a log, before the robot's logs are pulled. Coming back to a robot whose clock carried on (it wasn't restarted) picks its run up again.
+
+**Following.** While live, the chart shows the last 30 s up to now and moves along. Scrolling the wheel, or Zoom in and Zoom out, show more or less of the latest and keep following; **Show all** (or double-click) follows everything kept. Shift+scrolling back, or dragging across the chart, holds it still to look at something; **Follow live**, or Shift+scrolling back to now, follows again. New signals appear in the list as robot code first publishes them.
+
+**Testing without a robot.** Team 973's robot code runs in simulation (`./gradlew simulateJavaRelease` in the robot repo, with `ROBOT_SIM_NO_GUI=1` for no window) and publishes the same `/Robot` signals. Its `test/` tools enable it through the simulated Driver Station.
+
 ## Installers
 
 `npm run dist:diagnostics` builds an installer for the computer it's run on into `apps/diagnostics/release`. The Diagnostics CI workflow does this on Windows, Linux and macOS for every change and attaches the three installers to the workflow run:
@@ -203,7 +246,8 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 
 - **The rest of log offload** is [#140](https://github.com/Team973/greybots-apps/issues/140): coprocessor and vision logs, custom paths, more match association, Hoot conversion, and reporting to Preflight (#103). Clearing logs off the robot is #139.
 - **Hoot logs (#142):** the data log reader keeps an object per value, which is fine for single-signal exports (about 136,000 values each) but not for exporting many signals at once. Per-entry typed arrays would fix that.
-- **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal), and live NetworkTables signals (#93) behind the same interface.
+- **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal).
+- **The rest of the live view (#93):** the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables (CTRE devices' own status, the PDH) unless robot code publishes them.
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
 - **Sign-in.** The app has none: it works with no internet and holds nothing private. If #103 syncs through Supabase, it will need the account link Preflight's kiosk mode uses.

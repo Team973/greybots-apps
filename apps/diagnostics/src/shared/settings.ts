@@ -2,6 +2,8 @@
 // lives. Used by both the main process (which stores them) and the window
 // (which edits them), so nothing here may touch Node or the DOM.
 
+import { defaultShortcuts, normalizeShortcuts, shortcutErrors, type Shortcuts } from './shortcuts';
+
 // 'team' works the robot's addresses out from the team number; 'manual' uses
 // the address typed in (a robot on a bench network, a simulator, ...).
 export type AddressMode = 'team' | 'manual';
@@ -25,6 +27,8 @@ export interface Settings {
   // Where logs and results are kept. Empty means the default folder, which
   // only the main process can name (it depends on the operating system).
   dataDirectory: string;
+  // Keyboard shortcuts that work anywhere in the app (shortcuts.ts).
+  shortcuts: Shortcuts;
 }
 
 export const defaultSettings: Settings = {
@@ -35,7 +39,8 @@ export const defaultSettings: Settings = {
   autoOffload: true,
   offloadDays: 7,
   ctreLicenseAccepted: false,
-  dataDirectory: ''
+  dataDirectory: '',
+  shortcuts: { ...defaultShortcuts }
 };
 
 export const maxTeamNumber = 99999;
@@ -62,6 +67,9 @@ export function settingsErrors(settings: Settings): SettingsErrors {
     else if (!/^[A-Za-z0-9.:_-]+$/.test(address)) errors.manualAddress = "That doesn't look like an IP address or hostname.";
   }
 
+  const shortcuts = shortcutErrors(settings.shortcuts);
+  if (shortcuts) errors.shortcuts = shortcuts;
+
   return errors;
 }
 
@@ -83,6 +91,7 @@ export function normalizeSettings(raw: unknown): Settings {
     offloadDays: typeof input.offloadDays === 'number' && Number.isFinite(input.offloadDays)
       ? Math.trunc(input.offloadDays)
       : defaultSettings.offloadDays,
-    dataDirectory: typeof input.dataDirectory === 'string' ? input.dataDirectory.trim() : defaultSettings.dataDirectory
+    dataDirectory: typeof input.dataDirectory === 'string' ? input.dataDirectory.trim() : defaultSettings.dataDirectory,
+    shortcuts: normalizeShortcuts(input.shortcuts)
   };
 }

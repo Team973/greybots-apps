@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import type { SignalSeries } from '@shared/signals';
+import type { ChartSnapshot } from '@/chart-image';
 
 export interface ChartLine {
   key: string;
@@ -31,8 +32,12 @@ const props = defineProps<{
   height: number;
 }>();
 
+// How a zoom came about: the wheel (zooming), Shift+wheel (panning), a drag
+// across the plot, or a double-click (everything).
+export type ZoomGesture = 'wheel' | 'pan' | 'select' | 'all';
+
 const emit = defineEmits<{
-  zoom: [view: [number, number]];
+  zoom: [view: [number, number], gesture: ZoomGesture];
   // The plot's width in pixels, for how many points are worth reading.
   width: [pixels: number];
 }>();
@@ -213,10 +218,9 @@ function localX(event: PointerEvent | WheelEvent | MouseEvent): number {
   return event.clientX - (box.value?.getBoundingClientRect().left ?? 0);
 }
 
-const readout = computed(() => {
-  if (hoverX.value === null || dragFrom.value !== null) return null;
-  const t = timeAt(hoverX.value);
-  const rows = props.lines
+// Every signal's value at time t, from what's been read (the span shown).
+function rowsAt(t: number) {
+  return props.lines
     .filter((line) => line.series)
     .map((line) => {
       const at = valueAt(line.series!, t);
@@ -224,9 +228,78 @@ const readout = computed(() => {
       const y = at && scale && line.axis !== 'lanes' ? scale.y((line.series!.values as Float64Array)[at.index]) : null;
       return { key: line.key, label: line.label, color: line.color, value: at ? formatValue(line, at.index) : '—', y };
     });
-  const left = hoverX.value + 14 + 260 > width.value ? hoverX.value - 14 - 260 : hoverX.value + 14;
-  return { t, rows, left: Math.max(0, left) };
+}
+
+const tooltipWidth = 260;
+// Beside x, on whichever side there's room.
+const besideX = (px: number) => Math.max(0, px + 14 + tooltipWidth > width.value ? px - 14 - tooltipWidth : px + 14);
+
+const readout = computed(() => {
+  if (hoverX.value === null || dragFrom.value !== null) return null;
+  const t = timeAt(hoverX.value);
+  return { t, rows: rowsAt(t), left: besideX(hoverX.value) };
 });
+
+// A click pins a moment: its values stay in their own readout while the
+// pointer reads elsewhere (and, live, while the chart moves along). Once
+// the moment is out of the span shown, its values are as they were last
+// seen. A click elsewhere moves it; its ✕ or Escape lets it go.
+const pinned = ref<{ t: number; rows: ReturnType<typeof rowsAt> } | null>(null);
+const pinInView = computed(() => !!pinned.value && pinned.value.t >= props.view[0] && pinned.value.t <= props.view[1]);
+watch([() => props.lines, () => props.view], () => {
+  if (pinned.value && pinInView.value) pinned.value = { t: pinned.value.t, rows: rowsAt(pinned.value.t) };
+});
+const pinReadout = computed(() => {
+  if (!pinned.value) return null;
+  const px = pinInView.value ? x(pinned.value.t) : null;
+  return { ...pinned.value, x: px, left: px === null ? plot.value.left : besideX(px) };
+});
+
+// Clicks and double-clicks are told apart here from pointer-ups, not by
+// the browser's click events: while live, the chart redraws under the
+// pointer, and the browser doesn't count a press and release on a redrawn
+// element as a click. A double-click is two clicks first, so it puts the
+// pin back where it was before them.
+const doubleClickMs = 500;
+let lastClick: { x: number; at: number; pinBefore: typeof pinned.value } | null = null;
+function onClick(px: number) {
+  const now = Date.now();
+  if (lastClick && now - lastClick.at < doubleClickMs && Math.abs(px - lastClick.x) < 6) {
+    pinned.value = lastClick.pinBefore;
+    lastClick = null;
+    emit('zoom', [props.full[0], props.full[1]], 'all');
+    return;
+  }
+  lastClick = { x: px, at: now, pinBefore: pinned.value };
+  if (px >= plot.value.left && px <= plot.value.right) pinned.value = { t: timeAt(px), rows: rowsAt(timeAt(px)) };
+}
+
+function onKey(event: KeyboardEvent) {
+  if (event.key === 'Escape') pinned.value = null;
+}
+onMounted(() => window.addEventListener('keydown', onKey));
+onUnmounted(() => window.removeEventListener('keydown', onKey));
+
+// What a copy of the chart as an image needs (chart-image.ts).
+const svgElement = ref<SVGSVGElement | null>(null);
+function snapshot(): ChartSnapshot | null {
+  if (!svgElement.value) return null;
+  const pin = pinReadout.value;
+  return {
+    svg: svgElement.value,
+    pinned: pin && pin.rows.length
+      ? {
+          title: `Pinned at ${pin.t.toFixed(3)} s${pin.x === null ? ', out of view' : ''}`,
+          left: pin.left,
+          bottom: props.height - plot.value.bottom + 4,
+          rows: pin.rows.map((row) => ({ color: row.color, label: row.label, value: row.value }))
+        }
+      : null
+  };
+}
+defineExpose({ snapshot });
+
+const formatDelta = (seconds: number) => `${seconds >= 0 ? '+' : '−'}${Math.abs(seconds).toFixed(3)} s`;
 
 function clampView(start: number, end: number): [number, number] {
   const [fullStart, fullEnd] = props.full;
@@ -255,8 +328,11 @@ function onPointerUp(event: PointerEvent) {
   const from = dragFrom.value;
   const to = Math.min(plot.value.right, Math.max(plot.value.left, localX(event)));
   dragFrom.value = null;
-  if (Math.abs(to - from) < 5) return;
-  emit('zoom', clampView(timeAt(Math.min(from, to)), timeAt(Math.max(from, to))));
+  if (Math.abs(to - from) < 5) {
+    onClick(from);
+    return;
+  }
+  emit('zoom', clampView(timeAt(Math.min(from, to)), timeAt(Math.max(from, to))), 'select');
 }
 
 const selection = computed(() => {
@@ -270,26 +346,23 @@ function onWheel(event: WheelEvent) {
   const pan = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
   if (pan) {
     const delta = (event.shiftKey ? event.deltaY : event.deltaX) / plot.value.width * span;
-    emit('zoom', clampView(start + delta, end + delta));
+    emit('zoom', clampView(start + delta, end + delta), 'pan');
     return;
   }
   const anchor = timeAt(Math.min(plot.value.right, Math.max(plot.value.left, localX(event))));
   const factor = Math.pow(1.0015, event.deltaY);
   const newSpan = span * factor;
   const ratio = (anchor - start) / span;
-  emit('zoom', clampView(anchor - ratio * newSpan, anchor - ratio * newSpan + newSpan));
+  emit('zoom', clampView(anchor - ratio * newSpan, anchor - ratio * newSpan + newSpan), 'wheel');
 }
 
-function onDoubleClick() {
-  emit('zoom', [props.full[0], props.full[1]]);
-}
 </script>
 
 <template>
   <div ref="box" class="plot-chart" :style="{ height: `${height}px` }">
-    <svg :width="width" :height="height" role="img" aria-label="Signals over time"
+    <svg ref="svgElement" :width="width" :height="height" role="img" aria-label="Signals over time"
       @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp"
-      @pointerleave="hoverX = dragFrom === null ? null : hoverX" @wheel.prevent="onWheel" @dblclick="onDoubleClick">
+      @pointerleave="hoverX = dragFrom === null ? null : hoverX" @wheel.prevent="onWheel">
       <defs>
         <clipPath id="plot-area">
           <rect :x="plot.left" :y="0" :width="plot.width" :height="height" />
@@ -329,6 +402,9 @@ function onDoubleClick() {
         <path v-for="line in numeric" :key="line.key" class="line" :d="linePath(line)" :stroke="line.color" />
       </g>
 
+      <line v-if="pinReadout && pinReadout.x !== null" class="pin-line" :x1="pinReadout.x" :x2="pinReadout.x"
+        :y1="plot.top - (topLanes.length ? topLanes.length * laneHeight + 4 : 0)" :y2="plot.bottom + bottomLanes.length * laneHeight" />
+
       <rect v-if="selection" class="selection" :x="selection.x" :y="plot.top" :width="selection.width" :height="plot.height" />
 
       <g v-if="readout" class="hover">
@@ -339,8 +415,24 @@ function onDoubleClick() {
       </g>
     </svg>
 
+    <div v-if="pinReadout && pinReadout.rows.length" class="tooltip pinned"
+      :style="{ left: `${pinReadout.left}px`, bottom: `${height - plot.bottom + 4}px` }">
+      <div class="tooltip-time">
+        <span>Pinned at {{ pinReadout.t.toFixed(3) }} s<template v-if="pinReadout.x === null">, out of view</template></span>
+        <button class="unpin" aria-label="Unpin" title="Unpin (Esc)" @pointerdown.stop @click="pinned = null">✕</button>
+      </div>
+      <div v-for="row in pinReadout.rows" :key="row.key" class="tooltip-row">
+        <span class="swatch" :style="{ background: row.color }"></span>
+        <span class="tooltip-label">{{ row.label }}</span>
+        <span class="tooltip-value">{{ row.value }}</span>
+      </div>
+    </div>
+
     <div v-if="readout && readout.rows.length" class="tooltip" :style="{ left: `${readout.left}px`, top: `${plot.top}px` }">
-      <div class="tooltip-time">{{ readout.t.toFixed(3) }} s</div>
+      <div class="tooltip-time">
+        {{ readout.t.toFixed(3) }} s
+        <span v-if="pinned" class="delta">{{ formatDelta(readout.t - pinned.t) }} from the pin</span>
+      </div>
       <div v-for="row in readout.rows" :key="row.key" class="tooltip-row">
         <span class="swatch" :style="{ background: row.color }"></span>
         <span class="tooltip-label">{{ row.label }}</span>
@@ -424,6 +516,7 @@ svg {
 .tooltip {
   position: absolute;
   width: 260px;
+  z-index: 1;
   box-sizing: border-box;
   pointer-events: none;
   padding: 6px 8px;
@@ -434,8 +527,37 @@ svg {
 }
 
 .tooltip-time {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   opacity: 0.7;
   margin-bottom: 4px;
+}
+
+/* Only its ✕ takes the pointer: the chart under it still zooms and reads. */
+.tooltip.pinned {
+  border: 1px solid rgba(127, 127, 127, 0.5);
+}
+
+.tooltip.pinned .tooltip-time {
+  opacity: 0.85;
+  font-weight: 600;
+}
+
+.unpin {
+  pointer-events: auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.pin-line {
+  stroke: currentColor;
+  stroke-opacity: 0.7;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
 }
 
 .tooltip-row {

@@ -50,6 +50,23 @@ export interface SignalSeries {
   stats: { min: number; max: number; mean: number } | null;
 }
 
+// One value: a number (booleans as 0 and 1) or a string. Null when there's
+// none yet.
+export type SignalValue = number | string | null;
+
+// The value holding at time t: the last at or before it.
+export function valueAtTime(series: SignalSeries, t: number): SignalValue {
+  const { times } = series;
+  let low = 0;
+  let high = times.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (times[mid] <= t) low = mid + 1;
+    else high = mid;
+  }
+  return low === 0 ? null : series.values[low - 1];
+}
+
 export interface SignalRange {
   // Seconds, as in SignalSeries.times. Leave out for the start or end.
   start?: number;

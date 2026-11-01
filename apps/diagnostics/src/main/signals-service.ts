@@ -5,11 +5,23 @@ import { join } from 'node:path';
 
 import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogStatus, type HootProgress, type OwletStatus } from '@shared/hoot';
 import type { HootSessionStatus, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
+import { isLiveId } from '@shared/live';
 import { parseLogName, type MatchInfo } from '@shared/offload';
 import type { Settings } from '@shared/settings';
-import { groupSignals, splitName, unitFor, type SignalInfo, type SignalKind, type SignalRange, type SignalSeries } from '@shared/signals';
+import {
+  groupSignals,
+  splitName,
+  unitFor,
+  valueAtTime,
+  type SignalInfo,
+  type SignalKind,
+  type SignalRange,
+  type SignalSeries,
+  type SignalValue
+} from '@shared/signals';
 import { exportedName, HootLog } from './hoot/hoot-log';
 import { hootCompliancy, Owlet } from './hoot/owlet';
+import { openLive, readLive } from './live-service';
 import { loadIndex } from './offload/offload-index';
 import { loadSettings, storeSettings } from './settings-store';
 import { LogSignalSource } from './signals/log-source';
@@ -444,6 +456,7 @@ function dogLogWarnings(source: LogSignalSource): string[] {
 }
 
 export async function openSignalLog(settings: Settings, id: string): Promise<SignalLogSummary> {
+  if (isLiveId(id)) return openLive(id);
   const session = await openSession(settings, id);
   const signals = [
     ...(session.dataLog?.catalog() ?? []),
@@ -477,6 +490,7 @@ export async function hootStatus(settings: Settings, id: string): Promise<HootSe
 }
 
 export async function readSignal(settings: Settings, id: string, key: string, range: SignalRange): Promise<SignalSeries | null> {
+  if (isLiveId(id)) return readLive(id, key, range);
   const session = await openSession(settings, id);
   const placement = session.placements.find((p) => key.startsWith(`${p.hoot.label}/`));
   if (!placement) return session.dataLog?.read(key, range) ?? null;
@@ -502,4 +516,27 @@ export async function readSignal(settings: Settings, id: string, key: string, ra
     times: series.times.map((t) => t + offset),
     unit: source.catalog().find((s) => s.key === entry)?.unit ?? ''
   };
+}
+
+// Many signals' values at one time, for the signal list. Hoot signals not
+// exported yet are left out (null): exporting is slow, and the list shows
+// hundreds of signals.
+export const maxValueKeys = 500;
+
+export async function readValues(settings: Settings, id: string, keys: string[], time: number): Promise<Record<string, SignalValue>> {
+  const session = isLiveId(id) ? null : await openSession(settings, id);
+  const out: Record<string, SignalValue> = {};
+  for (const key of keys.slice(0, maxValueKeys)) {
+    const placement = session?.placements.find((p) => key.startsWith(`${p.hoot.label}/`));
+    if (placement) {
+      const signal = placement.hoot.signals.find((s) => s.name === key.slice(placement.hoot.label.length + 1));
+      if (!signal || !placement.hoot.isExported(signal.id)) {
+        out[key] = null;
+        continue;
+      }
+    }
+    const series = await readSignal(settings, id, key, { start: time, end: time }).catch(() => null);
+    out[key] = series ? valueAtTime(series, time) : null;
+  }
+  return out;
 }

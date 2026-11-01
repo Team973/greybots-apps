@@ -1,49 +1,48 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import NumberInput from '@greybots/common/components/Number.vue';
 import Switch from '@greybots/common/components/Switch.vue';
-import TextInput from '@greybots/common/components/TextInput.vue';
 
-import { robotAddresses } from '@shared/robot-address';
 import { ctreLicenseUrl, type OwletStatus } from '@shared/hoot';
-import { defaultSettings, settingsErrors, type Settings, type SettingsErrors } from '@shared/settings';
+import { shortcutActions, shortcutFromPress, type ShortcutAction } from '@shared/shortcuts';
+import SaveStatus from '@/components/SaveStatus.vue';
+import { useSettingsDraft } from '@/settings-draft';
 import { useSettingsStore } from '@/stores/settings-store';
 
+// The robot connection is set on the Offload page; the rest here.
 const store = useSettingsStore();
-
-// What's on screen, which only becomes the app's settings on Save.
-const draft = ref<Settings>({ ...defaultSettings });
-const errors = ref<SettingsErrors>({});
-const saved = ref(false);
+const { draft, errors, saveState, edit, typed } = useSettingsDraft();
 const defaultDirectory = ref('');
-
-const manual = computed(() => draft.value.addressMode === 'manual');
-const addresses = computed(() => robotAddresses(draft.value));
-const changed = computed(() => JSON.stringify(draft.value) !== JSON.stringify(store.settings));
-
-function edit(change: Partial<Settings>) {
-  draft.value = { ...draft.value, ...change };
-  saved.value = false;
-}
 
 async function chooseFolder() {
   const directory = await window.diagnostics.chooseDataDirectory();
   if (directory) edit({ dataDirectory: directory });
 }
 
-async function save() {
-  // Checked here first so the message is instant; the main process checks
-  // again, since it's the one that keeps them.
-  errors.value = settingsErrors(draft.value);
-  if (Object.keys(errors.value).length > 0) return;
+// Shortcuts: click one, then press the keys. Escape keeps it as it was;
+// Backspace or Delete turns it off.
+const recording = ref<ShortcutAction | null>(null);
 
-  errors.value = await store.save(draft.value);
-  if (Object.keys(errors.value).length > 0) return;
+function recordKey(action: ShortcutAction, event: KeyboardEvent) {
+  if (recording.value !== action) return;
+  // The keys are for this, not for the shortcuts themselves (App.vue).
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.key === 'Escape') {
+    recording.value = null;
+    return;
+  }
+  const shortcut = event.key === 'Backspace' || event.key === 'Delete' ? '' : shortcutFromPress(event);
+  // A modifier on its own, or a plain key: keep waiting.
+  if (shortcut === null) return;
+  recording.value = null;
+  setShortcut(action, shortcut);
+}
 
-  draft.value = { ...store.settings };
-  saved.value = true;
+function setShortcut(action: ShortcutAction, shortcut: string) {
+  edit({ shortcuts: { ...draft.value.shortcuts, [action]: shortcut } });
 }
 
 // CTRE's owlet, which reads Hoot logs.
@@ -66,8 +65,6 @@ const updateOwlet = () => owletAction(() => window.diagnostics.downloadOwlet());
 
 onMounted(async () => {
   owlet.value = await window.diagnostics.getOwletStatus();
-  await store.load();
-  draft.value = { ...store.settings };
   // The default folder's path depends on the computer, so the main process says.
   const storage = await window.diagnostics.getStorageInfo();
   if (storage.isDefault) defaultDirectory.value = storage.directory;
@@ -75,43 +72,16 @@ onMounted(async () => {
 </script>
 
 <template>
+  <SaveStatus id="settings-saved" :state="saveState" />
+
   <section class="card">
-    <h2>Robot connection</h2>
-
-    <div class="field-row">
-      <NumberInput id="team-number" :model-value="draft.teamNumber" label="Team number"
-        @update:model-value="edit({ teamNumber: $event })"></NumberInput>
-    </div>
-    <p v-if="errors.teamNumber" class="error-text">{{ errors.teamNumber }}</p>
-
-    <div class="field-row">
-      <div>
-        Use a set address
-        <p class="hint">For a robot that isn't at its usual team address, or a simulator.</p>
-      </div>
-      <Switch id="manual-address-switch" :model-value="manual"
-        @update:model-value="edit({ addressMode: $event ? 'manual' : 'team' })"></Switch>
-    </div>
-
-    <template v-if="manual">
-      <TextInput id="manual-address" :model-value="draft.manualAddress" label="IP address or hostname"
-        @update:model-value="edit({ manualAddress: $event })"></TextInput>
-      <p v-if="errors.manualAddress" class="error-text">{{ errors.manualAddress }}</p>
-    </template>
-
-    <div class="field-row">
-      <div>
-        Find the robot by mDNS
-        <p class="hint">Looks for the robot by its name on the network, as well as its address.</p>
-      </div>
-      <Switch id="mdns-switch" :model-value="draft.mdnsEnabled"
-        @update:model-value="edit({ mdnsEnabled: $event })"></Switch>
-    </div>
+    <h2>Offload</h2>
+    <p class="hint">How to reach the robot is set on the <RouterLink to="/offload">Offload</RouterLink> page.</p>
 
     <div class="field-row">
       <div>
         Offload logs automatically
-        <p class="hint">Pulls the robot's logs as soon as it connects. They can always be pulled from the Logs page.</p>
+        <p class="hint">Pulls the robot's logs as soon as it connects. They can always be pulled from the Offload page.</p>
       </div>
       <Switch id="auto-offload-switch" :model-value="draft.autoOffload"
         @update:model-value="edit({ autoOffload: $event })"></Switch>
@@ -123,14 +93,9 @@ onMounted(async () => {
         <p class="hint">In days. Older logs stay on the robot. 0 pulls every log.</p>
       </div>
       <NumberInput id="offload-days" :model-value="draft.offloadDays" label="Days"
-        @update:model-value="edit({ offloadDays: $event })"></NumberInput>
+        @update:model-value="typed({ offloadDays: $event })"></NumberInput>
     </div>
     <p v-if="errors.offloadDays" class="error-text">{{ errors.offloadDays }}</p>
-
-    <p class="hint">
-      With these settings the robot is looked for at:
-      <span v-for="(address, i) in addresses" :key="address.host" class="path">{{ i > 0 ? ', ' : ' ' }}{{ address.host }}</span>
-    </p>
   </section>
 
   <section class="card">
@@ -142,6 +107,29 @@ onMounted(async () => {
       <md-outlined-button v-if="draft.dataDirectory" @click="edit({ dataDirectory: '' })">Use the default</md-outlined-button>
     </div>
     <p class="hint">Changing the folder doesn't move what's already in the old one.</p>
+  </section>
+
+  <section class="card" id="shortcuts-section">
+    <h2>Keyboard shortcuts</h2>
+    <p class="hint">
+      These work from any page. Click one and press the keys, with Ctrl, Alt or Cmd. Escape keeps it as it was;
+      Backspace turns it off.
+    </p>
+    <div v-for="action in shortcutActions" :key="action.id" class="field-row">
+      <span>{{ action.label }}</span>
+      <span class="shortcut-cell">
+        <button :id="`shortcut-${action.id}`" class="shortcut-key" :class="{ recording: recording === action.id }"
+          :aria-label="`Shortcut to ${action.label.toLowerCase()}`"
+          @click="recording = recording === action.id ? null : action.id" @blur="recording = null"
+          @keydown="recordKey(action.id, $event)">
+          {{ recording === action.id ? 'Press keys…' : draft.shortcuts[action.id] || 'Off' }}
+        </button>
+        <button v-if="draft.shortcuts[action.id] !== action.default" class="reset" @click="setShortcut(action.id, action.default)">
+          Reset to {{ action.default }}
+        </button>
+      </span>
+    </div>
+    <p v-if="errors.shortcuts" class="error-text">{{ errors.shortcuts }}</p>
   </section>
 
   <section class="card" id="ctre-section">
@@ -174,14 +162,43 @@ onMounted(async () => {
       </template>
     </template>
   </section>
-
-  <div class="card-actions">
-    <md-filled-button id="save-settings" :disabled="!changed" @click="save">Save</md-filled-button>
-    <span v-if="saved" id="settings-saved" class="success-text">Saved.</span>
-  </div>
 </template>
 
 <style scoped>
+.shortcut-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shortcut-key {
+  min-width: 120px;
+  padding: 6px 10px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 6px;
+  background: var(--tile-background-color);
+  color: inherit;
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  cursor: pointer;
+}
+
+.shortcut-key.recording {
+  border-color: #2a78d6;
+  outline: 2px solid color-mix(in srgb, #2a78d6 40%, transparent);
+}
+
+.reset {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
 .owlet-list {
   margin: 0;
   padding-left: 20px;
