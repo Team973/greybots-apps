@@ -58,14 +58,15 @@ export class LogSignalSource {
   private signals: SignalInfo[] = [];
 
   // The first and last record's times, in seconds since the robot program
-  // started. Series times are counted from `firstTime`.
+  // started (for a Hoot log, since it started). Series times are counted
+  // from `firstTime`, unless the constructor was given an origin.
   readonly firstTime: number;
   readonly lastTime: number;
   // When `firstTime` was, by the clock, if the log says (an ISO time).
   readonly startedAt: string | null;
   readonly truncated: boolean;
 
-  constructor(private bytes: Uint8Array) {
+  constructor(private bytes: Uint8Array, origin?: number) {
     this.log = parseLog(bytes);
     this.truncated = this.log.truncated;
 
@@ -76,7 +77,7 @@ export class LogSignalSource {
       first = Math.min(first, records[0].timestamp);
       last = Math.max(last, records[records.length - 1].timestamp);
     }
-    this.firstTime = Number.isFinite(first) ? first / 1e6 : 0;
+    this.firstTime = origin ?? (Number.isFinite(first) ? first / 1e6 : 0);
     this.lastTime = Number.isFinite(last) ? last / 1e6 : 0;
 
     // Struct schemas first: the catalog needs them to see inside structs.

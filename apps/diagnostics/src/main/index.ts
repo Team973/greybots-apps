@@ -6,7 +6,16 @@ import { normalizeSettings, settingsErrors } from '@shared/settings';
 import { checkConnection } from './connection-check';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { loadSettings, storeSettings } from './settings-store';
-import { openSignalLog, readSignal, signalLogs } from './signals-service';
+import {
+  acceptCtreLicense,
+  downloadOwlet,
+  hootStatus,
+  openSignalLog,
+  owletStatus,
+  readSignal,
+  signalLogs,
+  watchOwlet
+} from './signals-service';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
 
 let mainWindow: BrowserWindow | null = null;
@@ -57,7 +66,9 @@ const handlers: DiagnosticsApi = {
     return loadSettings();
   },
   async saveSettings(settings) {
-    const next = normalizeSettings(settings);
+    // Accepting CTRE's licence is its own step (acceptCtreLicense), not
+    // something a Save from an older copy of the settings can undo.
+    const next = { ...normalizeSettings(settings), ctreLicenseAccepted: (await loadSettings()).ctreLicenseAccepted };
     const errors = settingsErrors(next);
     if (Object.keys(errors).length > 0) return { settings: await loadSettings(), errors };
 
@@ -94,11 +105,23 @@ const handlers: DiagnosticsApi = {
   async getSignalLogs() {
     return signalLogs(await loadSettings());
   },
-  async openSignalLog(localPath) {
-    return openSignalLog(await loadSettings(), localPath);
+  async openSignalLog(id) {
+    return openSignalLog(await loadSettings(), id);
   },
-  async readSignal(localPath, key, range) {
-    return readSignal(await loadSettings(), localPath, key, range);
+  async readSignal(id, key, range) {
+    return readSignal(await loadSettings(), id, key, range);
+  },
+  async getHootStatus(id) {
+    return hootStatus(await loadSettings(), id);
+  },
+  async getOwletStatus() {
+    return owletStatus();
+  },
+  async acceptCtreLicense() {
+    return acceptCtreLicense();
+  },
+  async downloadOwlet() {
+    return downloadOwlet();
   }
 };
 
@@ -124,6 +147,7 @@ if (!app.requestSingleInstanceLock()) {
 
     createWindow();
     watchForRobot();
+    watchOwlet();
 
     // macOS: clicking the dock icon with no windows open makes one.
     app.on('activate', () => {

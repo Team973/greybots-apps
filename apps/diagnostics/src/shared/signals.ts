@@ -22,7 +22,8 @@ export interface SignalInfo {
   kind: SignalKind;
   // '' when not known.
   unit: string;
-  // How many values it has.
+  // How many values it has; -1 when that isn't known until it's read
+  // (Hoot logs).
   count: number;
   // Who logged it, from the entry's metadata: 'DogLog', 'NT', ... or ''.
   source: string;
@@ -37,6 +38,8 @@ export interface SignalSeries {
   kind: SignalKind;
   times: Float64Array;
   values: Float64Array | string[];
+  // The unit, when the source only knows it once read (Hoot logs). '' if none.
+  unit?: string;
   // Whether values were dropped to fit `maxPoints` (the smallest and
   // largest of each stretch are kept, so peaks still show).
   downsampled: boolean;
@@ -78,6 +81,11 @@ const unitNames: Record<string, string> = {
   volt: 'V',
   volts: 'V',
   celsius: '°C',
+  '℃': '°C',
+  // CTRE owlet's names.
+  'rotations per second': 'rot/s',
+  'rotations per second²': 'rot/s²',
+  fractional: '',
   microsecond: 'µs',
   millisecond: 'ms',
   second: 's',
@@ -114,11 +122,11 @@ const unitSuffixes: [RegExp, string][] = [
   [/Percent$/, '%']
 ];
 
-// A unit from the entry's metadata (DogLog's `unit`, NetworkTables'
-// `properties.unit`), or failing that, from how the name ends.
+// A unit from the entry's metadata (DogLog's `unit`, CTRE owlet's `units`,
+// NetworkTables' `properties.unit`), or failing that, from how the name ends.
 export function unitFor(entryName: string, metadata: Record<string, unknown>): string {
   const properties = metadata.properties as Record<string, unknown> | undefined;
-  const declared = metadata.unit ?? properties?.unit;
+  const declared = metadata.unit ?? metadata.units ?? properties?.unit;
   if (typeof declared === 'string' && declared !== '') return unitNames[declared.toLowerCase()] ?? declared;
 
   const last = entryName.split('/').pop() ?? '';

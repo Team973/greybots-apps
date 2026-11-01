@@ -13,28 +13,50 @@ export interface PlotAxis {
   side: AxisSide;
 }
 
+// A slot in the palette (a step per theme), or a colour the person chose
+// ('#rrggbb', the same in both themes).
+export type TraceColor = number | string;
+
+// Text signals' bands go above the plot or below it.
+export type BandSide = 'top' | 'bottom';
+
 export interface PlotTrace {
   key: string;
   kind: SignalKind;
-  // A numeric axis's id, or 'lanes' for text signals (drawn as bands of
-  // labelled spans above the plot).
+  // A numeric axis's id, or 'lanes' for a band of labelled spans above or
+  // below the plot: always for text signals, and for numbers that are
+  // really states (a 0/1 flag, a mode number) when the person says so.
   axis: string;
-  // A slot in the palette. It stays with the signal while it's on the chart.
-  color: number;
+  // In a band: which side of the plot it's on.
+  band: BandSide;
+  // It stays with the signal while it's on the chart.
+  color: TraceColor;
 }
 
-// Where a signal goes: an axis, or a new one on one side.
-export type PlotTarget = { axis: string } | { newAxis: AxisSide };
+// Where a signal goes: an axis, a new one on one side, or a band.
+export type PlotTarget = { axis: string } | { newAxis: AxisSide } | { band: BandSide };
 
 // The palette has this many colours; more signals than that can't be told apart.
 export const maxTraces = 8;
 
 let nextAxisId = 1;
 
+// Colours the person picked, by signal, kept between visits: a signal
+// added again gets its colour back.
+const colorsKey = 'signals.colors';
+function loadColors(): Record<string, TraceColor> {
+  try {
+    return JSON.parse(localStorage.getItem(colorsKey) ?? '{}') as Record<string, TraceColor>;
+  } catch {
+    return {};
+  }
+}
+
 export const usePlotStore = defineStore('plot', {
   state: () => ({
     axes: [] as PlotAxis[],
     traces: [] as PlotTrace[],
+    colorChoices: loadColors(),
     // Seconds, as in signal series. Null shows the whole log.
     view: null as [number, number] | null
   }),
@@ -61,23 +83,34 @@ export const usePlotStore = defineStore('plot', {
       return this.axes.find((a) => a.side === 'left')?.id ?? this.addAxis('left');
     },
     // Adds a signal, or moves it if it's already on. Text signals always go
-    // to the lanes. Resolves to why it couldn't, or ''.
+    // to a band (the top one unless it says); others go to a band only when
+    // the target is one. Returns why it couldn't, or ''.
     place(key: string, kind: SignalKind, target?: PlotTarget): string {
       if (kind === 'other') return "This signal can't be plotted: it's a group of values. Plot its fields instead.";
       const existing = this.traces.find((t) => t.key === key);
-      if (kind === 'string') {
-        if (!existing) {
-          if (this.traces.length >= maxTraces) return `At most ${maxTraces} signals fit on one chart.`;
-          this.traces.push({ key, kind, axis: 'lanes', color: this.freeColor() });
-        }
+      if (!existing && this.traces.length >= maxTraces) return `At most ${maxTraces} signals fit on one chart.`;
+      if (kind === 'string' || (target && 'band' in target)) {
+        const band = target && 'band' in target ? target.band : existing?.band ?? 'top';
+        if (existing) Object.assign(existing, { axis: 'lanes', band });
+        else this.traces.push({ key, kind, axis: 'lanes', band, color: this.colorFor(key) });
+        this.prune();
         return '';
       }
-      if (!existing && this.traces.length >= maxTraces) return `At most ${maxTraces} signals fit on one chart.`;
       const axis = this.resolve(target);
       if (existing) existing.axis = axis;
-      else this.traces.push({ key, kind, axis, color: this.freeColor() });
+      else this.traces.push({ key, kind, axis, band: 'top', color: this.colorFor(key) });
       this.prune();
       return '';
+    },
+    // A signal's type, once read, when it wasn't known before (Hoot logs):
+    // text goes to the bands, numbers to an axis.
+    setKind(key: string, kind: SignalKind) {
+      const trace = this.traces.find((t) => t.key === key);
+      if (!trace || kind === 'other') return;
+      trace.kind = kind;
+      if (kind === 'string') trace.axis = 'lanes';
+      else if (trace.axis === 'lanes') trace.axis = this.resolve(undefined);
+      this.prune();
     },
     remove(key: string) {
       this.traces = this.traces.filter((t) => t.key !== key);
@@ -91,9 +124,17 @@ export const usePlotStore = defineStore('plot', {
     prune() {
       this.axes = this.axes.filter((a) => this.traces.some((t) => t.axis === a.id));
     },
-    freeColor(): number {
+    // The colour the person picked for this signal, or the first free slot.
+    colorFor(key: string): TraceColor {
+      if (this.colorChoices[key] !== undefined) return this.colorChoices[key];
       for (let slot = 0; slot < maxTraces; slot++) if (!this.traces.some((t) => t.color === slot)) return slot;
       return 0;
+    },
+    setColor(key: string, color: TraceColor) {
+      const trace = this.traces.find((t) => t.key === key);
+      if (trace) trace.color = color;
+      this.colorChoices[key] = color;
+      localStorage.setItem(colorsKey, JSON.stringify(this.colorChoices));
     },
     setView(view: [number, number] | null) {
       this.view = view;

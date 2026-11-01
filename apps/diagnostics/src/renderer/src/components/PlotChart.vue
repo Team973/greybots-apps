@@ -8,8 +8,11 @@ export interface ChartLine {
   label: string;
   unit: string;
   color: string;
-  // A numeric axis's id, or 'lanes' for a text signal.
+  // A numeric axis's id, or 'lanes' for a band (text, or numbers shown as
+  // states).
   axis: string;
+  // In a band: above the plot or below it.
+  band: 'top' | 'bottom';
   series: SignalSeries | null;
 }
 
@@ -50,13 +53,15 @@ onUnmounted(() => observer?.disconnect());
 const leftAxes = computed(() => props.axes.filter((a) => a.side === 'left'));
 const rightAxes = computed(() => props.axes.filter((a) => a.side === 'right'));
 const lanes = computed(() => props.lines.filter((l) => l.axis === 'lanes'));
+const topLanes = computed(() => lanes.value.filter((l) => l.band !== 'bottom'));
+const bottomLanes = computed(() => lanes.value.filter((l) => l.band === 'bottom'));
 const numeric = computed(() => props.lines.filter((l) => l.axis !== 'lanes'));
 
 const plot = computed(() => {
   const left = 12 + Math.max(1, leftAxes.value.length) * axisWidth;
   const right = width.value - 12 - rightAxes.value.length * axisWidth;
-  const top = 26 + lanes.value.length * laneHeight;
-  const bottom = props.height - 28;
+  const top = 26 + topLanes.value.length * laneHeight;
+  const bottom = props.height - 28 - bottomLanes.value.length * laneHeight;
   return { left, right, top, bottom, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
 });
 watch(() => plot.value.width, (w) => emit('width', w), { immediate: true });
@@ -147,19 +152,32 @@ function linePath(line: ChartLine): string {
   return `${d}H${x(Math.max(props.full[1], times[times.length - 1])).toFixed(1)}`;
 }
 
-// Text signals: one band each, a span per value, labelled where there's room.
-function laneSpans(line: ChartLine, row: number) {
+// Where a band's row is: the top ones above the plot, the bottom ones
+// between it and the time labels.
+function laneY(line: ChartLine): number {
+  if (line.band === 'bottom') return plot.value.bottom + 4 + bottomLanes.value.indexOf(line) * laneHeight;
+  return 22 + topLanes.value.indexOf(line) * laneHeight;
+}
+
+// Bands: one each in the signal's colour, a span per value (alternately
+// lighter and darker; for true/false, true is the darker), labelled where
+// there's room. A value repeated is one span.
+function laneSpans(line: ChartLine) {
   if (!line.series) return [];
   const { times } = line.series;
-  const values = line.series.values as string[];
-  const y = 22 + row * laneHeight;
+  const y = laneY(line);
   const spans = [];
+  let shade = 0;
   for (let i = 0; i < times.length; i++) {
+    const text = formatValue(line, i);
+    let next = i + 1;
+    while (next < times.length && formatValue(line, next) === text) next++;
     const from = Math.max(plot.value.left, x(times[i]));
-    const to = Math.min(plot.value.right, i + 1 < times.length ? x(times[i + 1]) : plot.value.right);
+    const to = Math.min(plot.value.right, next < times.length ? x(times[next]) : plot.value.right);
+    i = next - 1;
     if (to <= from) continue;
-    const text = values[i];
-    spans.push({ key: i, x: from, y, width: to - from, shade: i % 2, text: (to - from) > text.length * 6.5 + 10 ? text : '' });
+    shade = line.series.kind === 'boolean' ? (text === 'true' ? 1 : 0) : 1 - shade;
+    spans.push({ key: i, x: from, y, width: to - from, shade, text: (to - from) > text.length * 6.5 + 10 ? text : '' });
   }
   return spans;
 }
@@ -203,7 +221,7 @@ const readout = computed(() => {
     .map((line) => {
       const at = valueAt(line.series!, t);
       const scale = scales.value.get(line.axis);
-      const y = at && scale && line.series!.kind !== 'string' ? scale.y((line.series!.values as Float64Array)[at.index]) : null;
+      const y = at && scale && line.axis !== 'lanes' ? scale.y((line.series!.values as Float64Array)[at.index]) : null;
       return { key: line.key, label: line.label, color: line.color, value: at ? formatValue(line, at.index) : '—', y };
     });
   const left = hoverX.value + 14 + 260 > width.value ? hoverX.value - 14 - 260 : hoverX.value + 14;
@@ -299,12 +317,12 @@ function onDoubleClick() {
         <text v-for="t in xTicks" :key="`x${t}`" :x="x(t)" :y="height - 9" text-anchor="middle">{{ formatTick(t) }} s</text>
       </g>
 
-      <g v-for="(line, row) in lanes" :key="line.key" class="lane" clip-path="url(#plot-area)">
-        <template v-for="span in laneSpans(line, row)" :key="span.key">
-          <rect :x="span.x" :y="span.y" :width="span.width" :height="laneHeight - 4" :class="`shade${span.shade}`" />
+      <g v-for="line in lanes" :key="line.key" class="lane" clip-path="url(#plot-area)">
+        <template v-for="span in laneSpans(line)" :key="span.key">
+          <rect :x="span.x" :y="span.y" :width="Math.max(1, span.width - (span.width > 3 ? 1 : 0))" :height="laneHeight - 4"
+            :fill="line.color" :class="`shade${span.shade}`" />
           <text v-if="span.text" :x="span.x + 5" :y="span.y + (laneHeight - 4) / 2" dominant-baseline="middle">{{ span.text }}</text>
         </template>
-        <rect :x="plot.left - 4" :y="22 + row * laneHeight" width="4" :height="laneHeight - 4" :fill="line.color" />
       </g>
 
       <g clip-path="url(#plot-area)">
@@ -314,7 +332,8 @@ function onDoubleClick() {
       <rect v-if="selection" class="selection" :x="selection.x" :y="plot.top" :width="selection.width" :height="plot.height" />
 
       <g v-if="readout" class="hover">
-        <line :x1="hoverX!" :x2="hoverX!" :y1="plot.top - (lanes.length ? lanes.length * laneHeight + 4 : 0)" :y2="plot.bottom" />
+        <line :x1="hoverX!" :x2="hoverX!" :y1="plot.top - (topLanes.length ? topLanes.length * laneHeight + 4 : 0)"
+          :y2="plot.bottom + bottomLanes.length * laneHeight" />
         <circle v-for="row in readout.rows.filter((r) => r.y !== null)" :key="row.key" :cx="hoverX!" :cy="row.y!" r="4"
           :fill="row.color" />
       </g>
@@ -373,13 +392,11 @@ svg {
 }
 
 .lane rect.shade0 {
-  fill: currentColor;
-  fill-opacity: 0.08;
+  fill-opacity: 0.28;
 }
 
 .lane rect.shade1 {
-  fill: currentColor;
-  fill-opacity: 0.16;
+  fill-opacity: 0.5;
 }
 
 .lane text {
@@ -435,6 +452,9 @@ svg {
 }
 
 .tooltip-value {
+  max-width: 65%;
+  overflow-wrap: anywhere;
+  text-align: right;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }

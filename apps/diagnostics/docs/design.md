@@ -51,6 +51,7 @@ Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagno
 | `mdnsEnabled` | on | Whether to also look for the robot by its mDNS name. The operating system resolves the name (Windows 10 and later, macOS, and Linux with Avahi do). Finding coprocessors by mDNS is still to come ([#91](https://github.com/Team973/greybots-apps/issues/91)). |
 | `autoOffload` | on | Whether to offload the robot's logs as soon as it shows up. |
 | `offloadDays` | 7 | Only logs recorded in this many days are pulled; older ones are left where they are. 0 pulls everything. |
+| `ctreLicenseAccepted` | off | Whether CTRE's licence was accepted, so owlet can be downloaded to read Hoot logs. Set only by the Settings page's accept button. |
 | `dataDirectory` | (empty) | Where data is kept. Empty means the default folder. |
 
 In team mode the robot is looked for at `10.TE.AM.2` (973 → `10.9.73.2`), at `roboRIO-<team>-FRC.local` when mDNS is on, and at the USB address `172.22.11.2` (`src/shared/robot-address.ts`).
@@ -118,14 +119,15 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 **The Signals page.** The chart is the main part, with the log's signals beside it.
 
 - **The signal list** is one tree of the signals' own paths. A folder holding only one folder is shown as one (`Robot / robot`), each folder shows how many signals it holds, and the filter opens everything that matches. The top level starts open.
-- **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …) and for a new left or right axis. Clicking a signal adds it to L1.
+- **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …), for a new left or right axis, and for the top and bottom bands (only the bands, for text). Clicking a signal adds it to L1.
 - **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
-- **Text signals** (subsystem states) are drawn as bands of labelled spans above the plot.
-- **Under the chart:** a list of what's plotted, with each signal's colour, its axis (changeable, including to a new one), and its min, max, and mean over the span shown. Rows can be dragged onto the chart to move them.
+- **Bands:** text signals (subsystem states) are drawn as bands of labelled spans in the signal's colour, above the plot or below it. Any other signal can go in a band too, to show a number as states: a 0/1 flag as false/true (true darker), or a mode number. A value repeated is one span.
+- **Under the chart:** a list of what's plotted, with each signal's colour, its axis or band (changeable, including to a new axis), and its min, max, and mean over the span shown. Rows can be dragged onto the chart to move them.
+- **Room:** the sidebar can be hidden to a thin strip, and the log's details at its top folded away to give the signal list more room. Both are kept between visits.
 - **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
 - **Hover:** shows every signal's value at that moment (the last value at or before it).
 - **Warnings:** opening a log warns when DogLog's queue filled up (its `QueueRemainingCapacity` reached 0), since DogLog drops values while it's full.
-- **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
+- **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Clicking a colour in the list under the chart picks another palette colour or any colour; the choice is kept by signal, between visits, so the signal gets it back when added again. Any colour picked is the same in both themes. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
 - **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
 
 **Reading data logs.** `src/main/signals/wpilog.ts` reads WPILib data logs (`.wpilog`, [format](https://github.com/wpilibsuite/allwpilib/blob/main/wpiutil/doc/datalog.adoc)) in plain TypeScript, with no Node or Electron. `structs.ts` decodes `struct:` values (Pose2d, team-defined structs) from the schemas the log carries: nested structs, fixed arrays, enums, and bitfields. A 15 MB log of about 1M values opens in about 250 ms. The log is held in memory whole, one at a time.
@@ -153,7 +155,37 @@ Few records for a signal usually means it rarely changed, not that data is missi
 
 **Built-in groups.** Power, CAN / motor controllers, Robot performance, and Drivetrain, with the metrics listed in the requirements (§3.2), are found by name patterns (`builtInGroups`), so no robot code is assumed. They were tuned on team 973's logs (DogLog, CTRE swerve). A log summary carries them for dashboards and match summaries (#95, #97); the Signals page lists signals by path instead.
 
-**What's not in data logs.** Team 973's logs carry battery, CAN bus, rails, CPU temperature, gyro, poses, and module targets. Motor temperatures and most motor currents are only in the CTRE Hoot logs, which need CTRE's converter first (#140).
+**What's not in data logs.** Team 973's data logs carry battery, CAN bus, rails, CPU temperature, gyro, poses, and module targets. Motor temperatures, currents, and faults are in the CTRE Hoot logs (below).
+
+## CTRE Hoot logs
+
+Hoot logs (`.hoot`) are CTRE's format for what Phoenix devices report: TalonFXs, CANcoders, and the Pigeon, with about 110 signals per TalonFX at up to 250 Hz. They're read with CTRE's **owlet** tool, which converts them to `.wpilog` for the signal framework. AdvantageScope reads them the same way (`src/main/electron/owletInterface.ts` there).
+
+**Getting owlet.** CTRE's licence says owlet "may be re-distributed only with expressed permission from the Company", so it isn't in our installer. Instead, each computer downloads it from CTRE:
+
+- **Accepting the licence:** on the Settings page, the person accepts [CTRE's licence](https://raw.githubusercontent.com/CrossTheRoadElec/Phoenix-Releases/refs/heads/master/CTRE_LICENSE.txt). That records `ctreLicenseAccepted`, which only this step can set.
+- **What's downloaded:** CTRE's index (`https://redist.ctr-electronics.com/index.json`) lists builds, each checked against CTRE's SHA-1. The app gets the newest build for each stable *compliancy*, and for any compliancy the Hoot logs here need. A Hoot log can only be read by the owlet of the compliancy that wrote it, recorded in the log's byte 70.
+- **Where it goes:** the app's per-user folder (`owlet/`). From then on it works offline.
+- **Updates:** the app checks CTRE for newer builds at start and every 6 hours.
+
+**Exporting only what's plotted.** Converting a whole Hoot log is too big: 52 MB of Hoot became 1.09 GB of `.wpilog`. Instead (`src/main/hoot/`):
+
+- **Signal list:** `owlet --scan` lists a log's signals (about a second), and `--check-pro` says whether it has a Phoenix Pro device. Without one, owlet only exports some signals, and the Signals page says so.
+- **Plotting a signal** exports just that signal (`-s <ids>`): about 6 s for a 52 MB log, since owlet reads the whole log each time. Signals asked for within 250 ms of each other share one export. Progress shows on the Signals page.
+- **The cache:** scans and exports are kept under `results/hoot/<hash of the log's path>/`, with a `manifest.json`, and start afresh if the Hoot log or the owlet changes. The folder names are short on purpose: owlet can't write past Windows' 260-character path limit, and Hoot log names are long.
+- **One owlet at a time:** each run reads a whole log.
+- **Cut-off logs:** a Hoot log whose end is cut off (the robot switched off while logging) makes owlet fail after writing everything before that. That output is used, with a note.
+
+**Sessions.** The Signals page's log list is of sessions: a data log and the Hoot logs from the same match or time. A Hoot log goes with the data log of the same robot and match, or, outside a match, the one whose name time is within 2 minutes of its own. Hoot logs with no data log are sessions of their own. A Hoot log's signals sit under `Hoot rio` or `Hoot CANivore 17E61D98` in the signal tree. The name is the same in every match, so a chart keeps its signals when the match changes.
+
+**One timeline.** Hoot times count from when the Hoot log started; data log times from when the robot program started. Team 973's Q39 logs were 27 s apart. Each Hoot log is put on the data log's timeline (or, without one, the first Hoot log's):
+
+- **By the first enable:** the Hoot log's `RobotEnable` against the data log's first enable signal (`DS:enabled`, `DriverStation/Enabled`, or code's own `isAutoEnabled` / `isTeleopEnabled`).
+- **Precision:** a few hundredths of a second, as close as the robot code logs its enable. On Q39, both Hoot logs came out at +16.27 s, and a motor's current rises at the same moment as the enable in both logs.
+- **By the file names' times**, to the second, if either enable is missing, or if the two methods disagree by more than 2 minutes (different enables).
+- **On screen:** the Signals page says which method was used.
+
+A Hoot signal's type and unit come from owlet's export, so the list guesses them from the name until the signal is first read.
 
 ## Installers
 
@@ -170,6 +202,7 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 ## Left open
 
 - **The rest of log offload** is [#140](https://github.com/Team973/greybots-apps/issues/140): coprocessor and vision logs, custom paths, more match association, Hoot conversion, and reporting to Preflight (#103). Clearing logs off the robot is #139.
+- **Hoot logs (#142):** the data log reader keeps an object per value, which is fine for single-signal exports (about 136,000 values each) but not for exporting many signals at once. Per-entry typed arrays would fix that.
 - **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal), and live NetworkTables signals (#93) behind the same interface.
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
