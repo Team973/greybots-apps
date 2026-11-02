@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia';
 
+import type { EventKind } from '@shared/events';
+import type { ViewBody, ViewSpan } from '@shared/library';
 import type { SignalKind } from '@shared/signals';
 
 // What's on the Signals page's chart: which log or live session, which
@@ -177,6 +179,37 @@ export const usePlotStore = defineStore('plot', {
       if (trace) trace.color = color;
       this.colorChoices[key] = color;
       localStorage.setItem(colorsKey, JSON.stringify(this.colorChoices));
+    },
+    // What's on the chart, to save as a view (#148).
+    viewBody(span: ViewSpan, eventKinds: EventKind[] | null): ViewBody {
+      return {
+        axes: this.axes.map((a) => ({ ...a })),
+        traces: this.traces.map((t) => ({ key: t.key, kind: t.kind, axis: t.axis, band: t.band, color: t.color, ...(t.hidden ? { hidden: true } : {}) })),
+        span,
+        eventKinds
+      };
+    },
+    // Puts a saved view on the chart, each signal found in this log by
+    // `find` (by name, path end, or the robot's mapping). Resolves to the
+    // signals it couldn't find.
+    applyView(body: ViewBody, find: (key: string) => string | null): string[] {
+      const missing: string[] = [];
+      const axes = body.axes.map((a) => ({ id: `axis${nextAxisId++}`, side: a.side, was: a.id }));
+      const traces: PlotTrace[] = [];
+      for (const trace of body.traces) {
+        const key = find(trace.key);
+        if (!key) {
+          missing.push(trace.key);
+          continue;
+        }
+        if (traces.some((t) => t.key === key)) continue;
+        const axis = trace.axis === 'lanes' ? 'lanes' : axes.find((a) => a.was === trace.axis)?.id ?? axes[0]?.id ?? 'lanes';
+        traces.push({ key, kind: trace.kind, axis, band: trace.band, color: trace.color, ...(trace.hidden ? { hidden: true } : {}) });
+      }
+      this.axes = axes.map(({ id, side }) => ({ id, side }));
+      this.traces = traces.slice(0, maxTraces);
+      this.prune();
+      return missing;
     },
     setView(view: [number, number] | null) {
       this.view = view;

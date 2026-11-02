@@ -5,6 +5,8 @@
 //     logs/<robot>/<yyyy-mm-dd>/<source>/<original file name>
 //     results/<kind>/<id>.json
 //     notes/<log>.json
+//     library/<kind>/<id>.json
+//     reports/<id>.json
 //     index/
 //     README.txt
 
@@ -28,6 +30,14 @@ export const storageFolders: StorageFolder[] = [
   {
     name: 'notes',
     purpose: 'Notes people added to logs while reviewing them.'
+  },
+  {
+    name: 'library',
+    purpose: 'Saved views, report templates, pipelines and robot mappings.'
+  },
+  {
+    name: 'reports',
+    purpose: 'Reports made from logs, by hand or by a pipeline.'
   },
   {
     name: 'index',
@@ -64,6 +74,16 @@ export function notesPathSegments(logId: string): string[] {
   return ['notes', `${safeSegment(logId.replace(/^logs\//, '').replace(/\//g, '~'))}.json`];
 }
 
+// Where a library item is kept, below the data folder.
+export function libraryPathSegments(kind: string, id: string): string[] {
+  return ['library', safeSegment(kind), `${safeSegment(id)}.json`];
+}
+
+// Where a report is kept, below the data folder.
+export function reportPathSegments(id: string): string[] {
+  return ['reports', `${safeSegment(id)}.json`];
+}
+
 // Names come from robots and from people, so anything that could step out of
 // the folder or isn't allowed in a file name on Windows is replaced.
 export function safeSegment(name: string): string {
@@ -85,6 +105,13 @@ results/<kind>/<id>.json
 
 notes/<log>.json
     Notes people added to logs while reviewing them.
+
+library/<kind>/<id>.json
+    Saved views, report templates, pipelines and robot mappings
+    (<kind> is view, template, pipeline or mapping).
+
+reports/<id>.json
+    Reports made from logs, by hand or by a pipeline.
 
 index/
     What has been offloaded, and which match or test each file belongs to.

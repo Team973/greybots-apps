@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import OffloadView from '@/views/OffloadView.vue';
+import ReportsView from '@/views/ReportsView.vue';
 import SettingsView from '@/views/SettingsView.vue';
 import SignalsView from '@/views/SignalsView.vue';
 import StorageView from '@/views/StorageView.vue';
@@ -17,6 +18,7 @@ const router = createRouter({
     // Signals is what the app opens on.
     { path: '/', redirect: '/signals' },
     { path: '/signals', name: 'signals', component: SignalsView, meta: { title: 'Signals' } },
+    { path: '/reports', name: 'reports', component: ReportsView, meta: { title: 'Reports' } },
     { path: '/offload', name: 'offload', component: OffloadView, meta: { title: 'Offload' } },
     { path: '/storage', name: 'storage', component: StorageView, meta: { title: 'Storage' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },

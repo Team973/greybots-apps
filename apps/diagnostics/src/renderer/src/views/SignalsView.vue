@@ -10,25 +10,20 @@ import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import { eventKinds, phaseClock, quietKinds, type LogEvent, type SessionEvents } from '@shared/events';
 import type { DsLogStatus, HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
+import type { SavedView, ViewBody, ViewSpan } from '@shared/library';
 import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
+import { matchKey } from '@shared/signal-match';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
 import { chartPng } from '@/chart-image';
 import ColorPicker from '@/components/ColorPicker.vue';
 import EventList from '@/components/EventList.vue';
 import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomGesture } from '@/components/PlotChart.vue';
+import ViewsMenu from '@/components/ViewsMenu.vue';
 import { formatBytes, formatTime } from '@/format';
+import { palette } from '@/palette';
 import { eventColor, isProblem, noteEvent, shownEvent, type EventFilter } from '@/review';
 import { maxTraces, usePlotStore, type AxisSide, type BandSide, type PlotTarget, type TraceColor } from '@/stores/plot-store';
-
-// The reference palette's categorical order, a step per theme, validated
-// against the card colours (#fff and #272727). In light mode slots 3, 4 and
-// 5 are under 3:1 against white, so every line is also named in the list
-// under the chart.
-const palette = {
-  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
-  dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
-};
 
 const plotStore = usePlotStore();
 const settingsStore = useSettingsStore();
@@ -692,6 +687,32 @@ function zoomBy(factor: number) {
   zoomTo([from, from + span]);
 }
 
+// --- Saved views (#148) ---
+
+// Signals a view's can be found among: those with values.
+const viewSignals = computed(() => (summary.value?.signals ?? []).filter((s) => s.kind !== 'other' && s.count !== 0).map((s) => s.key));
+const selectedRobot = computed(() => (logs.value ?? []).find((log) => log.id === selectedLog.value)?.robot ?? '');
+
+function currentView(span: ViewSpan): ViewBody {
+  return plotStore.viewBody(span, eventFilter.value.kinds);
+}
+
+function applySavedView(view: SavedView, mapping: Record<string, string | null> | undefined) {
+  const missing = plotStore.applyView(view, (key) => matchKey(key, viewSignals.value, mapping).key);
+  if (view.eventKinds) eventFilter.value = { ...eventFilter.value, kinds: view.eventKinds };
+  // Its span, when this log has that phase.
+  if (view.span.type === 'phase' && review.value && !isLive.value) {
+    const phases = review.value.phases;
+    const wanted = view.span.phase === 'match' ? phases : phases.filter((p) => p.name === (view.span as { phase: string }).phase);
+    if (wanted.length) zoomTo([Math.min(...wanted.map((p) => p.start)), Math.max(...wanted.map((p) => p.end))]);
+  } else if (view.span.type === 'all' && !isLive.value) {
+    plotStore.setView(null);
+  }
+  message.value = missing.length
+    ? `${view.name}: ${missing.length} of its signals aren't here (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''}). A robot mapping on the Reports page can say which they are.`
+    : '';
+}
+
 // --- Review (#94): events, the match's phases, notes, and playing back ---
 
 const review = ref<SessionEvents | null>(null);
@@ -1063,6 +1084,8 @@ watch(() => route.query.session, (session) => {
               d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z" />
           </svg>
         </md-outlined-icon-button>
+        <ViewsMenu v-if="summary" :available="viewSignals" :robot="selectedRobot" :current="currentView" :can-phase="!!review?.phases.length"
+          @apply="applySavedView" />
         <md-outlined-button v-if="plotStore.traces.length" @click="plotStore.clear()">Clear chart</md-outlined-button>
       </div>
       <p v-if="copyState !== 'idle' && copyState !== 'copied'" class="error-text">{{ copyState }}</p>

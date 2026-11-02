@@ -4,6 +4,7 @@ import { BrowserWindow, dialog } from 'electron';
 
 import type { ImportStatus, ImportSummary } from '@shared/import';
 import { importExtensions, importLogs } from './import/importer';
+import { afterNewLogs, logIdsNow } from './reports';
 import { loadSettings } from './settings-store';
 import { dataDirectory } from './storage';
 
@@ -21,7 +22,10 @@ export async function runImport(paths: string[], fallbackTeam: number): Promise<
   status.running = true;
   const startedAt = new Date().toISOString();
   try {
-    const directory = dataDirectory(await loadSettings());
+    const settings = await loadSettings();
+    const directory = dataDirectory(settings);
+    // The logs there before, so the pipelines run on the new ones after.
+    const before = await logIdsNow(settings);
     const { files, problems } = await importLogs(directory, paths, {
       fallbackTeam,
       onProgress: (progress) => { status.progress = progress; }
@@ -30,6 +34,7 @@ export async function runImport(paths: string[], fallbackTeam: number): Promise<
       problems.push(`No logs found. Logs are ${importExtensions.join(', ')} files, or zip files of them.`);
     }
     status.last = { startedAt, finishedAt: new Date().toISOString(), files, problems };
+    afterNewLogs(before, 'import').catch(() => {});
     return status.last;
   } finally {
     status.running = false;

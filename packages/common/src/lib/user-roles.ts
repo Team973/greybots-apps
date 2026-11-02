@@ -33,18 +33,19 @@ export function hasAppAccess(role: AppRole | null | undefined): boolean {
 }
 
 // The apps, and the `User` column that holds a person's role in each.
-export type AppKey = 'greyscout' | 'preflight' | 'workshop';
+export type AppKey = 'greyscout' | 'preflight' | 'workshop' | 'diagnostics';
 
 export interface AppRoleColumn {
     app: AppKey;
     label: string;
-    column: 'role' | 'preflight_role' | 'workshop_role';
+    column: 'role' | 'preflight_role' | 'workshop_role' | 'diagnostics_role';
 }
 
 export const appRoleColumns: AppRoleColumn[] = [
     { app: 'greyscout', label: 'Scouting', column: 'role' },
     { app: 'preflight', label: 'Preflight', column: 'preflight_role' },
-    { app: 'workshop', label: 'Workshop', column: 'workshop_role' }
+    { app: 'workshop', label: 'Workshop', column: 'workshop_role' },
+    { app: 'diagnostics', label: 'Diagnostics', column: 'diagnostics_role' }
 ];
 
 export interface UserAccount {
@@ -56,6 +57,8 @@ export interface UserAccount {
     preflight_role?: AppRole;
     // Absent until the Workshop migration has been applied.
     workshop_role?: AppRole;
+    // Absent until the Diagnostics migration has been applied.
+    diagnostics_role?: AppRole;
     // Absent until the pending / deactivation migration has been applied.
     deactivated?: boolean;
 }

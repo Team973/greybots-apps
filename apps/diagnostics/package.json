@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@greybots/common": "*",
+    "@supabase/supabase-js": "^2.47.10",
     "@types/ssh2": "^1.15.6",
     "electron": "44.7.0",
     "electron-builder": "^26.15.3",

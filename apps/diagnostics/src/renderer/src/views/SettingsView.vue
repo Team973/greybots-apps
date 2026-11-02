@@ -8,6 +8,7 @@ import Switch from '@greybots/common/components/Switch.vue';
 import { ctreLicenseUrl, type OwletStatus } from '@shared/hoot';
 import { shortcutActions, shortcutFromPress, type ShortcutAction } from '@shared/shortcuts';
 import SaveStatus from '@/components/SaveStatus.vue';
+import TeamAccount from '@/components/TeamAccount.vue';
 import { useSettingsDraft } from '@/settings-draft';
 import { useSettingsStore } from '@/stores/settings-store';
 
@@ -162,6 +163,8 @@ onMounted(async () => {
       </template>
     </template>
   </section>
+
+  <TeamAccount />
 </template>
 
 <style scoped>
