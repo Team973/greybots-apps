@@ -3,8 +3,9 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 
+import type { LogEvent, MatchPhase, SessionEvents } from '@shared/events';
 import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogStatus, type HootProgress, type OwletStatus } from '@shared/hoot';
-import type { HootSessionStatus, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
+import type { DsAlignment, DsLogStatus, HootSessionStatus, SessionDsLog, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
 import { parseLogName, type MatchInfo } from '@shared/offload';
 import type { Settings } from '@shared/settings';
@@ -22,8 +23,25 @@ import {
 import { exportedName, HootLog } from './hoot/hoot-log';
 import { hootCompliancy, Owlet } from './hoot/owlet';
 import { openLive, readLive } from './live-service';
+import { loadNotes } from './notes-store';
 import { loadIndex } from './offload/offload-index';
 import { loadSettings, storeSettings } from './settings-store';
+import {
+  dataLogEvents,
+  dataLogModes,
+  eventsFrom,
+  faultSeverity,
+  faultTitle,
+  dsLogEvents,
+  hasConsole,
+  hasDriverStationEnable,
+  hootModes,
+  matchPhases,
+  modeEvents,
+  spansWhere,
+  type ModeChange
+} from './signals/events';
+import { dsLogHead, readDsEvents, readDsLog, type DsEvents, type DsLog, type DsRecordHead } from './signals/ds-log';
 import { LogSignalSource } from './signals/log-source';
 import { dataDirectory } from './storage';
 
@@ -72,9 +90,26 @@ const pairingWindowMs = 2 * 60 * 1000;
 // minutes apart at most; this keeps out the same match number another day).
 const sameMatchWindowMs = 60 * 60 * 1000;
 
+// A Driver Station log goes with a data log that started while it was
+// being written (or this much before: clocks differ a little).
+const dsLeadMs = 60 * 1000;
+
+// Each Driver Station log's start, length and whether a robot was there,
+// by path: reading them means reading them whole, so once per version.
+const dsHeads = new Map<string, { version: string; head: DsRecordHead | null }>();
+
+async function dsHeadOf(path: string, version: string): Promise<DsRecordHead | null> {
+  const known = dsHeads.get(path);
+  if (known?.version === version) return known.head;
+  const head = await fs.readFile(path).then((bytes) => dsLogHead(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength))).catch(() => null);
+  dsHeads.set(path, { version, head });
+  return head;
+}
+
 // Every recording in the data folder's logs/, newest first: data logs with
-// the Hoot logs that go with them, and Hoot logs on their own. Offloaded
-// or put there by hand; the offload index adds the match where it knows it.
+// the Hoot logs and Driver Station logs that go with them, and Hoot logs or
+// Driver Station logs on their own. Offloaded or put there by hand; the
+// offload index adds the match where it knows it.
 export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
   const directory = dataDirectory(settings);
   const index = await loadIndex(directory);
@@ -111,6 +146,28 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
     };
   });
 
+  // Driver Station logs a robot was connected to: most are the Driver
+  // Station open with no robot, and are left out.
+  const dsEvents = new Set((await findFiles(logsDirectory, ['logs'], 0, '.dsevents')).map(({ path }) => path.join('/')));
+  const dsLogs = (await Promise.all((await findFiles(logsDirectory, ['logs'], 0, '.dslog')).map(async ({ path, size, modified }) => {
+    const head = await dsHeadOf(join(directory, ...path), `${size}:${modified.getTime()}`);
+    if (!head?.connected) return null;
+    const localPath = path.join('/');
+    const eventsPath = localPath.replace(/\.dslog$/i, '.dsevents');
+    return {
+      localPath,
+      eventsPath: dsEvents.has(eventsPath) ? eventsPath : null,
+      name: path[path.length - 1],
+      robot: robotOf(path),
+      size,
+      start: head.startedAt,
+      end: head.startedAt + head.duration * 1000
+    };
+  }))).filter((log): log is NonNullable<typeof log> => log !== null);
+  const dsUsed = new Set<string>();
+  const dsEntry = (log: (typeof dsLogs)[number], label: string): SessionDsLog =>
+    ({ localPath: log.localPath, eventsPath: log.eventsPath, name: log.name, label, size: log.size });
+
   // Each Hoot log to the nearest data log it goes with.
   const paired = new Map<string, SessionHoot[]>();
   const alone: typeof hoots = [];
@@ -133,17 +190,37 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
 
   const sessions: SignalLogFile[] = dataLogs.map((log) => {
     const logHoots = paired.get(log.localPath) ?? [];
+    const started = log.start.getTime();
+    const logDs = dsLogs.filter((ds) => ds.robot === log.robot && started >= ds.start - dsLeadMs && started <= ds.end);
+    for (const ds of logDs) dsUsed.add(ds.localPath);
     return {
       id: log.localPath,
       localPath: log.localPath,
       name: log.name,
       robot: log.robot,
-      size: log.size + logHoots.reduce((total, hoot) => total + hoot.size, 0),
+      size: log.size + [...logHoots, ...logDs].reduce((total, other) => total + other.size, 0),
       recorded: log.start.toISOString(),
       match: log.match,
-      hoots: logHoots
+      hoots: logHoots,
+      dsLogs: logDs.map((ds, i) => dsEntry(ds, logDs.length > 1 ? `DS log ${i + 1}` : 'DS log'))
     };
   });
+
+  // Driver Station logs with no data log.
+  for (const ds of dsLogs) {
+    if (dsUsed.has(ds.localPath)) continue;
+    sessions.push({
+      id: ds.localPath,
+      localPath: null,
+      name: ds.name,
+      robot: ds.robot,
+      size: ds.size,
+      recorded: new Date(ds.start).toISOString(),
+      match: null,
+      hoots: [],
+      dsLogs: [dsEntry(ds, 'DS log')]
+    });
+  }
 
   // Hoot logs with no data log: one session per robot and start time
   // (the rio and CANivore logs of one run start together).
@@ -163,7 +240,8 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
       size: group.reduce((total, hoot) => total + hoot.size, 0),
       recorded: group[0].start.toISOString(),
       match: group.find((hoot) => hoot.match)?.match ?? null,
-      hoots: group.map(({ localPath, name, bus, label, size }) => ({ localPath, name, bus, label, size }))
+      hoots: group.map(({ localPath, name, bus, label, size }) => ({ localPath, name, bus, label, size })),
+      dsLogs: []
     });
   }
 
@@ -245,14 +323,27 @@ interface Placement {
   aligned: Promise<void>;
 }
 
+// A Driver Station log, read whole (they're small), and where it goes on
+// the session's timeline.
+interface DsPlacement {
+  entry: SessionDsLog;
+  log: DsLog;
+  events: DsEvents;
+  offset: number;
+  alignment: DsAlignment;
+}
+
 interface Session {
   id: string;
   file: SignalLogFile;
   version: string;
   dataLog: LogSignalSource | null;
   placements: Placement[];
+  dsLogs: DsPlacement[];
   start: number;
   end: number;
+  // Found once, when first asked for.
+  events?: FoundEvents;
 }
 
 // The session open for reading. One at a time: a data log is held in
@@ -312,14 +403,32 @@ async function openSessionOnce(settings: Settings, id: string): Promise<Session>
     placements.push({ hoot, alignment: null, offset: null, aligned: Promise.resolve() });
   }
 
+  const readBytes = async (localPath: string) => {
+    const bytes = await fs.readFile(absolute(localPath));
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  };
+  const dsLogs: DsPlacement[] = [];
+  for (const entry of file.dsLogs) {
+    const log = readDsLog(await readBytes(entry.localPath));
+    const none: DsEvents = { messages: [], match: null };
+    const events = entry.eventsPath
+      ? await readBytes(entry.eventsPath).then((bytes) => readDsEvents(bytes, log.startedAt)).catch(() => none)
+      : none;
+    dsLogs.push({ entry, log, events, ...alignDsLog(dataLog, file, log) });
+  }
+
   const session: Session = {
     id,
     file,
     version: file.localPath ? await fileVersion(absolute(file.localPath)) : '',
     dataLog,
     placements,
+    dsLogs,
     start: 0,
-    end: dataLog ? dataLog.lastTime - dataLog.firstTime : 0
+    // A Driver Station log on its own is the timeline. With a data log it
+    // isn't let stretch it: it runs while the Driver Station's open, often
+    // many minutes either side.
+    end: dataLog ? dataLog.lastTime - dataLog.firstTime : placements.length === 0 ? Math.max(0, ...dsLogs.map((ds) => ds.log.duration)) : 0
   };
   for (const placement of placements) placement.aligned = align(session, placement).catch(() => {});
   open = session;
@@ -360,6 +469,19 @@ async function hootFirstEnable(hoot: HootLog): Promise<number | null> {
 // Enables more than this apart from what the file names say are taken to be
 // different enables (one log started after the first), and the names win.
 const maxDisagreementSeconds = 120;
+
+// Seconds to add to a Driver Station log's times: by the first enable in
+// both, if that's near what the clocks say; otherwise by the clocks.
+function alignDsLog(dataLog: LogSignalSource | null, file: SignalLogFile, log: DsLog): { offset: number; alignment: DsAlignment } {
+  if (!dataLog) return { offset: 0, alignment: 'base' };
+  const baseStart = dataLog.startedAt ? Date.parse(dataLog.startedAt) : parseLogName(file.name).recorded?.getTime() ?? null;
+  const byClock = baseStart === null ? null : (log.startedAt - baseStart) / 1000;
+  const dataEnable = dataLogFirstEnable(dataLog);
+  const dsEnable = log.modes.find((m) => m.mode !== 'disabled')?.time ?? null;
+  const byEnable = dataEnable !== null && dsEnable !== null ? dataEnable - dsEnable : null;
+  if (byEnable !== null && (byClock === null || Math.abs(byEnable - byClock) <= maxDisagreementSeconds)) return { offset: byEnable, alignment: 'enable' };
+  return { offset: byClock ?? 0, alignment: 'clock' };
+}
 
 async function align(session: Session, placement: Placement) {
   const { hoot } = placement;
@@ -455,21 +577,38 @@ function dogLogWarnings(source: LogSignalSource): string[] {
   ];
 }
 
+function dsCatalog(ds: DsPlacement): SignalInfo[] {
+  return ds.log.source.catalog().map((signal) => ({ ...signal, key: `${ds.entry.label}/${signal.key}`, subsystem: ds.entry.label }));
+}
+
 export async function openSignalLog(settings: Settings, id: string): Promise<SignalLogSummary> {
   if (isLiveId(id)) return openLive(id);
   const session = await openSession(settings, id);
   const signals = [
     ...(session.dataLog?.catalog() ?? []),
-    ...session.placements.flatMap((placement) => (placement.hoot.state === 'ready' ? hootCatalog(placement.hoot) : []))
+    ...session.placements.flatMap((placement) => (placement.hoot.state === 'ready' ? hootCatalog(placement.hoot) : [])),
+    ...session.dsLogs.flatMap(dsCatalog)
   ];
+  const dsLogs: DsLogStatus[] = session.dsLogs.map((ds) => ({
+    localPath: ds.entry.localPath,
+    label: ds.entry.label,
+    size: ds.entry.size,
+    alignment: ds.alignment,
+    offset: ds.offset,
+    match: ds.events.match,
+    truncated: ds.log.truncated
+  }));
+  // A Driver Station log on its own says when it started.
+  const alone = !session.dataLog && session.placements.length === 0 ? session.dsLogs[0] : undefined;
   return {
     id,
     duration: session.end - session.start,
-    startedAt: session.dataLog?.startedAt ?? null,
-    truncated: session.dataLog?.truncated ?? false,
+    startedAt: session.dataLog?.startedAt ?? (alone ? new Date(alone.log.startedAt).toISOString() : null),
+    truncated: session.dataLog?.truncated ?? alone?.log.truncated ?? false,
     signals,
     groups: groupSignals(signals),
-    warnings: session.dataLog ? dogLogWarnings(session.dataLog) : []
+    warnings: session.dataLog ? dogLogWarnings(session.dataLog) : [],
+    dsLogs
   };
 }
 
@@ -492,6 +631,15 @@ export async function hootStatus(settings: Settings, id: string): Promise<HootSe
 export async function readSignal(settings: Settings, id: string, key: string, range: SignalRange): Promise<SignalSeries | null> {
   if (isLiveId(id)) return readLive(id, key, range);
   const session = await openSession(settings, id);
+  const ds = session.dsLogs.find((p) => key.startsWith(`${p.entry.label}/`));
+  if (ds) {
+    const series = ds.log.source.read(key.slice(ds.entry.label.length + 1), {
+      ...range,
+      start: range.start === undefined ? undefined : range.start - ds.offset,
+      end: range.end === undefined ? undefined : range.end - ds.offset
+    });
+    return series && { ...series, key, times: series.times.map((t) => t + ds.offset) };
+  }
   const placement = session.placements.find((p) => key.startsWith(`${p.hoot.label}/`));
   if (!placement) return session.dataLog?.read(key, range) ?? null;
 
@@ -539,4 +687,131 @@ export async function readValues(settings: Settings, id: string, keys: string[],
     out[key] = series ? valueAtTime(series, time) : null;
   }
   return out;
+}
+
+// --- Events ---
+
+interface FoundEvents {
+  dataLog: LogEvent[];
+  // From Driver Station logs, on the session's timeline.
+  ds: LogEvent[];
+  // From the data log, if it says; Hoot logs' RobotMode once read.
+  modes: { changes: ModeChange[]; key: string | null } | null;
+  hoot: LogEvent[];
+  fmsAttached: boolean;
+  // Looking through the Hoot logs, until done.
+  scanning: boolean;
+}
+
+// What's exported from each Hoot log to find events: every device's
+// faults (not the sticky ones: those stay set after the fault's gone), the
+// robot's mode, and whether the Driver Station and CAN bus were there.
+const hootEventSignal = /\/Fault_|^RobotMode$|^DS:IsDSAttached$|^DS:IsFMSAttached$|^CANBusIsUp$/;
+
+async function scanHoots(session: Session, found: FoundEvents) {
+  for (const placement of session.placements) {
+    await placement.aligned;
+    const { hoot } = placement;
+    if (hoot.state !== 'ready') continue;
+    const offset = placement.offset ?? 0;
+    const end = session.end - offset;
+    const wanted = hoot.signals.filter((s) => hootEventSignal.test(s.name));
+    // Together, so owlet reads the log once for all of them.
+    const read = await Promise.all(wanted.map(async (signal) => {
+      const source = await hoot.sourceFor(signal.id).catch(() => null);
+      return { signal, series: source?.read(exportedName(signal.name)) ?? null };
+    }));
+    const shifted = (spans: { start: number; end: number | null }[]) =>
+      spans.map((span) => ({ start: span.start + offset, end: span.end === null ? null : span.end + offset }));
+    for (const { signal, series } of read) {
+      if (!series) continue;
+      const key = `${hoot.label}/${signal.name}`;
+      if (signal.name.includes('/Fault_')) {
+        const spans = shifted(spansWhere(series, (v) => v > 0, end));
+        found.hoot.push(...eventsFrom('fault', faultSeverity(signal.name), faultTitle(signal.name), spans, {
+          key,
+          detail: (count) => `${hoot.label}${count > 1 ? `, ${count} times` : ''}`
+        }));
+      } else if (signal.name === 'RobotMode' && !found.modes) {
+        const changes = hootModes(series, offset);
+        if (changes) found.modes = { changes, key };
+      } else if (signal.name === 'DS:IsFMSAttached') {
+        found.fmsAttached ||= (series.values as Float64Array).some((v) => v === 1);
+      } else if (signal.name === 'DS:IsDSAttached') {
+        // Only once it had been there: before that, it's the robot starting up.
+        const first = (series.values as Float64Array).findIndex((v) => v === 1);
+        if (first === -1) continue;
+        const after = { ...series, times: series.times.slice(first), values: (series.values as Float64Array).slice(first) };
+        found.hoot.push(...eventsFrom('network', 'error', 'Driver Station disconnected', shifted(spansWhere(after, (v) => v === 0, end)), { key }));
+      } else if (signal.name === 'CANBusIsUp') {
+        found.hoot.push(...eventsFrom('can', 'error', `${hoot.label}: CAN bus down`, shifted(spansWhere(series, (v) => v === 0, end)), { key }));
+      }
+    }
+  }
+}
+
+const shiftedEvents = (events: LogEvent[], offset: number) =>
+  events.map((event) => ({ ...event, start: event.start + offset, end: event.end === null ? null : event.end + offset }));
+
+function findEvents(session: Session): FoundEvents {
+  const dataLog = session.dataLog;
+  const robotConsole = !!dataLog && hasConsole(dataLog);
+  const ds = session.dsLogs.flatMap((placement) => shiftedEvents(
+    dsLogEvents(placement.log, placement.events.messages, { robotConsole, key: (name) => `${placement.entry.label}/${name}` }),
+    placement.offset
+  ));
+  // The Driver Station's own record wins (in the data log, or its own log);
+  // robot code's flags only if there's nothing better once the Hoot logs
+  // are read.
+  const firstDs = session.dsLogs[0];
+  const modes = dataLog && hasDriverStationEnable(dataLog)
+    ? { changes: dataLogModes(dataLog)!, key: null }
+    : firstDs
+      ? { changes: firstDs.log.modes.map((m) => ({ ...m, time: m.time + firstDs.offset })), key: `${firstDs.entry.label}/Mode` }
+      : null;
+  const found: FoundEvents = {
+    dataLog: dataLog ? dataLogEvents(dataLog) : [],
+    ds,
+    modes,
+    hoot: [],
+    fmsAttached: false,
+    scanning: session.placements.length > 0
+  };
+  const fallback = () => {
+    const changes = dataLog ? dataLogModes(dataLog) : null;
+    if (!found.modes && changes) found.modes = { changes, key: null };
+  };
+  if (found.scanning) {
+    scanHoots(session, found).catch(() => {}).finally(() => {
+      fallback();
+      found.scanning = false;
+    });
+  } else {
+    fallback();
+  }
+  return found;
+}
+
+export async function sessionEvents(settings: Settings, id: string): Promise<SessionEvents> {
+  if (isLiveId(id)) return { events: [], phases: [], notes: [], pending: '' };
+  const session = await openSession(settings, id);
+  const found = (session.events ??= findEvents(session));
+  // While the Hoot logs are read, robot code's own flags stand in.
+  const modes = found.modes ?? (found.scanning && session.dataLog ? { changes: dataLogModes(session.dataLog) ?? [], key: null } : null);
+  const inMatch = !!session.file.match || found.fmsAttached || session.dsLogs.some((ds) => ds.events.match);
+  const inSpan = (event: LogEvent) => event.start <= session.end && (event.end ?? event.start) >= session.start;
+  const phases: MatchPhase[] = modes ? matchPhases(modes.changes, session.end, inMatch) : [];
+  const events = [
+    ...(modes ? modeEvents(modes.changes, modes.key) : []).filter(inSpan),
+    ...found.dataLog,
+    ...found.hoot,
+    // A Driver Station log runs longer than the rest: only what's in the span.
+    ...found.ds.filter(inSpan)
+  ].sort((a, b) => a.start - b.start);
+  return {
+    events,
+    phases,
+    notes: await loadNotes(settings, id),
+    pending: found.scanning ? 'Looking for device faults in the Hoot logs…' : ''
+  };
 }

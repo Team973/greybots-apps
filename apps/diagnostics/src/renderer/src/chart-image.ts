@@ -25,7 +25,7 @@ export interface LegendItem {
 
 // Pixels to a CSS pixel in the picture: sharp on a high-density screen,
 // where it'll likely be looked at.
-const scale = 2;
+export const scale = 2;
 
 // The styles the chart's parts get from the page's style sheets, which an
 // SVG drawn on its own doesn't have: copied onto each part.
@@ -63,7 +63,7 @@ function loadImage(svgText: string): Promise<HTMLImageElement> {
 }
 
 // Shortened with … to fit.
-function fit(context: CanvasRenderingContext2D, text: string, width: number): string {
+export function fit(context: CanvasRenderingContext2D, text: string, width: number): string {
   if (context.measureText(text).width <= width) return text;
   let end = text.length;
   while (end > 0 && context.measureText(`${text.slice(0, end)}…`).width > width) end -= 1;
@@ -197,6 +197,10 @@ export async function chartPng(snapshot: ChartSnapshot, options: ImageOptions): 
     }
   });
 
+  return canvasPng(canvas);
+}
+
+export async function canvasPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error("Couldn't make the image.");
   return new Uint8Array(await blob.arrayBuffer());

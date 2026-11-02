@@ -4,6 +4,7 @@
 
 import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { ImportStatus, ImportSummary } from './import';
+import type { Annotation, SessionEvents } from './events';
 import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
@@ -88,12 +89,40 @@ export interface SessionHoot {
   size: number;
 }
 
-// One recording to read signals from: a WPILib data log and the CTRE Hoot
-// logs from the same match or time, or Hoot logs on their own.
+// A Driver Station log (.dslog), and the .dsevents beside it if there is one.
+export interface SessionDsLog {
+  localPath: string;
+  eventsPath: string | null;
+  name: string;
+  // "DS log", or "DS log 2" when a session has more than one.
+  label: string;
+  size: number;
+}
+
+// How a Driver Station log was put on the session's timeline: it is the
+// timeline (on its own), by the first enable in both, or by the clock.
+export type DsAlignment = 'base' | 'enable' | 'clock';
+
+export interface DsLogStatus {
+  localPath: string;
+  label: string;
+  size: number;
+  alignment: DsAlignment;
+  // Seconds added to its times.
+  offset: number;
+  // "Qualification 12", when the FMS was connected.
+  match: string | null;
+  truncated: boolean;
+}
+
+// One recording to read signals from: a WPILib data log with the CTRE Hoot
+// logs and Driver Station logs from the same match or time, or Hoot logs
+// or a Driver Station log on their own.
 export interface SignalLogFile {
-  // Names the session: its data log's path, or its first Hoot log's.
+  // Names the session: its data log's path, or its first Hoot log's or its
+  // Driver Station log's.
   id: string;
-  // The data log, below the data folder; null for Hoot logs on their own.
+  // The data log, below the data folder; null without one.
   localPath: string | null;
   name: string;
   robot: string;
@@ -103,6 +132,7 @@ export interface SignalLogFile {
   recorded: string;
   match: MatchInfo | null;
   hoots: SessionHoot[];
+  dsLogs: SessionDsLog[];
 }
 
 export interface HootSessionStatus {
@@ -130,6 +160,8 @@ export interface SignalLogSummary {
   // Things about the log worth knowing before trusting it (values the
   // logger dropped, ...).
   warnings: string[];
+  // Its Driver Station logs, and how they were lined up (none live).
+  dsLogs?: DsLogStatus[];
 }
 
 export interface DiagnosticsApi {
@@ -163,6 +195,13 @@ export interface DiagnosticsApi {
   // list; null where there's none. Hoot signals not read yet are null.
   readValues(id: string, keys: string[], time: number): Promise<Record<string, SignalValue>>;
   getHootStatus(id: string): Promise<HootSessionStatus>;
+  // What happened in a log: events found in it, the match's phases, and
+  // notes. `pending` says what's still being looked for; ask again.
+  getEvents(id: string): Promise<SessionEvents>;
+  // Adds a note to a log (no id) or changes one; blank text deletes it.
+  // Resolves to the log's notes.
+  saveNote(id: string, note: { id?: string; time: number; text: string }): Promise<Annotation[]>;
+  deleteNote(id: string, noteId: string): Promise<Annotation[]>;
   // Puts a PNG on the clipboard. Resolves to an error message, or ''.
   copyImage(png: Uint8Array): Promise<string>;
   // A live session's connection, and how far its timeline goes. Asking keeps
@@ -196,6 +235,9 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'readSignal',
   'readValues',
   'getHootStatus',
+  'getEvents',
+  'saveNote',
+  'deleteNote',
   'copyImage',
   'getLiveStatus',
   'getEarlierRuns',

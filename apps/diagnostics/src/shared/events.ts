@@ -1,0 +1,130 @@
+// What happened in a log, for review (#94): events found in its signals
+// (brownouts, CAN errors, device faults, loop overruns, ...), the match's
+// phases, and notes people add. Both sides share these.
+//
+// Nothing here may touch Node or the DOM.
+
+export type EventSeverity = 'error' | 'warning' | 'info';
+
+export type EventKind =
+  | 'mode'
+  | 'brownout'
+  | 'can'
+  | 'fault'
+  | 'overrun'
+  | 'network'
+  | 'alert'
+  | 'message'
+  | 'state'
+  | 'command'
+  | 'note';
+
+export const eventKinds: { kind: EventKind; label: string }[] = [
+  { kind: 'mode', label: 'Enable and mode' },
+  { kind: 'brownout', label: 'Brownouts' },
+  { kind: 'can', label: 'CAN' },
+  { kind: 'fault', label: 'Device faults' },
+  { kind: 'overrun', label: 'Loop overruns' },
+  { kind: 'network', label: 'Network' },
+  { kind: 'alert', label: 'Alerts' },
+  { kind: 'message', label: 'Console' },
+  { kind: 'state', label: 'Subsystem states' },
+  { kind: 'command', label: 'Driver input' },
+  { kind: 'note', label: 'Notes' }
+];
+
+// Kinds that are many and ordinary (every state change, every button
+// press): listed only when picked.
+export const quietKinds: EventKind[] = ['state', 'command'];
+
+export interface LogEvent {
+  // The same each time the log is read: kind, what, and when.
+  id: string;
+  kind: EventKind;
+  severity: EventSeverity;
+  // Seconds, on the session's timeline (as signal series). A span when it
+  // lasted (a brownout, a fault held); `end` is null for a moment.
+  start: number;
+  end: number | null;
+  // Short: "Brownout", "TalonFX-59: supply current limit".
+  title: string;
+  // More, when there is: the message, how many times, the largest count.
+  detail: string;
+  // How many times it happened: ones close together are one event.
+  count: number;
+  // The signal to plot to see it, if there's one.
+  key: string | null;
+}
+
+export type MatchPhaseName = 'auto' | 'teleop' | 'endgame';
+
+export const phaseLabels: Record<MatchPhaseName, string> = { auto: 'Auto', teleop: 'Teleop', endgame: 'Endgame' };
+
+export interface MatchPhase {
+  name: MatchPhaseName;
+  start: number;
+  end: number;
+}
+
+// A note someone added at a time in a log.
+export interface Annotation {
+  id: string;
+  time: number;
+  text: string;
+  // ISO times.
+  created: string;
+  changed: string;
+}
+
+export interface SessionEvents {
+  events: LogEvent[];
+  phases: MatchPhase[];
+  notes: Annotation[];
+  // What's still being looked through (device faults in Hoot logs, which
+  // owlet exports first), or ''. Asked for again until it's ''.
+  pending: string;
+}
+
+// The last part of a match's teleop that's its endgame, in seconds. Each
+// season's game says; 2026's (REBUILT) is the last 30 seconds.
+export const endgameSeconds = 30;
+
+export const maxNoteLength = 2000;
+
+// Spans of one kind of event closer than this are one event: a fault that
+// flickers, overruns loop after loop.
+export const mergeGapSeconds = 2;
+
+// Joins spans less than `gap` apart, counting how many each became.
+export function mergeSpans(spans: { start: number; end: number | null }[], gap = mergeGapSeconds) {
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  const out: { start: number; end: number | null; count: number }[] = [];
+  for (const span of sorted) {
+    const last = out[out.length - 1];
+    const lastEnd = last ? last.end ?? last.start : -Infinity;
+    if (last && span.start - lastEnd <= gap) {
+      const end = Math.max(lastEnd, span.end ?? span.start);
+      last.end = end > last.start ? end : last.end;
+      last.count += 1;
+    } else {
+      out.push({ start: span.start, end: span.end, count: 1 });
+    }
+  }
+  return out;
+}
+
+// "Teleop 1:05": the phase a time is in and how far into it, or ''.
+export function phaseClock(phases: MatchPhase[], t: number): string {
+  const at = phaseAt(phases, t);
+  if (!at) return '';
+  const seconds = Math.max(0, at.into);
+  return `${phaseLabels[at.phase.name]} ${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+}
+
+// The phase a time is in, and how far into it.
+export function phaseAt(phases: MatchPhase[], t: number): { phase: MatchPhase; into: number } | null {
+  // Endgame is inside teleop: it wins.
+  const phase = phases.find((p) => p.name === 'endgame' && t >= p.start && t <= p.end) ??
+    phases.find((p) => t >= p.start && t <= p.end);
+  return phase ? { phase, into: t - phase.start } : null;
+}

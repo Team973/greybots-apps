@@ -2,11 +2,12 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, shell } 
 import { join } from 'node:path';
 
 import type { DiagnosticsApi } from '@shared/ipc';
-import { normalizeSettings, settingsErrors } from '@shared/settings';
+import { normalizeSettings, settingsErrors, type Settings } from '@shared/settings';
 import { checkConnection } from './connection-check';
 import { chooseImport, importStatus, runImport } from './import-service';
 import { earlierRuns, liveStatus } from './live-service';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
+import { deleteNote, saveNote } from './notes-store';
 import { loadSettings, storeSettings } from './settings-store';
 import {
   acceptCtreLicense,
@@ -16,6 +17,7 @@ import {
   readValues,
   owletStatus,
   readSignal,
+  sessionEvents,
   signalLogs,
   watchOwlet
 } from './signals-service';
@@ -61,6 +63,11 @@ function createWindow() {
 }
 
 // One handler per function the window can call (see shared/ipc.ts).
+// Notes go only on logs in the data folder: the window names the log.
+async function knownLog(settings: Settings, id: string) {
+  if (!(await signalLogs(settings)).some((log) => log.id === id)) throw new Error('That log is not in the data folder.');
+}
+
 const handlers: DiagnosticsApi = {
   async getAppInfo() {
     return { version: app.getVersion(), platform: process.platform };
@@ -128,6 +135,19 @@ const handlers: DiagnosticsApi = {
   },
   async readValues(id, keys, time) {
     return readValues(await loadSettings(), id, keys, time);
+  },
+  async getEvents(id) {
+    return sessionEvents(await loadSettings(), id);
+  },
+  async saveNote(id, note) {
+    const settings = await loadSettings();
+    await knownLog(settings, id);
+    return saveNote(settings, id, { id: typeof note.id === 'string' ? note.id : undefined, time: Number(note.time), text: String(note.text) });
+  },
+  async deleteNote(id, noteId) {
+    const settings = await loadSettings();
+    await knownLog(settings, id);
+    return deleteNote(settings, id, String(noteId));
   },
   async copyImage(png) {
     // Only a PNG: the window says what goes on the clipboard, not anything.

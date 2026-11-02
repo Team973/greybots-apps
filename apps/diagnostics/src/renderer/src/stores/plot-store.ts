@@ -2,9 +2,10 @@ import { defineStore } from 'pinia';
 
 import type { SignalKind } from '@shared/signals';
 
-// What's on the Signals page's chart: which signals, on which axes, and the
-// time span shown. Kept in a store so it survives going to another page and
-// back. Saving charts by name comes with dashboards (#95).
+// What's on the Signals page's chart: which log or live session, which
+// signals, on which axes, and the time span shown. Kept in a store so it
+// survives going to another page and back, and saved, so it's there again
+// when the app is opened. Saving charts by name comes with dashboards (#95).
 
 export type AxisSide = 'left' | 'right';
 
@@ -31,6 +32,8 @@ export interface PlotTrace {
   band: BandSide;
   // It stays with the signal while it's on the chart.
   color: TraceColor;
+  // Taken off the chart for now, but still listed with its values.
+  hidden?: boolean;
 }
 
 // Where a signal goes: an axis, a new one on one side, or a band.
@@ -52,14 +55,49 @@ function loadColors(): Record<string, TraceColor> {
   }
 }
 
+// The chart as it was last left.
+const savedKey = 'signals.chart';
+interface SavedChart {
+  logId: string;
+  axes: PlotAxis[];
+  traces: PlotTrace[];
+  view: [number, number] | null;
+}
+
+function loadChart(): SavedChart {
+  const empty: SavedChart = { logId: '', axes: [], traces: [], view: null };
+  try {
+    const saved = JSON.parse(localStorage.getItem(savedKey) ?? 'null') as Partial<SavedChart> | null;
+    if (!saved || typeof saved !== 'object') return empty;
+    const axes = Array.isArray(saved.axes)
+      ? saved.axes.filter((a) => typeof a?.id === 'string' && (a.side === 'left' || a.side === 'right'))
+      : [];
+    const traces = Array.isArray(saved.traces)
+      ? saved.traces.filter((t) => typeof t?.key === 'string' && typeof t.axis === 'string' &&
+          (t.axis === 'lanes' || axes.some((a) => a.id === t.axis))).slice(0, maxTraces)
+      : [];
+    const view = Array.isArray(saved.view) && saved.view.length === 2 && saved.view.every(Number.isFinite) ? saved.view : null;
+    // New axes are numbered after the ones brought back.
+    for (const axis of axes) nextAxisId = Math.max(nextAxisId, Number(axis.id.replace(/^axis/, '')) + 1 || nextAxisId);
+    return { logId: typeof saved.logId === 'string' ? saved.logId : '', axes, traces, view };
+  } catch {
+    return empty;
+  }
+}
+
 export const usePlotStore = defineStore('plot', {
-  state: () => ({
-    axes: [] as PlotAxis[],
-    traces: [] as PlotTrace[],
-    colorChoices: loadColors(),
-    // Seconds, as in signal series. Null shows the whole log.
-    view: null as [number, number] | null
-  }),
+  state: () => {
+    const saved = loadChart();
+    return {
+      // The log (or live session) open on the Signals page.
+      logId: saved.logId,
+      axes: saved.axes,
+      traces: saved.traces,
+      colorChoices: loadColors(),
+      // Seconds, as in signal series. Null shows the whole log.
+      view: saved.view
+    };
+  },
   getters: {
     // L1, L2, ... and R1, R2, ..., numbered outward from the plot.
     axisName: (state) => (id: string): string => {
@@ -112,6 +150,10 @@ export const usePlotStore = defineStore('plot', {
       else if (trace.axis === 'lanes') trace.axis = this.resolve(undefined);
       this.prune();
     },
+    toggleHidden(key: string) {
+      const trace = this.traces.find((t) => t.key === key);
+      if (trace) trace.hidden = !trace.hidden;
+    },
     remove(key: string) {
       this.traces = this.traces.filter((t) => t.key !== key);
       this.prune();
@@ -138,6 +180,10 @@ export const usePlotStore = defineStore('plot', {
     },
     setView(view: [number, number] | null) {
       this.view = view;
+    },
+    save() {
+      const chart: SavedChart = { logId: this.logId, axes: this.axes, traces: this.traces, view: this.view };
+      localStorage.setItem(savedKey, JSON.stringify(chart));
     }
   }
 });

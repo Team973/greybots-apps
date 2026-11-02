@@ -157,6 +157,19 @@ export class LogSignalSource {
     }
   }
 
+  // Every value of an entry as logged (arrays and all), for what a series
+  // can't hold: a list of alerts, say. In time order.
+  readValues(key: string): { times: number[]; values: LogValue[] } | null {
+    const location = this.locations.get(key);
+    if (!location || location.path.length > 0) return null;
+    const entry = this.log.entries[location.entry];
+    const records = [...this.log.records[location.entry]].sort((a, b) => a.timestamp - b.timestamp);
+    return {
+      times: records.map((record) => record.timestamp / 1e6 - this.firstTime),
+      values: records.map((record) => decodeValue(this.bytes, record, entry.type, this.structs))
+    };
+  }
+
   read(key: string, range: SignalRange = {}): SignalSeries | null {
     const location = this.locations.get(key);
     if (!location) return null;

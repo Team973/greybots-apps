@@ -50,7 +50,9 @@ export class HootLog {
   message = '';
   private manifest: Manifest | null = null;
   private owletPath = '';
-  private loaded = new Map<string, LogSignalSource>();
+  // Exports read, by file; shared while being read, as many signals are
+  // asked for at once and an export holds hundreds.
+  private loaded = new Map<string, Promise<LogSignalSource | null>>();
   private pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }[]>();
   private batchTimer: ReturnType<typeof setTimeout> | undefined;
   private opening: Promise<void> | null = null;
@@ -137,21 +139,30 @@ export class HootLog {
     if (this.state !== 'ready' || !this.manifest) throw new Error(this.message || "This Hoot log can't be read.");
     if (!this.manifest.exports[id]) await this.requestExport(id);
     const file = this.manifest.exports[id];
-    let source = this.loaded.get(file);
+    let loading = this.loaded.get(file);
+    if (!loading) {
+      loading = this.load(file);
+      this.loaded.set(file, loading);
+      loading.catch(() => this.loaded.delete(file));
+    }
+    const source = await loading;
     if (!source) {
-      const bytes = await fs.readFile(join(this.cacheDirectory, file)).catch(async (error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-        // Gone (deleted by hand, or a crash mid-export): export again.
-        for (const [signal, name] of Object.entries(this.manifest!.exports)) if (name === file) delete this.manifest!.exports[signal];
-        await this.writeManifest();
-        return null;
-      });
-      if (!bytes) return this.sourceFor(id);
-      // Hoot times as they are (seconds since the Hoot log started).
-      source = new LogSignalSource(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0);
-      this.loaded.set(file, source);
+      this.loaded.delete(file);
+      return this.sourceFor(id);
     }
     return source;
+  }
+
+  private async load(file: string): Promise<LogSignalSource | null> {
+    const bytes = await fs.readFile(join(this.cacheDirectory, file)).catch(async (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      // Gone (deleted by hand, or a crash mid-export): export again.
+      for (const [signal, name] of Object.entries(this.manifest!.exports)) if (name === file) delete this.manifest!.exports[signal];
+      await this.writeManifest();
+      return null;
+    });
+    // Hoot times as they are (seconds since the Hoot log started).
+    return bytes ? new LogSignalSource(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0) : null;
   }
 
   private requestExport(id: string): Promise<void> {
