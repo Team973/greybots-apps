@@ -14,13 +14,15 @@ import type { SavedView, ViewBody, ViewSpan } from '@shared/library';
 import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
 import { matchKey } from '@shared/signal-match';
+import type { PanelType } from '@shared/plots';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
 import { chartPng } from '@/chart-image';
 import { seasonFor } from '@/fields';
 import ColorPicker from '@/components/ColorPicker.vue';
 import EventList from '@/components/EventList.vue';
 import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomGesture } from '@/components/PlotChart.vue';
-import PlotPanels from '@/components/PlotPanels.vue';
+import PanelView from '@/components/PanelView.vue';
+import PlotTabs from '@/components/PlotTabs.vue';
 import ViewsMenu from '@/components/ViewsMenu.vue';
 import { formatBytes, formatTime } from '@/format';
 import { palette } from '@/palette';
@@ -867,6 +869,15 @@ onUnmounted(pause);
 // The other plots' season: the log's, by when it was recorded.
 const season = computed(() => seasonFor(summary.value?.startedAt ?? logs.value?.find((l) => l.id === selectedLog.value)?.recorded));
 
+// The tab shown: the line chart, or another plot (#144).
+const shownPanel = computed(() => plotStore.panels.find((p) => p.id === plotStore.activeTab) ?? null);
+const onLine = computed(() => shownPanel.value === null);
+const chartHeight = 460;
+
+function addPlot(type: PanelType) {
+  message.value = plotStore.addPanel(type, season.value);
+}
+
 // A moment picked in another plot (a console line).
 function seek(time: number) {
   pin.value = time;
@@ -1061,6 +1072,8 @@ watch(() => route.query.session, (session) => {
     </aside>
 
     <section class="card chart-area">
+      <PlotTabs v-if="summary" :panels="plotStore.panels" :active="shownPanel?.id ?? 'line'" @select="plotStore.showTab($event)"
+        @add="addPlot" @close="plotStore.removePanel($event)" />
       <div class="toolbar">
         <!-- Material's zoom_in and zoom_out icons, drawn here (no icon font: the
           app has to work offline). -->
@@ -1087,7 +1100,7 @@ watch(() => route.query.session, (session) => {
           {{ view[0].toFixed(2) }} – {{ view[1].toFixed(2) }} s of {{ full[1].toFixed(0) }} s
         </span>
         <span class="spacer"></span>
-        <md-outlined-icon-button v-if="summary" id="copy-image" :disabled="copying"
+        <md-outlined-icon-button v-if="summary && onLine" id="copy-image" :disabled="copying"
           :title="copyState === 'copied' ? 'Copied' : 'Copy the chart and its signals as an image, to paste into a PR'"
           :aria-label="copyState === 'copied' ? 'Copied' : 'Copy the chart as an image'" @click="copyImage">
           <svg viewBox="0 -960 960 960" width="20" height="20" aria-hidden="true">
@@ -1098,10 +1111,13 @@ watch(() => route.query.session, (session) => {
         </md-outlined-icon-button>
         <ViewsMenu v-if="summary" :available="viewSignals" :robot="selectedRobot" :current="currentView" :can-phase="!!review?.phases.length"
           @apply="applySavedView" />
-        <md-outlined-button v-if="plotStore.traces.length" @click="plotStore.clear()">Clear chart</md-outlined-button>
+        <md-outlined-button v-if="plotStore.traces.length && onLine" @click="plotStore.clear()">Clear chart</md-outlined-button>
       </div>
       <p v-if="copyState !== 'idle' && copyState !== 'copied'" class="error-text">{{ copyState }}</p>
-      <p v-if="isLive" class="hint small">
+      <p v-if="!onLine" class="hint small">
+        The span shown is the chart's: zoom here, or on the line chart's tab. The moment shown is the pin, the playhead, or now when following live.
+      </p>
+      <p v-else-if="isLive" class="hint small">
         Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
       </p>
       <p v-else class="hint small">
@@ -1111,9 +1127,11 @@ watch(() => route.query.session, (session) => {
       </p>
 
       <div class="chart-body">
-      <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @dragleave="onDragLeaveChart" @drop.prevent="onDrop($event)">
+      <PanelView v-if="summary && shownPanel" :key="shownPanel.id" :panel="shownPanel" :session="summary.id" :signals="summary.signals"
+        :time="valueTime" :span="view" :following="following" :dark="viewMode.isDarkMode" :height="chartHeight" @seek="seek" />
+      <div v-else class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @dragleave="onDragLeaveChart" @drop.prevent="onDrop($event)">
         <PlotChart v-if="summary" ref="chartElement" v-model:pin="pin" v-model:range="range" :lines="chartLines" :axes="chartAxes" :view="view" :full="full"
-          :height="460" :markers="markers" :phases="review?.phases ?? []" :selected-marker="selectedEvent"
+          :height="chartHeight" :markers="markers" :phases="review?.phases ?? []" :selected-marker="selectedEvent"
           :pin-label="playing ? 'Playing at' : 'Pinned at'" @zoom="zoomTo" @width="plotWidth = $event" @marker="onMarker" />
         <div v-if="summary && plotStore.traces.length === 0 && !dragging" class="empty">
           Drag signals here, or click one in the list.
@@ -1193,12 +1211,12 @@ watch(() => route.query.session, (session) => {
       <p v-if="message" class="error-text">{{ message }}</p>
       <p v-if="readError" class="error-text">{{ readError }}</p>
 
-      <div v-if="plotStore.traces.length" id="trace-columns" class="trace-columns">
+      <div v-if="plotStore.traces.length && onLine" id="trace-columns" class="trace-columns">
         <span class="hint small">Show</span>
         <button v-for="choice in columnChoices" :key="choice.id" class="chip" :aria-pressed="columns.includes(choice.id)"
           @click="toggleColumn(choice.id)">{{ choice.label }}</button>
       </div>
-      <div v-if="plotStore.traces.length" ref="traceBox" class="trace-scroll"
+      <div v-if="plotStore.traces.length && onLine" ref="traceBox" class="trace-scroll"
         :style="{ maxHeight: traceBoxHeight === null ? 'none' : `${traceBoxHeight}px` }">
         <table id="trace-list" class="plain traces">
           <thead>
@@ -1251,7 +1269,7 @@ watch(() => route.query.session, (session) => {
         </table>
       </div>
       </div>
-      <p v-if="plotStore.traces.length" class="hint small">
+      <p v-if="plotStore.traces.length && onLine" class="hint small">
         {{ following ? 'Values are the latest.' : pin !== null ? 'Values are at the pin.' : 'Values are at the right edge of the span shown.' }}
         <template v-if="showsStats && range">
           Min, max and mean are of {{ range[0].toFixed(2) }} – {{ range[1].toFixed(2) }} s
@@ -1260,9 +1278,6 @@ watch(() => route.query.session, (session) => {
         <template v-else-if="showsStats">Min, max and mean are of the span shown; Shift+drag across the chart for a range of it.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
         or band, click a colour to change it, and click the eye to hide it from the chart for now.
       </p>
-
-      <PlotPanels v-if="summary" :session="summary.id" :signals="summary.signals" :time="valueTime" :span="view" :following="following"
-        :dark="viewMode.isDarkMode" :season="season" @seek="seek" />
 
       <EventList v-if="summary && !isLive" v-model:filter="eventFilter" :events="allEvents" :phases="review?.phases ?? []"
         :selected="selectedEvent" :pending="review ? review.pending : 'Looking through the log…'" :can-note="canNote" :note-time="noteTime"

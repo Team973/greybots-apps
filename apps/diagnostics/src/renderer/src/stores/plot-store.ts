@@ -65,14 +65,16 @@ interface SavedChart {
   axes: PlotAxis[];
   traces: PlotTrace[];
   view: [number, number] | null;
-  // The other plots under the chart (#144).
+  // The other plots, each in a tab beside the chart's (#144).
   panels: PlotPanel[];
+  // The tab shown: 'line' for the chart, or a plot's id.
+  activeTab: string;
 }
 
 let nextPanelId = 1;
 
 function loadChart(): SavedChart {
-  const empty: SavedChart = { logId: '', axes: [], traces: [], view: null, panels: [] };
+  const empty: SavedChart = { logId: '', axes: [], traces: [], view: null, panels: [], activeTab: 'line' };
   try {
     const saved = JSON.parse(localStorage.getItem(savedKey) ?? 'null') as Partial<SavedChart> | null;
     if (!saved || typeof saved !== 'object') return empty;
@@ -88,7 +90,8 @@ function loadChart(): SavedChart {
     for (const axis of axes) nextAxisId = Math.max(nextAxisId, Number(axis.id.replace(/^axis/, '')) + 1 || nextAxisId);
     const panels = cleanPanels(saved.panels);
     for (const panel of panels) nextPanelId = Math.max(nextPanelId, Number(panel.id.replace(/^panel/, '')) + 1 || nextPanelId);
-    return { logId: typeof saved.logId === 'string' ? saved.logId : '', axes, traces, view, panels };
+    const activeTab = panels.some((p) => p.id === saved.activeTab) ? saved.activeTab! : 'line';
+    return { logId: typeof saved.logId === 'string' ? saved.logId : '', axes, traces, view, panels, activeTab };
   } catch {
     return empty;
   }
@@ -105,7 +108,8 @@ export const usePlotStore = defineStore('plot', {
       colorChoices: loadColors(),
       // Seconds, as in signal series. Null shows the whole log.
       view: saved.view,
-      panels: saved.panels
+      panels: saved.panels,
+      activeTab: saved.activeTab
     };
   },
   getters: {
@@ -218,35 +222,41 @@ export const usePlotStore = defineStore('plot', {
       this.axes = axes.map(({ id, side }) => ({ id, side }));
       this.traces = traces.slice(0, maxTraces);
       // A view saved before there were other plots leaves them as they are.
-      if (body.panels) this.panels = body.panels.map((p) => mapPanelKeys({ ...p, id: `panel${nextPanelId++}` }, find));
+      if (body.panels) {
+        this.panels = body.panels.map((p) => mapPanelKeys({ ...p, id: `panel${nextPanelId++}` }, find));
+        this.activeTab = 'line';
+      }
       this.prune();
       return missing;
     },
-    // --- The other plots (#144) ---
+    // --- The other plots (#144), each in a tab ---
+    // Opens a plot in a new tab, and shows it.
     addPanel(type: PanelType, season: string): string {
-      if (this.panels.length >= maxPanels) return `At most ${maxPanels} plots fit under the chart.`;
-      this.panels.push(newPanel(type, `panel${nextPanelId++}`, season));
+      if (this.panels.length >= maxPanels) return `At most ${maxPanels} plots can be open beside the chart.`;
+      const panel = newPanel(type, `panel${nextPanelId++}`, season);
+      this.panels.push(panel);
+      this.activeTab = panel.id;
       return '';
+    },
+    showTab(id: string) {
+      this.activeTab = id === 'line' || this.panels.some((p) => p.id === id) ? id : 'line';
     },
     updatePanel(panel: PlotPanel) {
       const at = this.panels.findIndex((p) => p.id === panel.id);
       if (at !== -1) this.panels.splice(at, 1, panel);
     },
+    // Closes a plot's tab. If it was shown, the tab before it is.
     removePanel(id: string) {
-      this.panels = this.panels.filter((p) => p.id !== id);
-    },
-    movePanel(id: string, by: -1 | 1) {
       const at = this.panels.findIndex((p) => p.id === id);
-      const to = at + by;
-      if (at === -1 || to < 0 || to >= this.panels.length) return;
-      const [panel] = this.panels.splice(at, 1);
-      this.panels.splice(to, 0, panel);
+      if (at === -1) return;
+      this.panels.splice(at, 1);
+      if (this.activeTab === id) this.activeTab = this.panels[at - 1]?.id ?? 'line';
     },
     setView(view: [number, number] | null) {
       this.view = view;
     },
     save() {
-      const chart: SavedChart = { logId: this.logId, axes: this.axes, traces: this.traces, view: this.view, panels: this.panels };
+      const chart: SavedChart = { logId: this.logId, axes: this.axes, traces: this.traces, view: this.view, panels: this.panels, activeTab: this.activeTab };
       localStorage.setItem(savedKey, JSON.stringify(chart));
     }
   }

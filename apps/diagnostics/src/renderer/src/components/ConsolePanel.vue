@@ -18,6 +18,8 @@ const props = defineProps<{
   // Following live: the newest lines are kept in sight.
   following: boolean;
   editing: boolean;
+  // The lines' box, pixels.
+  height?: number;
 }>();
 
 const emit = defineEmits<{
@@ -118,7 +120,7 @@ async function copyLines() {
       <span class="spacer"></span>
       <button class="small-button" :disabled="!filtered.length" @click="copyLines">{{ copied ? 'Copied' : 'Copy' }}</button>
     </div>
-    <div ref="list" class="console-lines" role="log">
+    <div ref="list" class="console-lines" role="log" :style="{ height: `${Math.max(200, height ?? 300)}px` }">
       <p v-if="!found" class="hint small">
         This log has no <span class="path">{{ panel.key || 'console' }}</span>.
         WPILib's DataLogManager logs what the robot code prints as <span class="path">console</span>; live, it comes from the roboRIO.
@@ -159,7 +161,6 @@ async function copyLines() {
 }
 
 .console-lines {
-  height: 300px;
   overflow: auto;
   padding: 4px 0;
   border: 1px solid rgba(127, 127, 127, 0.35);

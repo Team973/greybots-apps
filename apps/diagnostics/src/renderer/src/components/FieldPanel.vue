@@ -32,6 +32,8 @@ const props = defineProps<{
   span: [number, number];
   dark: boolean;
   editing: boolean;
+  // The most the field may take up and down, pixels.
+  maxHeight?: number;
 }>();
 
 const emit = defineEmits<{
@@ -125,8 +127,12 @@ const margin = 0.4;
 const turned = computed(() => props.panel.rotation === 90 || props.panel.rotation === 270);
 const viewLength = computed(() => field.value.length + 2 * margin);
 const viewWidth = computed(() => field.value.width + 2 * margin);
-const scale = computed(() => width.value / (turned.value ? viewWidth.value : viewLength.value));
-const height = computed(() => scale.value * (turned.value ? viewLength.value : viewWidth.value));
+// As big as fits the width, and the height it's given.
+const across = computed(() => (turned.value ? viewWidth.value : viewLength.value));
+const down = computed(() => (turned.value ? viewLength.value : viewWidth.value));
+const scale = computed(() => Math.min(width.value / across.value, (props.maxHeight ?? Infinity) / down.value));
+const drawWidth = computed(() => scale.value * across.value);
+const height = computed(() => scale.value * down.value);
 
 const image = new Image();
 const imageReady = ref(false);
@@ -142,16 +148,16 @@ function draw() {
   const element = canvas.value;
   if (!element) return;
   const ratio = window.devicePixelRatio || 1;
-  element.width = Math.round(width.value * ratio);
+  element.width = Math.round(drawWidth.value * ratio);
   element.height = Math.round(height.value * ratio);
   const ctx = element.getContext('2d');
   if (!ctx) return;
   const f = field.value;
   const s = scale.value;
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, width.value, height.value);
+  ctx.clearRect(0, 0, drawWidth.value, height.value);
   // The field's middle at the canvas's, turned, metres to pixels with y up.
-  ctx.translate(width.value / 2, height.value / 2);
+  ctx.translate(drawWidth.value / 2, height.value / 2);
   ctx.rotate((props.panel.rotation * Math.PI) / 180);
   const X = (x: number) => (x - f.length / 2) * s;
   const Y = (y: number) => -(y - f.width / 2) * s;
@@ -233,7 +239,7 @@ function draw() {
   }
 }
 
-watch([drawn, width, height, imageReady, () => props.panel.rotation, () => props.panel.robotSize, () => props.dark], () => requestAnimationFrame(draw));
+watch([drawn, drawWidth, height, imageReady, () => props.panel.rotation, () => props.panel.robotSize, () => props.dark], () => requestAnimationFrame(draw));
 
 let observer: ResizeObserver | undefined;
 onMounted(() => {
@@ -311,7 +317,7 @@ defineExpose({ image: () => canvas.value });
     </div>
 
     <div ref="box" class="field-box">
-      <canvas ref="canvas" :style="{ width: `${width}px`, height: `${height}px` }" @mousemove="onMove" @mouseleave="pointer = null"></canvas>
+      <canvas ref="canvas" :style="{ width: `${drawWidth}px`, height: `${height}px` }" @mousemove="onMove" @mouseleave="pointer = null"></canvas>
     </div>
     <p v-if="error" class="error-text small">{{ error }}</p>
 

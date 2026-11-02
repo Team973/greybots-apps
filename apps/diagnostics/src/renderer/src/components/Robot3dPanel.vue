@@ -33,6 +33,8 @@ const props = defineProps<{
   dark: boolean;
   editing: boolean;
   models: RobotModel[];
+  // The view's height, pixels.
+  height?: number;
 }>();
 
 const emit = defineEmits<{
@@ -67,7 +69,7 @@ const partPoses = computed<Pose[]>(() => {
 // --- The scene ---
 
 const box = ref<HTMLElement | null>(null);
-const height = 380;
+const height = computed(() => Math.max(240, props.height ?? 380));
 const loadError = ref('');
 const loading = ref(false);
 const follow = ref(true);
@@ -284,11 +286,11 @@ onMounted(() => {
     return;
   }
   renderer.setPixelRatio(window.devicePixelRatio || 1);
-  renderer.setSize(box.value.clientWidth, height);
+  renderer.setSize(box.value.clientWidth, height.value);
   box.value.appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(50, box.value.clientWidth / height, 0.05, 200);
+  camera = new THREE.PerspectiveCamera(50, box.value.clientWidth / height.value, 0.05, 200);
   // The field's way up: z.
   camera.up.set(0, 0, 1);
   controls = new OrbitControls(camera, renderer.domElement);
@@ -314,8 +316,8 @@ onMounted(() => {
   observer = new ResizeObserver(() => {
     if (!renderer || !box.value) return;
     const width = box.value.clientWidth;
-    renderer.setSize(width, height);
-    camera.aspect = width / height;
+    renderer.setSize(width, height.value);
+    camera.aspect = width / height.value;
     camera.updateProjectionMatrix();
     render();
   });

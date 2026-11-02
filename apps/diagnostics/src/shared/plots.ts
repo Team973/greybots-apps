@@ -83,7 +83,14 @@ export interface Robot3dPanel {
 
 export type PlotPanel = FieldPanel | ConsolePanel | PiePanel | Robot3dPanel;
 
-// At most this many on the page, and this many signals on a field or a pie.
+// A plot's name, for its tab.
+export function panelTitle(panel: PlotPanel): string {
+  if (panel.type === 'console') return panel.key && panel.key !== 'console' ? `Console: ${panel.key.split('/').pop()}` : 'Console';
+  if (panel.type === 'pie') return panel.mode === 'share' ? 'Pie: shares' : 'Pie: time at each value';
+  return panelLabels[panel.type];
+}
+
+// At most this many open beside the chart, and this many signals on a field or a pie.
 export const maxPanels = 6;
 export const maxFieldItems = 8;
 export const maxPieKeys = 8;

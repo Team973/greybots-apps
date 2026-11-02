@@ -91,7 +91,7 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 
 ## Pages
 
-- **Signals** (what the app opens on): logs and live signals, plotted, with a field, the console, pies and the robot in 3D under the chart; saved views.
+- **Signals** (what the app opens on): logs and live signals, plotted, with a field, the console, pies and the robot in 3D in tabs beside the chart; saved views.
 - **Reports:** reports, report templates, pipelines, and robot mappings.
 - **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
 - **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
@@ -241,7 +241,7 @@ The Signals page's list starts with two live sessions: **the robot**, and **a si
 
 ## Other plots
 
-Under the Signals page's chart, **Add a plot** adds up to six more (#144): a 2D field, the console, pie charts, and the robot in 3D. Each shows the moment the chart does (the pin, the playhead while playing back, or now when following live) over the span it shows, so playing back moves them all. They're kept with the chart (through other pages and restarts) and in saved views; a view saved before them leaves the plots as they are. Each has its settings (⚙), can be moved or removed, and a signal dragged from the list onto one is added to it. `src/shared/plots.ts`, `src/renderer/src/components/*Panel.vue`.
+The Signals page's chart has tabs (#144): the line chart's, then one for each other plot open, in the same space. **+** at the end opens another (up to six): a 2D field, the console, a pie chart, or the robot in 3D; ✕ on its tab closes it. The line chart's tab is always there. Each plot shows the moment the chart does (the pin, the playhead while playing back, or now when following live) over the span it shows, so the zoom buttons and playing back work on every tab. The tabs are kept with the chart (through other pages and restarts) and in saved views; a view saved before them leaves the plots as they are. Each has its settings, and a signal dragged from the list onto one is added to it. `src/shared/plots.ts`, `src/renderer/src/components/PlotTabs.vue`, `PanelView.vue` and `*Panel.vue`.
 
 **Whole values.** A line needs numbers, but a pose is a struct and a trajectory a list of them. `readRecords` sends a signal's values whole (structs as their fields, arrays as lists) over a span, with the one holding at its start, at most 20,000 (the latest kept). Data logs and live sessions have them; Hoot and Driver Station signals don't. Poses are read from WPILib's `Pose2d`, `Pose3d`, `Translation2d`, `Translation3d` and lists of them, and Field2d's `double[]` (x, y, degrees for each).
 
