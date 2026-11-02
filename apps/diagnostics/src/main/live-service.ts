@@ -12,9 +12,11 @@ import type { SignalLogSummary } from '@shared/ipc';
 import { liveSessions, type EarlierRun, type LiveState, type LiveStatus } from '@shared/live';
 import { robotAddresses, type RobotAddress } from '@shared/robot-address';
 import type { Settings } from '@shared/settings';
+import type { SignalRecords } from '@shared/plots';
 import { groupSignals, type SignalInfo, type SignalRange, type SignalSeries } from '@shared/signals';
 import { checkPort } from './connection-check';
 import { LiveSignalSource } from './live/live-source';
+import { NetConsole } from './live/net-console';
 import { Nt4Client, nt4Port } from './live/nt4-client';
 import { loadSettings } from './settings-store';
 
@@ -43,6 +45,8 @@ interface Live {
   host: string;
   message: string;
   client: Nt4Client | null;
+  // The roboRIO's console, beside NetworkTables (a simulator has none).
+  console: NetConsole | null;
   run: Run | null;
   // The run before this one (or an earlier run of the same robot), whose
   // signal list is shown until this one's settles.
@@ -73,6 +77,7 @@ function stop(session: Live) {
   session.stopped = true;
   clearTimeout(session.retry);
   session.client?.close();
+  session.console?.close();
   keep(session.id, session.run);
 }
 
@@ -89,6 +94,7 @@ function session(id: string): Live {
     host: '',
     message: '',
     client: null,
+    console: null,
     run: null,
     // Until it connects, the last run from here shows what it had.
     stale: earlier.find((e) => e.target === id) ?? null,
@@ -128,6 +134,11 @@ async function connect(session: Live) {
   }
 
   session.host = found.host;
+  // What the robot code prints comes as `console`, as DataLogManager logs it.
+  if (session.id === 'live:robot' && session.console?.host !== found.host) {
+    session.console?.close();
+    session.console = new NetConsole(found.host, (line) => session.run?.source.addText('console', line.text));
+  }
   session.client = new Nt4Client(found.host, {
     connected(serverUs) {
       if (!session.run || !session.run.source.continues(serverUs)) {
@@ -250,6 +261,14 @@ export function openLive(id: string): SignalLogSummary {
     groups: groupSignals(signals),
     warnings: []
   };
+}
+
+export function readLiveRecords(id: string, key: string, range: SignalRange, max: number): SignalRecords | null {
+  const kept = earlierRun(id);
+  if (kept) return kept.source.records(key, range, max);
+  const s = session(id);
+  tick(s);
+  return s.run?.source.records(key, range, max) ?? null;
 }
 
 export function readLive(id: string, key: string, range: SignalRange): SignalSeries | null {

@@ -16,9 +16,11 @@ import { describeMatch } from '@shared/offload';
 import { matchKey } from '@shared/signal-match';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
 import { chartPng } from '@/chart-image';
+import { seasonFor } from '@/fields';
 import ColorPicker from '@/components/ColorPicker.vue';
 import EventList from '@/components/EventList.vue';
 import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomGesture } from '@/components/PlotChart.vue';
+import PlotPanels from '@/components/PlotPanels.vue';
 import ViewsMenu from '@/components/ViewsMenu.vue';
 import { formatBytes, formatTime } from '@/format';
 import { palette } from '@/palette';
@@ -689,8 +691,9 @@ function zoomBy(factor: number) {
 
 // --- Saved views (#148) ---
 
-// Signals a view's can be found among: those with values.
-const viewSignals = computed(() => (summary.value?.signals ?? []).filter((s) => s.kind !== 'other' && s.count !== 0).map((s) => s.key));
+// Signals a view's can be found among: those with values (poses and all,
+// for the other plots).
+const viewSignals = computed(() => (summary.value?.signals ?? []).filter((s) => s.count !== 0).map((s) => s.key));
 const selectedRobot = computed(() => (logs.value ?? []).find((log) => log.id === selectedLog.value)?.robot ?? '');
 
 function currentView(span: ViewSpan): ViewBody {
@@ -860,6 +863,15 @@ function advance(now: number) {
   else frame = requestAnimationFrame(advance);
 }
 onUnmounted(pause);
+
+// The other plots' season: the log's, by when it was recorded.
+const season = computed(() => seasonFor(summary.value?.startedAt ?? logs.value?.find((l) => l.id === selectedLog.value)?.recorded));
+
+// A moment picked in another plot (a console line).
+function seek(time: number) {
+  pin.value = time;
+  showTime(time);
+}
 
 function scrub(event: Event) {
   pin.value = Number((event.target as HTMLInputElement).value);
@@ -1248,6 +1260,9 @@ watch(() => route.query.session, (session) => {
         <template v-else-if="showsStats">Min, max and mean are of the span shown; Shift+drag across the chart for a range of it.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
         or band, click a colour to change it, and click the eye to hide it from the chart for now.
       </p>
+
+      <PlotPanels v-if="summary" :session="summary.id" :signals="summary.signals" :time="valueTime" :span="view" :following="following"
+        :dark="viewMode.isDarkMode" :season="season" @seek="seek" />
 
       <EventList v-if="summary && !isLive" v-model:filter="eventFilter" :events="allEvents" :phases="review?.phases ?? []"
         :selected="selectedEvent" :pending="review ? review.pending : 'Looking through the log…'" :can-note="canNote" :note-time="noteTime"

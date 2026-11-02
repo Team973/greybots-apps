@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 
 import type { SignalLogFile } from '@shared/ipc';
-import { templateKeys, type ReportTemplate, type SavedView, type SignalMapping } from '@shared/library';
+import { templateKeys, viewKeys, type ReportTemplate, type SavedView, type SignalMapping } from '@shared/library';
 import { matchKey, suggestKeys } from '@shared/signal-match';
 import type { SignalInfo } from '@shared/signals';
 
@@ -41,7 +41,7 @@ const wanted = computed(() => {
     if (source.value === 'all' || source.value === template.id) for (const key of templateKeys(template.sections, template.scope)) keys.add(key);
   }
   for (const view of props.views) {
-    if (source.value === 'all' || source.value === view.id) for (const trace of view.traces) keys.add(trace.key);
+    if (source.value === 'all' || source.value === view.id) for (const key of viewKeys(view)) keys.add(key);
   }
   return [...keys].sort();
 });
@@ -55,7 +55,7 @@ watch(logId, async (id) => {
   loading.value = true;
   try {
     const summary = await window.diagnostics.openSignalLog(id);
-    if (logId.value === id) signals.value = summary.signals.filter((s) => s.kind !== 'other' && s.count !== 0);
+    if (logId.value === id) signals.value = summary.signals.filter((s) => s.count !== 0);
   } catch (error) {
     problem.value = (error as Error).message;
   } finally {

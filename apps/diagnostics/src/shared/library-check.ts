@@ -17,6 +17,7 @@ import {
   type ViewSpan
 } from './library';
 import type { MatchType } from './offload';
+import { cleanPanels } from './plots';
 
 type Raw = Record<string, unknown>;
 
@@ -56,7 +57,13 @@ export function cleanViewBody(raw: Raw): ViewBody {
   const cleanSpan: ViewSpan = span.type === 'phase' && ['auto', 'teleop', 'endgame', 'match'].includes(span.phase as string)
     ? { type: 'phase', phase: span.phase as 'auto' | 'teleop' | 'endgame' | 'match' }
     : { type: 'all' };
-  return { axes, traces, span: cleanSpan, eventKinds: raw.eventKinds === null || raw.eventKinds === undefined ? null : eventKindList(raw.eventKinds) };
+  return {
+    axes,
+    traces,
+    span: cleanSpan,
+    eventKinds: raw.eventKinds === null || raw.eventKinds === undefined ? null : eventKindList(raw.eventKinds),
+    ...(Array.isArray(raw.panels) ? { panels: cleanPanels(raw.panels) } : {})
+  };
 }
 
 function cleanScope(raw: unknown): ReportScope {

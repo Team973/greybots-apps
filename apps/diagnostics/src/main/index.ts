@@ -13,6 +13,7 @@ import { earlierRuns, liveStatus } from './live-service';
 import { getLibraryItem, listLibrary, saveLibraryItem, storeLibraryItem } from './library-store';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { deleteNote, saveNote } from './notes-store';
+import { addModel, listModels, readModelFile, removeModel } from './robot-models';
 import { deleteReport, generateReport, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
 import { loadSettings, storeSettings } from './settings-store';
 import {
@@ -22,6 +23,7 @@ import {
   openSignalLog,
   readValues,
   owletStatus,
+  readRecords,
   readSignal,
   sessionEvents,
   signalLogs,
@@ -30,6 +32,9 @@ import {
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
 
 let mainWindow: BrowserWindow | null = null;
+
+// The most values one readRecords sends.
+const maxRecords = 20000;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -141,6 +146,9 @@ const handlers: DiagnosticsApi = {
   async readSignal(id, key, range) {
     return readSignal(await loadSettings(), id, key, range);
   },
+  async readRecords(id, key, range, max) {
+    return readRecords(await loadSettings(), id, String(key), range, Math.max(1, Math.min(Number(max) || 1, maxRecords)));
+  },
   async getHootStatus(id) {
     return hootStatus(await loadSettings(), id);
   },
@@ -227,6 +235,24 @@ const handlers: DiagnosticsApi = {
   },
   async getPipelineStatus() {
     return pipelineStatus();
+  },
+  async getRobotModels() {
+    return listModels(await loadSettings());
+  },
+  async addRobotModel() {
+    const options: Electron.OpenDialogOptions = {
+      title: "Choose a robot model's folder (with model.glb in it)",
+      properties: ['openDirectory']
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return null;
+    return addModel(await loadSettings(), result.filePaths[0]);
+  },
+  async removeRobotModel(id) {
+    return removeModel(await loadSettings(), String(id));
+  },
+  async readModelFile(id, file) {
+    return readModelFile(await loadSettings(), String(id), String(file));
   },
   async savePdf(suggestedName) {
     if (!mainWindow) return '';

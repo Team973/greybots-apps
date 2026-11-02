@@ -4,7 +4,8 @@
 
 import { liveKeepSeconds } from '@shared/live';
 import { splitName, unitFor, type SignalInfo, type SignalKind, type SignalRange, type SignalSeries } from '@shared/signals';
-import { asNumber, downsample, fieldSignals, firstAtOrAfter, heldStats, pick } from '../signals/log-source';
+import type { SignalRecords } from '@shared/plots';
+import { asNumber, downsample, fieldSignals, firstAtOrAfter, heldStats, pick, plainValue } from '../signals/log-source';
 import { StructRegistry } from '../signals/structs';
 import type { LogValue } from '../signals/wpilog';
 import type { PackValue } from './msgpack';
@@ -91,6 +92,15 @@ export class LiveSignalSource {
     this.trim(buffer);
   }
 
+  // Text that doesn't come over NetworkTables (the roboRIO's console), as a
+  // text signal of its own, at the robot's clock now.
+  addText(name: string, text: string) {
+    const topic: Nt4Topic = { id: -1, name, type: 'string', properties: {} };
+    const buffer = this.buffers.get(name);
+    if (!buffer || buffer.topic.id !== -1) this.announce(topic);
+    this.add(topic, this.originUs + this.now * 1e6, text);
+  }
+
   private trim(buffer: TopicBuffer) {
     const cutoff = this.now - keepSeconds;
     while (buffer.first + 1 < buffer.times.length && buffer.times[buffer.first + 1] <= cutoff) buffer.first += 1;
@@ -141,6 +151,27 @@ export class LiveSignalSource {
     }
     this.signals = signals;
     return signals;
+  }
+
+  // Every value over a span, decoded whole, as a data log's (log-source.ts).
+  records(key: string, range: SignalRange = {}, max = Infinity): SignalRecords | null {
+    if (!this.signals) this.catalog();
+    const location = this.locations.get(key);
+    const buffer = location && this.buffers.get(location.name);
+    if (!location || !buffer) return null;
+    const count = buffer.times.length - buffer.first;
+    const timeAt = (i: number) => buffer.times[buffer.first + i];
+    const first = Math.max(0, firstAtOrAfter(count, timeAt, range.start ?? -Infinity, true) - 1);
+    const last = firstAtOrAfter(count, timeAt, range.end ?? Infinity, true);
+    const from = Math.max(first, last - max);
+    const times: number[] = [];
+    const values: SignalRecords['values'] = [];
+    for (let i = from; i < last; i++) {
+      const decoded = this.decode(buffer, buffer.values[buffer.first + i]);
+      times.push(timeAt(i));
+      values.push(plainValue(location.path.length === 0 ? decoded : pick(decoded, location.path)));
+    }
+    return { key, type: buffer.topic.type, times, values, truncated: from > first };
   }
 
   read(key: string, range: SignalRange = {}): SignalSeries | null {

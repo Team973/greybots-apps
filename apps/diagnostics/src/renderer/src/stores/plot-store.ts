@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 
 import type { EventKind } from '@shared/events';
 import type { ViewBody, ViewSpan } from '@shared/library';
+import { cleanPanels, mapPanelKeys, maxPanels, newPanel, type PanelType, type PlotPanel } from '@shared/plots';
 import type { SignalKind } from '@shared/signals';
 
 // What's on the Signals page's chart: which log or live session, which
@@ -64,10 +65,14 @@ interface SavedChart {
   axes: PlotAxis[];
   traces: PlotTrace[];
   view: [number, number] | null;
+  // The other plots under the chart (#144).
+  panels: PlotPanel[];
 }
 
+let nextPanelId = 1;
+
 function loadChart(): SavedChart {
-  const empty: SavedChart = { logId: '', axes: [], traces: [], view: null };
+  const empty: SavedChart = { logId: '', axes: [], traces: [], view: null, panels: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(savedKey) ?? 'null') as Partial<SavedChart> | null;
     if (!saved || typeof saved !== 'object') return empty;
@@ -81,7 +86,9 @@ function loadChart(): SavedChart {
     const view = Array.isArray(saved.view) && saved.view.length === 2 && saved.view.every(Number.isFinite) ? saved.view : null;
     // New axes are numbered after the ones brought back.
     for (const axis of axes) nextAxisId = Math.max(nextAxisId, Number(axis.id.replace(/^axis/, '')) + 1 || nextAxisId);
-    return { logId: typeof saved.logId === 'string' ? saved.logId : '', axes, traces, view };
+    const panels = cleanPanels(saved.panels);
+    for (const panel of panels) nextPanelId = Math.max(nextPanelId, Number(panel.id.replace(/^panel/, '')) + 1 || nextPanelId);
+    return { logId: typeof saved.logId === 'string' ? saved.logId : '', axes, traces, view, panels };
   } catch {
     return empty;
   }
@@ -97,7 +104,8 @@ export const usePlotStore = defineStore('plot', {
       traces: saved.traces,
       colorChoices: loadColors(),
       // Seconds, as in signal series. Null shows the whole log.
-      view: saved.view
+      view: saved.view,
+      panels: saved.panels
     };
   },
   getters: {
@@ -186,7 +194,8 @@ export const usePlotStore = defineStore('plot', {
         axes: this.axes.map((a) => ({ ...a })),
         traces: this.traces.map((t) => ({ key: t.key, kind: t.kind, axis: t.axis, band: t.band, color: t.color, ...(t.hidden ? { hidden: true } : {}) })),
         span,
-        eventKinds
+        eventKinds,
+        panels: this.panels.map((p) => JSON.parse(JSON.stringify(p)) as PlotPanel)
       };
     },
     // Puts a saved view on the chart, each signal found in this log by
@@ -208,14 +217,36 @@ export const usePlotStore = defineStore('plot', {
       }
       this.axes = axes.map(({ id, side }) => ({ id, side }));
       this.traces = traces.slice(0, maxTraces);
+      // A view saved before there were other plots leaves them as they are.
+      if (body.panels) this.panels = body.panels.map((p) => mapPanelKeys({ ...p, id: `panel${nextPanelId++}` }, find));
       this.prune();
       return missing;
+    },
+    // --- The other plots (#144) ---
+    addPanel(type: PanelType, season: string): string {
+      if (this.panels.length >= maxPanels) return `At most ${maxPanels} plots fit under the chart.`;
+      this.panels.push(newPanel(type, `panel${nextPanelId++}`, season));
+      return '';
+    },
+    updatePanel(panel: PlotPanel) {
+      const at = this.panels.findIndex((p) => p.id === panel.id);
+      if (at !== -1) this.panels.splice(at, 1, panel);
+    },
+    removePanel(id: string) {
+      this.panels = this.panels.filter((p) => p.id !== id);
+    },
+    movePanel(id: string, by: -1 | 1) {
+      const at = this.panels.findIndex((p) => p.id === id);
+      const to = at + by;
+      if (at === -1 || to < 0 || to >= this.panels.length) return;
+      const [panel] = this.panels.splice(at, 1);
+      this.panels.splice(to, 0, panel);
     },
     setView(view: [number, number] | null) {
       this.view = view;
     },
     save() {
-      const chart: SavedChart = { logId: this.logId, axes: this.axes, traces: this.traces, view: this.view };
+      const chart: SavedChart = { logId: this.logId, axes: this.axes, traces: this.traces, view: this.view, panels: this.panels };
       localStorage.setItem(savedKey, JSON.stringify(chart));
     }
   }
