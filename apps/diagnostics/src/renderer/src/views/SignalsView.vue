@@ -8,8 +8,8 @@ import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
-import { eventKinds, phaseClock, type LogEvent, type SessionEvents } from '@shared/events';
-import type { HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
+import { eventKinds, phaseClock, quietKinds, type LogEvent, type SessionEvents } from '@shared/events';
+import type { DsLogStatus, HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
@@ -38,10 +38,16 @@ const themePalette = computed(() => (viewMode.isDarkMode ? palette.dark : palett
 const colorOf = (color: TraceColor) => (typeof color === 'number' ? themePalette.value[color] : color);
 
 const logs = ref<SignalLogFile[] | null>(null);
+// Driver Station logs with no data log or Hoot log are listed apart: there
+// are many (each time it was open with a robot), and they'd crowd the rest.
+const dsOnlyLogs = computed(() => (logs.value ?? []).filter((log) => !log.localPath && log.hoots.length === 0));
+const robotLogs = computed(() => (logs.value ?? []).filter((log) => log.localPath || log.hoots.length > 0));
 const selectedLog = ref('');
 const summary = ref<SignalLogSummary | null>(null);
 // The moment pinned on the chart: clicked, jumped to, or the playhead.
 const pin = ref<number | null>(null);
+// A span picked with Shift+drag: min, max and mean are of it, not of the span shown.
+const range = ref<[number, number] | null>(null);
 const opening = ref(false);
 const openError = ref('');
 const message = ref('');
@@ -202,8 +208,17 @@ function signalLabel(signal: SignalInfo): string {
 function logLabel(log: SignalLogFile): string {
   const when = formatTime(log.recorded);
   const what = log.match ? `${describeMatch(log.match)}, ${when}` : `${when} (${log.name})`;
-  if (!log.localPath) return `${what}, Hoot only`;
-  return log.hoots.length ? `${what} + ${log.hoots.length} Hoot` : what;
+  if (!log.localPath) return `${what}, ${log.hoots.length ? 'Hoot' : 'DS log'} only`;
+  const also = [log.hoots.length ? `${log.hoots.length} Hoot` : '', log.dsLogs.length ? 'DS log' : ''].filter(Boolean);
+  return also.length ? `${what} + ${also.join(' + ')}` : what;
+}
+
+function describeDsLog(ds: DsLogStatus): string {
+  const offset = `${ds.offset >= 0 ? '+' : ''}${ds.offset.toFixed(2)} s`;
+  const placed = ds.alignment === 'base' ? 'the timeline'
+    : ds.alignment === 'enable' ? `lined up by the first enable (${offset})`
+      : `lined up by the clocks (${offset}), which can be a second or so out`;
+  return [placed, ds.match ? `FMS: ${ds.match}` : '', ds.truncated ? 'the end is cut off' : ''].filter(Boolean).join('; ');
 }
 
 // The unit, from the catalog or, for a Hoot signal, from its first read.
@@ -224,6 +239,7 @@ function describeAlignment(hoot: HootSessionStatus['hoots'][number]): string {
 async function openLog() {
   pause();
   pin.value = null;
+  range.value = null;
   review.value = null;
   selectedEvent.value = null;
   clearTimeout(eventsTimer);
@@ -521,12 +537,36 @@ function toggleColumn(id: Column) {
 }
 const showsStats = computed(() => columns.value.some((c) => c !== 'value'));
 
+// Stats over the range picked, read for it (at full detail: they're of every
+// value in it, whatever's drawn).
+const rangeStats = shallowRef(new Map<string, SignalSeries['stats']>());
+let rangeRequest = 0;
+async function readRangeStats() {
+  const log = summary.value?.id;
+  const picked = range.value;
+  const mine = ++rangeRequest;
+  if (!log || !picked) {
+    rangeStats.value = new Map();
+    return;
+  }
+  const keys = plotStore.traces.map((t) => t.key).filter((key) => signalsByKey.value.has(key));
+  const results = await Promise.all(keys.map((key) =>
+    window.diagnostics.readSignal(log, key, { start: picked[0], end: picked[1], maxPoints: 2 }).catch(() => null)));
+  if (mine === rangeRequest) rangeStats.value = new Map(keys.map((key, i) => [key, results[i]?.stats ?? null]));
+}
+watch([range, () => summary.value?.id, () => plotStore.traces.map((t) => t.key).join('\n')], readRangeStats);
+// Picking a range is asking for its stats: they're shown if they weren't.
+watch(range, (picked) => {
+  if (picked && !showsStats.value) columns.value = columnChoices.map((c) => c.id);
+});
+
 function cell(key: string, column: Column): string {
   const line = series.value.get(key);
   if (!line) return '';
   const unit = unitOf(key);
   if (column === 'value') return formatValue(valueAtTime(line, valueTime.value), line.kind, unit);
-  return line.stats ? formatNumber(line.stats[column], unit) : '';
+  const stats = range.value ? rangeStats.value.get(key) : line.stats;
+  return stats ? formatNumber(stats[column], unit) : '';
 }
 
 // The signal list: each signal shown gets its value too. Asked of the
@@ -666,7 +706,8 @@ function storedFilter(): EventFilter {
   } catch {
     // Fall through to everything but the routine.
   }
-  return { kinds: all, routine: false };
+  // State changes and button presses are many: only once picked.
+  return { kinds: all.filter((k) => !quietKinds.includes(k)), routine: false };
 }
 const eventFilter = ref<EventFilter>(storedFilter());
 watch(eventFilter, (value) => localStorage.setItem('signals.eventFilter', JSON.stringify(value)));
@@ -828,7 +869,7 @@ async function loadLogs() {
   const wanted = selectedLog.value || plotStore.logId;
   const there = isLiveNow(wanted) || logs.value.some((log) => log.id === wanted) ||
     earlierRuns.value.some((run) => run.id === wanted);
-  selectedLog.value = there ? wanted : logs.value[0]?.id ?? '';
+  selectedLog.value = there ? wanted : (robotLogs.value[0] ?? logs.value[0])?.id ?? '';
 }
 
 // The chart, saved as it changes.
@@ -885,8 +926,14 @@ watch(() => route.query.session, (session) => {
               <optgroup v-if="earlierRuns.length" label="Earlier live runs (kept until the app closes)">
                 <option v-for="run in earlierRuns" :key="run.id" :value="run.id">{{ runLabel(run) }}</option>
               </optgroup>
-              <optgroup v-if="logs.length" label="Logs">
-                <option v-for="log in logs" :key="log.id" :value="log.id">
+              <optgroup v-if="robotLogs.length" label="Logs">
+                <option v-for="log in robotLogs" :key="log.id" :value="log.id">
+                  {{ logLabel(log) }} · {{ formatBytes(log.size) }}
+                </option>
+              </optgroup>
+              <!-- Many: every time the Driver Station was open with a robot. -->
+              <optgroup v-if="dsOnlyLogs.length" label="Driver Station logs on their own">
+                <option v-for="log in dsOnlyLogs" :key="log.id" :value="log.id">
                   {{ logLabel(log) }} · {{ formatBytes(log.size) }}
                 </option>
               </optgroup>
@@ -895,7 +942,10 @@ watch(() => route.query.session, (session) => {
           </span>
         </label>
         <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're pulled from the robot on the Offload page, or imported on the Storage page.</p>
-        <p v-else-if="logs && !isLive" class="hint small">Data logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand.</p>
+        <p v-else-if="logs && !isLive" class="hint small">
+          Logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand: data logs, Hoot logs, and
+          Driver Station logs with a robot connected.
+        </p>
         <p v-if="isLive" id="log-summary" class="hint">
           Signals the robot code publishes to NetworkTables (DogLog does, under <span class="path">/Robot</span>), as they change.
           The last {{ liveKeepSeconds / 60 }} minutes are kept while this is open.
@@ -916,6 +966,12 @@ watch(() => route.query.session, (session) => {
               {{ hoot.message }}
               <RouterLink v-if="hoot.state === 'license' || hoot.state === 'owlet'" to="/settings">Settings</RouterLink>
             </div>
+          </div>
+        </div>
+        <div v-if="summary?.dsLogs?.length" id="ds-status" class="hoots">
+          <div v-for="ds in summary.dsLogs" :key="ds.localPath" class="hoot">
+            <strong>{{ ds.label }}</strong> <span class="hint small">{{ formatBytes(ds.size) }}</span>
+            <div class="hint small">{{ describeDsLog(ds) }}</div>
           </div>
         </div>
         <template v-if="summary">
@@ -1014,13 +1070,14 @@ watch(() => route.query.session, (session) => {
         Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
       </p>
       <p v-else class="hint small">
-        Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all. Click to pin a moment, or a
+        Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it (Shift+drag to pick it for min, max and mean),
+        double-click to show all. Click to pin a moment, or a
         marker along the top for what happened there. Space plays from the pin; [ and ] step through errors and warnings.
       </p>
 
       <div class="chart-body">
       <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @dragleave="onDragLeaveChart" @drop.prevent="onDrop($event)">
-        <PlotChart v-if="summary" ref="chartElement" v-model:pin="pin" :lines="chartLines" :axes="chartAxes" :view="view" :full="full"
+        <PlotChart v-if="summary" ref="chartElement" v-model:pin="pin" v-model:range="range" :lines="chartLines" :axes="chartAxes" :view="view" :full="full"
           :height="460" :markers="markers" :phases="review?.phases ?? []" :selected-marker="selectedEvent"
           :pin-label="playing ? 'Playing at' : 'Pinned at'" @zoom="zoomTo" @width="plotWidth = $event" @marker="onMarker" />
         <div v-if="summary && plotStore.traces.length === 0 && !dragging" class="empty">
@@ -1161,7 +1218,11 @@ watch(() => route.query.session, (session) => {
       </div>
       <p v-if="plotStore.traces.length" class="hint small">
         {{ following ? 'Values are the latest.' : pin !== null ? 'Values are at the pin.' : 'Values are at the right edge of the span shown.' }}
-        <template v-if="showsStats">Min, max and mean are of the span shown.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
+        <template v-if="showsStats && range">
+          Min, max and mean are of {{ range[0].toFixed(2) }} – {{ range[1].toFixed(2) }} s
+          (<button id="clear-range" class="link-button" @click="range = null">use the span shown</button>).
+        </template>
+        <template v-else-if="showsStats">Min, max and mean are of the span shown; Shift+drag across the chart for a range of it.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
         or band, click a colour to change it, and click the eye to hide it from the chart for now.
       </p>
 
@@ -1597,6 +1658,16 @@ select {
 
 .trace-buttons {
   white-space: nowrap;
+}
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .eye {

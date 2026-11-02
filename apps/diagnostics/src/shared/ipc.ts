@@ -89,12 +89,40 @@ export interface SessionHoot {
   size: number;
 }
 
-// One recording to read signals from: a WPILib data log and the CTRE Hoot
-// logs from the same match or time, or Hoot logs on their own.
+// A Driver Station log (.dslog), and the .dsevents beside it if there is one.
+export interface SessionDsLog {
+  localPath: string;
+  eventsPath: string | null;
+  name: string;
+  // "DS log", or "DS log 2" when a session has more than one.
+  label: string;
+  size: number;
+}
+
+// How a Driver Station log was put on the session's timeline: it is the
+// timeline (on its own), by the first enable in both, or by the clock.
+export type DsAlignment = 'base' | 'enable' | 'clock';
+
+export interface DsLogStatus {
+  localPath: string;
+  label: string;
+  size: number;
+  alignment: DsAlignment;
+  // Seconds added to its times.
+  offset: number;
+  // "Qualification 12", when the FMS was connected.
+  match: string | null;
+  truncated: boolean;
+}
+
+// One recording to read signals from: a WPILib data log with the CTRE Hoot
+// logs and Driver Station logs from the same match or time, or Hoot logs
+// or a Driver Station log on their own.
 export interface SignalLogFile {
-  // Names the session: its data log's path, or its first Hoot log's.
+  // Names the session: its data log's path, or its first Hoot log's or its
+  // Driver Station log's.
   id: string;
-  // The data log, below the data folder; null for Hoot logs on their own.
+  // The data log, below the data folder; null without one.
   localPath: string | null;
   name: string;
   robot: string;
@@ -104,6 +132,7 @@ export interface SignalLogFile {
   recorded: string;
   match: MatchInfo | null;
   hoots: SessionHoot[];
+  dsLogs: SessionDsLog[];
 }
 
 export interface HootSessionStatus {
@@ -131,6 +160,8 @@ export interface SignalLogSummary {
   // Things about the log worth knowing before trusting it (values the
   // logger dropped, ...).
   warnings: string[];
+  // Its Driver Station logs, and how they were lined up (none live).
+  dsLogs?: DsLogStatus[];
 }
 
 export interface DiagnosticsApi {

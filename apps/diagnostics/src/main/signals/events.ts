@@ -6,6 +6,7 @@
 
 import {
   endgameSeconds,
+  mergeGapSeconds,
   mergeSpans,
   type EventKind,
   type EventSeverity,
@@ -13,6 +14,7 @@ import {
   type MatchPhase
 } from '@shared/events';
 import { valueAtTime, type SignalSeries } from '@shared/signals';
+import type { DsLog, DsMessage } from './ds-log';
 import type { LogSignalSource } from './log-source';
 import type { LogValue } from './wpilog';
 
@@ -23,8 +25,8 @@ interface Span {
 
 // Events of one kind and title, from its spans: ones close together are one.
 export function eventsFrom(kind: EventKind, severity: EventSeverity, title: string, spans: Span[],
-  options: { key?: string | null; detail?: (count: number, span: Span) => string } = {}): LogEvent[] {
-  return mergeSpans(spans).map((span) => ({
+  options: { key?: string | null; detail?: (count: number, span: Span) => string; gap?: number } = {}): LogEvent[] {
+  return mergeSpans(spans, options.gap).map((span) => ({
     id: `${kind}:${title}:${span.start.toFixed(3)}`,
     kind,
     severity,
@@ -108,60 +110,90 @@ function canErrors(source: LogSignalSource, end: number): LogEvent[] {
 
 const messageGroupLength = 40;
 
+// Output from the robot program's console, a line or several at a time.
+export interface ConsoleText {
+  time: number;
+  text: string;
+  // The signal it's in, if any.
+  key: string | null;
+  // Who said it, when that's not in the text as words (a device): messages
+  // from different ones are never one event.
+  from?: string;
+}
+
 // Lines of the robot program's console output (DataLogManager logs it as
 // `console`; DriverStation messages as `messages`).
 function consoleEvents(source: LogSignalSource): LogEvent[] {
+  const texts: ConsoleText[] = [];
+  for (const key of ['console', 'messages']) {
+    const series = source.catalog().some((s) => s.key === key && s.kind === 'string') ? source.read(key) : null;
+    if (!series) continue;
+    (series.values as string[]).forEach((text, i) => texts.push({ time: series.times[i], text, key }));
+  }
+  return consoleTextEvents(texts);
+}
+
+// Whether a data log has the robot's console: then a Driver Station log's
+// copy of it isn't needed.
+export function hasConsole(source: LogSignalSource): boolean {
+  return source.catalog().some((s) => (s.key === 'console' || s.key === 'messages') && s.kind === 'string' && s.count > 0);
+}
+
+export function consoleTextEvents(texts: ConsoleText[], gap = mergeGapSeconds): LogEvent[] {
   const overruns: Span[] = [];
-  const grouped = new Map<string, { kind: EventKind; severity: EventSeverity; texts: Set<string>; spans: Span[]; key: string }>();
+  const grouped = new Map<string, { kind: EventKind; severity: EventSeverity; texts: Set<string>; spans: Span[]; key: string | null }>();
   // Messages that differ only in their numbers, or past their start (which
   // entry was dropped, which file), are one.
-  const add = (kind: EventKind, severity: EventSeverity, text: string, time: number, key: string) => {
-    const id = `${kind}:${severity}:${text.replace(/\d+(\.\d+)?/g, '#').slice(0, messageGroupLength)}`;
+  const add = (kind: EventKind, severity: EventSeverity, text: string, time: number, key: string | null, from = '') => {
+    const id = `${kind}:${severity}:${from}:${text.replace(/\d+(\.\d+)?/g, '#').slice(0, messageGroupLength)}`;
     const group = grouped.get(id) ?? { kind, severity, texts: new Set(), spans: [], key };
     group.texts.add(text);
     group.spans.push({ start: time, end: null });
     grouped.set(id, group);
   };
 
-  for (const key of ['console', 'messages']) {
-    const series = source.catalog().some((s) => s.key === key && s.kind === 'string') ? source.read(key) : null;
-    if (!series) continue;
-    (series.values as string[]).forEach((text, i) => {
-      const time = series.times[i];
-      for (const line of text.split(/\r?\n/)) {
-        // Stack traces and the tracer's timings, under the line that matters.
-        if (/^\s/.test(line) || /Tracer\.|printEpochs/.test(line)) continue;
-        if (/loop time of [\d.]+\s*s overrun|loop overrun/i.test(line)) {
-          overruns.push({ start: time, end: null });
-          continue;
-        }
-        const disconnected = /^NT: DISCONNECTED NT\d? client '([^'@]+)[^']*'.*?:\s*(.*)$/.exec(line);
-        if (disconnected) {
-          add('network', 'info', `${disconnected[1]} left NetworkTables (${disconnected[2]})`, time, key);
-          continue;
-        }
-        const reported = /^(Error|ERROR|Warning|WARNING)\b(?: at [^:]*\([^)]*\))?:?\s*(.*)$/.exec(line);
-        if (reported && reported[2]) {
-          const message = reported[2].trim();
-          // Numbers aside, the same message is one event.
-          add('message', /^e/i.test(reported[1]) ? 'error' : 'warning', message, time, key);
-        }
+  let overrunKey: string | null = null;
+  for (const { time, text, key, from } of [...texts].sort((a, b) => a.time - b.time)) {
+    for (const line of text.split(/\r?\n/)) {
+      // Stack traces and the tracer's timings, under the line that matters.
+      if (/^\s/.test(line) || /Tracer\.|printEpochs/.test(line)) continue;
+      if (/loop time of [\d.]+\s*s overrun|loop overrun/i.test(line)) {
+        // An overrun's said twice (the robot loop's and the command scheduler's).
+        if (overruns.length === 0 || time - overruns[overruns.length - 1].start > 0.05) overruns.push({ start: time, end: null });
+        overrunKey ??= key;
+        continue;
       }
-    });
+      const disconnected = /^NT: DISCONNECTED NT\d? client '([^'@]+)[^']*'.*?:\s*(.*)$/.exec(line);
+      if (disconnected) {
+        add('network', 'info', `${disconnected[1]} left NetworkTables (${disconnected[2]})`, time, key);
+        continue;
+      }
+      const reported = /^(Error|ERROR|Warning|WARNING)\b(?: at [^:]*\([^)]*\))?:?\s*(.*)$/.exec(line);
+      if (reported && reported[2]) {
+        const message = reported[2].trim();
+        // Numbers aside, the same message is one event.
+        add('message', /^e/i.test(reported[1]) ? 'error' : 'warning', message, time, key, from);
+      }
+    }
   }
 
-  const out = eventsFrom('overrun', 'warning', 'Loop overrun', overruns, { key: 'console' });
+  const out = eventsFrom('overrun', 'warning', 'Loop overrun', overruns, { key: overrunKey, gap });
   for (const group of grouped.values()) {
     const texts = [...group.texts];
-    // What they have in common, to a word's end, when they differ.
+    // When they differ: only in their numbers, the numbers that differ as
+    // #; otherwise what they have in common, to a word's end.
     let title = texts[0];
-    if (texts.length > 1) {
+    const pieces = texts.map((t) => t.split(/(\d+(?:\.\d+)?)/));
+    if (texts.length > 1 && pieces.every((p) => p.length === pieces[0].length && p.every((piece, i) => i % 2 === 1 || piece === pieces[0][i]))) {
+      title = pieces[0].map((piece, i) => (i % 2 === 1 && pieces.some((p) => p[i] !== piece) ? '#' : piece)).join('');
+    } else if (texts.length > 1) {
       let same = 0;
       while (texts.every((t) => t[same] === title[same]) && same < title.length) same++;
       title = `${title.slice(0, same).replace(/\s+\S*$/, '').replace(/[\s,:;]+$/, '')}…`;
     }
     out.push(...eventsFrom(group.kind, group.severity, title.length > 120 ? `${title.slice(0, 119)}…` : title, group.spans, {
       key: group.key,
+      gap,
       detail: (count) => [count > 1 ? `${count} times` : '', texts.length > 1 || texts[0].length > 120 ? `e.g. ${texts[0]}` : '']
         .filter(Boolean).join(' · ')
     }));
@@ -196,9 +228,143 @@ function alerts(source: LogSignalSource, end: number): LogEvent[] {
   return out;
 }
 
+// Subsystems' states, where robot code logs them as text: `intake/state`,
+// `superstructure/wantedState`, `arm/CurrentState`.
+const statePattern = /(^|\/)((current|wanted|desired|goal|requested)[ _]?)?state$/i;
+
+function stateEvents(source: LogSignalSource): LogEvent[] {
+  const out: LogEvent[] = [];
+  for (const signal of source.catalog()) {
+    const named = statePattern.exec(signal.key);
+    if (signal.kind !== 'string' || signal.count < 2 || !named) continue;
+    const series = source.read(signal.key);
+    if (!series) continue;
+    const parts = signal.key.split('/').filter(Boolean);
+    const owner = parts.length > 1 ? parts[parts.length - 2] : 'State';
+    const which = named[3] ? ` (${named[3].toLowerCase()})` : '';
+    const values = series.values as string[];
+    // Each change; the value it starts with isn't one.
+    for (let i = 1; i < values.length; i++) {
+      if (values[i] === values[i - 1]) continue;
+      out.push({
+        id: `state:${signal.key}:${series.times[i].toFixed(3)}`,
+        kind: 'state',
+        severity: 'info',
+        start: series.times[i],
+        end: null,
+        title: `${owner}${which}: ${values[i]}`,
+        detail: `from ${values[i - 1]}`,
+        count: 1,
+        key: signal.key
+      });
+    }
+  }
+  return out;
+}
+
+// A driver's or operator's controller, as robot code names it.
+const controllerPattern = /^((driver|operator|co-?driver|manipulator)[ _-]?(stick|controller|gamepad|joystick|xbox|pad)|(stick|gamepad|joystick|xbox)[ _-]?\d*)$/i;
+// WPILib's DriverStation log and AdvantageKit's: a joystick's buttons as bits.
+const buttonBitsPattern = /joystick ?(\d+)\/button(s|values)$/i;
+
+// Buttons pressed: each from press to release. Ones pressed again and
+// again (a trigger held on and off) are one, with a count.
+function commandEvents(source: LogSignalSource, end: number): LogEvent[] {
+  const out: LogEvent[] = [];
+  for (const signal of source.catalog()) {
+    if (signal.count === 0) continue;
+    const parts = signal.key.split('/').filter(Boolean);
+    const controller = parts.findIndex((p) => controllerPattern.test(p));
+    if (signal.kind === 'boolean' && controller !== -1 && controller < parts.length - 1) {
+      const button = parts.slice(controller + 1).join(' / ');
+      // Robot code's "pressed" and "released" edges, and whether it's plugged in, aren't presses.
+      if (/(pressed|released|connected)$/i.test(button)) continue;
+      out.push(...eventsFrom('command', 'info', `${parts[controller]}: ${button}`, spansWhere(source.read(signal.key), (v) => v === 1, end), { key: signal.key }));
+      continue;
+    }
+    const bits = buttonBitsPattern.exec(signal.key);
+    if (bits && signal.kind === 'number') {
+      const series = source.read(signal.key);
+      if (!series) continue;
+      for (let button = 0; button < 32; button++) {
+        const spans = spansWhere(series, (v) => ((v >>> button) & 1) === 1, end);
+        out.push(...eventsFrom('command', 'info', `Joystick ${bits[1]}: button ${button + 1}`, spans, { key: signal.key }));
+      }
+    }
+  }
+  return out;
+}
+
 export function dataLogEvents(source: LogSignalSource): LogEvent[] {
   const end = source.lastTime - source.firstTime;
-  return withoutRepeats([...brownouts(source, end), ...canErrors(source, end), ...consoleEvents(source), ...alerts(source, end)]);
+  return withoutRepeats([
+    ...brownouts(source, end),
+    ...canErrors(source, end),
+    ...consoleEvents(source),
+    ...alerts(source, end),
+    ...stateEvents(source),
+    ...commandEvents(source, end)
+  ]);
+}
+
+// --- From a Driver Station log ---
+
+// The Driver Station's own messages that say nothing a DS log doesn't
+// (lost communication, Enter pressed to disable) or nothing of use (time
+// since boot, when the radio was seen).
+const quietDsCodes = new Set([44004, 44000, 44007, 44008]);
+
+// Events in a Driver Station log and its .dsevents, on its own timeline.
+// With `robotConsole`, the data log has the robot's console, so the
+// robot's messages here (a copy) are left out.
+export function dsLogEvents(log: DsLog, messages: DsMessage[], options: { robotConsole: boolean; key: (name: string) => string }): LogEvent[] {
+  const { key } = options;
+  const out: LogEvent[] = [
+    ...eventsFrom('brownout', 'error', 'Brownout', log.brownouts, { key: key('Brownout') }),
+    ...eventsFrom('network', 'error', 'Lost communication with the robot while enabled', log.lost.filter((l) => l.enabled), { key: key('Robot connected') }),
+    ...eventsFrom('network', 'info', 'Robot disconnected', log.lost.filter((l) => !l.enabled), { key: key('Robot connected') }),
+    ...eventsFrom('network', 'warning', 'Poor connection', log.poorLink, {
+      key: key('Packet loss'),
+      detail: (count, span) => {
+        const inside = log.poorLink.filter((p) => p.start >= span.start && p.start <= (span.end ?? span.start));
+        const loss = Math.max(...inside.map((p) => p.loss));
+        const trip = Math.max(...inside.map((p) => p.trip));
+        return [`Up to ${loss}% packets lost, ${trip} ms trip time`, count > 1 ? `${count} times` : ''].filter(Boolean).join(' · ');
+      }
+    })
+  ];
+
+  const texts: ConsoleText[] = [];
+  for (const message of messages) {
+    if (message.from === 'ds' && quietDsCodes.has(message.code)) continue;
+    if (message.from === 'robot' && options.robotConsole) continue;
+    // Printed lines are console output as it was; errors and warnings
+    // reported are printed too ("Warning at ..."), so they're read from
+    // their report instead, with where they came from.
+    if (message.severity === 'printed') {
+      if (message.from === 'robot' && !/^(Error|ERROR|Warning|WARNING) at /.test(message.text)) texts.push({ time: message.time, text: message.text, key: null });
+      continue;
+    }
+    // The tracer's timings, reported as a warning with each overrun.
+    if (!message.text || /Tracer|printEpochs/.test(message.location)) continue;
+    // The first sentence says what; the rest is advice. A CTRE device's
+    // report says which device, first, so each device's are their own.
+    const what = message.text.split(/\r?\n/)[0].split(/(?<=\.)\s+(?=[A-Z])/)[0];
+    const device = message.from === 'robot' ? deviceOf(message.location) : '';
+    texts.push({ time: message.time, text: `${message.severity === 'error' ? 'Error' : 'Warning'}: ${device ? `${device}: ` : ''}${what}`, key: null, from: device });
+  }
+  // The Driver Station writes these down every 2 s or so: an error that
+  // keeps happening is seen a little over 2 s apart.
+  return [...out, ...consoleTextEvents(texts, dsMessageGapSeconds)];
+}
+
+const dsMessageGapSeconds = 5;
+
+// `talon fx 10 ("Canivore") Status Signal Position` -> "talon fx 10 (Canivore)".
+// Other locations are where in the code, which the message says enough without.
+export function deviceOf(location: string): string {
+  const device = /^([A-Za-z][A-Za-z ]*?\s\d+(?:\s\d+)?)\s*\("([^"]*)"\)/.exec(location);
+  return device ? `${device[1]} (${device[2] || 'rio'})` : '';
 }
 
 // The same thing logged twice (DogLog reports its faults as WPILib alerts

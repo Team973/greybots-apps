@@ -54,6 +54,9 @@ const props = withDefaults(defineProps<{
 // back, jumping to an event).
 const pin = defineModel<number | null>('pin', { default: null });
 
+// A span picked with Shift+drag, for stats over it, or null.
+const range = defineModel<[number, number] | null>('range', { default: null });
+
 // How a zoom came about: the wheel (zooming), Shift+wheel (panning), a drag
 // across the plot, or a double-click (everything).
 export type ZoomGesture = 'wheel' | 'pan' | 'select' | 'all';
@@ -348,9 +351,12 @@ function onClick(px: number, py: number | null) {
   if (px >= plot.value.left && px <= plot.value.right) pin.value = timeAt(px);
 }
 
+// Escape lets go of the pin, then the range.
 function onKey(event: KeyboardEvent) {
   const typing = event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]');
-  if (event.key === 'Escape' && !typing) pin.value = null;
+  if (event.key !== 'Escape' || typing) return;
+  if (pin.value !== null) pin.value = null;
+  else range.value = null;
 }
 onMounted(() => window.addEventListener('keydown', onKey));
 onUnmounted(() => window.removeEventListener('keydown', onKey));
@@ -387,11 +393,14 @@ function clampView(start: number, end: number): [number, number] {
 }
 
 let downY: number | null = null;
+// A drag with Shift held picks a range instead of zooming to it.
+const picking = ref(false);
 function onPointerDown(event: PointerEvent) {
   if (event.button !== 0) return;
   (event.currentTarget as Element).setPointerCapture(event.pointerId);
   dragFrom.value = localX(event);
   downY = localY(event);
+  picking.value = event.shiftKey;
 }
 
 function onPointerMove(event: PointerEvent) {
@@ -410,7 +419,22 @@ function onPointerUp(event: PointerEvent) {
     onClick(from, downY);
     return;
   }
-  emit('zoom', clampView(timeAt(Math.min(from, to)), timeAt(Math.max(from, to))), 'select');
+  if (picking.value) range.value = [timeAt(Math.min(from, to)), timeAt(Math.max(from, to))];
+  else emit('zoom', clampView(timeAt(Math.min(from, to)), timeAt(Math.max(from, to))), 'select');
+}
+
+// The range picked, where it is on screen (clipped to the plot).
+const shownRange = computed(() => {
+  if (!range.value) return null;
+  const [start, end] = range.value;
+  if (end < props.view[0] || start > props.view[1]) return null;
+  const from = Math.max(plot.value.left, x(start));
+  const to = Math.min(plot.value.right, x(end));
+  return { x: from, width: Math.max(1, to - from), label: `${formatSpan(end - start)} picked` };
+});
+
+function formatSpan(seconds: number): string {
+  return seconds >= 10 ? `${seconds.toFixed(1)} s` : `${seconds.toFixed(3)} s`;
 }
 
 const selection = computed(() => {
@@ -505,7 +529,12 @@ function onWheel(event: WheelEvent) {
       <line v-if="pinReadout && pinReadout.x !== null" class="pin-line" :x1="pinReadout.x" :x2="pinReadout.x"
         :y1="plot.top - (topLanes.length ? topLanes.length * laneHeight + 4 : 0)" :y2="plot.bottom + bottomLanes.length * laneHeight" />
 
-      <rect v-if="selection" class="selection" :x="selection.x" :y="plot.top" :width="selection.width" :height="plot.height" />
+      <g v-if="shownRange" class="range">
+        <rect :x="shownRange.x" :y="plot.top" :width="shownRange.width" :height="plot.height" />
+        <text v-if="shownRange.width > 70" :x="shownRange.x + shownRange.width / 2" :y="plot.bottom - 6" text-anchor="middle">{{ shownRange.label }}</text>
+      </g>
+
+      <rect v-if="selection" class="selection" :class="{ picking }" :x="selection.x" :y="plot.top" :width="selection.width" :height="plot.height" />
 
       <g v-if="readout" class="hover">
         <line :x1="hoverX!" :x2="hoverX!" :y1="plot.top - (topLanes.length ? topLanes.length * laneHeight + 4 : 0)"
@@ -608,6 +637,21 @@ svg {
   fill-opacity: 0.1;
   stroke: currentColor;
   stroke-opacity: 0.3;
+}
+
+.selection.picking,
+.range rect {
+  fill: #2a78d6;
+  fill-opacity: 0.12;
+  stroke: #2a78d6;
+  stroke-opacity: 0.6;
+  stroke-dasharray: 4 3;
+}
+
+.range text {
+  fill: currentColor;
+  font-size: 11px;
+  opacity: 0.75;
 }
 
 .hover line {

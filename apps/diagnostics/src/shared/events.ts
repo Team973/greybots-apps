@@ -6,7 +6,18 @@
 
 export type EventSeverity = 'error' | 'warning' | 'info';
 
-export type EventKind = 'mode' | 'brownout' | 'can' | 'fault' | 'overrun' | 'network' | 'alert' | 'message' | 'note';
+export type EventKind =
+  | 'mode'
+  | 'brownout'
+  | 'can'
+  | 'fault'
+  | 'overrun'
+  | 'network'
+  | 'alert'
+  | 'message'
+  | 'state'
+  | 'command'
+  | 'note';
 
 export const eventKinds: { kind: EventKind; label: string }[] = [
   { kind: 'mode', label: 'Enable and mode' },
@@ -17,8 +28,14 @@ export const eventKinds: { kind: EventKind; label: string }[] = [
   { kind: 'network', label: 'Network' },
   { kind: 'alert', label: 'Alerts' },
   { kind: 'message', label: 'Console' },
+  { kind: 'state', label: 'Subsystem states' },
+  { kind: 'command', label: 'Driver input' },
   { kind: 'note', label: 'Notes' }
 ];
+
+// Kinds that are many and ordinary (every state change, every button
+// press): listed only when picked.
+export const quietKinds: EventKind[] = ['state', 'command'];
 
 export interface LogEvent {
   // The same each time the log is read: kind, what, and when.

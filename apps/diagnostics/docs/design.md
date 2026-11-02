@@ -240,17 +240,20 @@ The Signals page is also where a log is reviewed (#94): what happened in it is f
 
 | Kind | From |
 | --- | --- |
-| Enable and mode | The Driver Station's own record (`DS:enabled`, AdvantageKit's `DriverStation/Enabled`), else CTRE's `RobotMode` in a Hoot log, else robot code's own flags (`isAutoEnabled`, `isTeleopEnabled`) |
-| Brownouts | `.../BrownedOut` true |
+| Enable and mode | The Driver Station's own record (`DS:enabled`, AdvantageKit's `DriverStation/Enabled`, or a Driver Station log), else CTRE's `RobotMode` in a Hoot log, else robot code's own flags (`isAutoEnabled`, `isTeleopEnabled`) |
+| Brownouts | `.../BrownedOut` true; a Driver Station log's brownout flag |
 | CAN | `CANBus/ReceiveErrorCount` and `TransmitErrorCount` above 0; `OffCount` and `TxFullCount` going up; a Hoot log's `CANBusIsUp` false |
 | Device faults | Every CTRE device's `Fault_*` signals in the Hoot logs (not the sticky ones) |
 | Loop overruns | "Loop time of … overrun" in the console |
-| Network | NetworkTables clients leaving (console); the Driver Station going away (`DS:IsDSAttached` in a Hoot log) |
+| Network | NetworkTables clients leaving (console); the Driver Station going away (`DS:IsDSAttached` in a Hoot log); a Driver Station log's robot lost (an error if it was enabled) and a poor link while enabled (half the packets lost, or a 100 ms trip) |
 | Alerts | WPILib Alerts (`Alerts/errors`, `warnings`, `infos`) and DogLog's faults, from when each appears until it goes |
-| Console | Other `Error` and `Warning` lines; ones that differ only in numbers or past their first 40 characters are one event |
+| Console | Other `Error` and `Warning` lines, and the errors and warnings in a Driver Station's `.dsevents`; ones that differ only in numbers or past their first 40 characters are one event, titled with `#` where the numbers differ |
+| Subsystem states | Text signals named `state` (or `currentState`, `wantedState`, ...): each change, titled with the subsystem (the name above it) and the new state |
+| Driver input | Booleans under a controller (`driverStick/`, `operatorController/`, `joystick0/`, ...), each from press to release; WPILib's and AdvantageKit's joystick button bits |
 
 - **Merging:** the same event less than 2 s apart is one, with a count and its span (overruns loop after loop, a fault that flickers).
-- **Severity:** errors (red), warnings (amber) and information (grey); notes are purple. Device faults that are a device doing as it's told (current limits, limit switches, the static brake) are routine, and so is information other than enables: they're hidden unless **Routine too** is ticked. Team 973's Q39 had 299 of them, almost all current limits.
+- **Severity:** errors (red), warnings (amber) and information (grey); notes are purple. Device faults that are a device doing as it's told (current limits, limit switches, the static brake) are routine, and so is information other than enables, states and driver input: they're hidden unless **Routine too** is ticked. Team 973's Q39 had 299 of them, almost all current limits.
+- **Many and ordinary:** subsystem states and driver input are listed only once their kinds are picked (Q39 has 323 state changes and 44 presses). Which subsystems and buttons matter to a team comes with dashboards (#95).
 - **Hoot logs:** device faults need owlet to export about 450 signals from each Hoot log, which takes about 12 s the first time a log is opened (once for both of a match's Hoot logs, kept like any export). Until then the list says it's still looking; everything else shows at once.
 
 **Match phases.** Auto and teleop are where the robot was enabled in each mode; in a match (a match name, or FMS attached per the Hoot log), the last 30 s of teleop is the endgame (`endgameSeconds` in `src/shared/events.ts`, 2026's game). They're shaded behind the chart, and times show with the phase clock ("Teleop 1:05").
@@ -263,7 +266,19 @@ The Signals page is also where a log is reviewed (#94): what happened in it is f
 
 **Notes** are added at the pin (or the middle of the span shown), changed and deleted from the list, and kept in the data folder (`src/main/notes-store.ts`). The first line is the note's title. Live sessions and earlier live runs can't have notes, since they aren't kept.
 
-**Min, max and mean of a range:** drag across the chart to zoom to the range; the stats columns are of the span shown.
+**Min, max and mean of a range:** Shift+drag across the chart picks a range (shaded, with its length), and the stats columns are of it, read at full detail, until **use the span shown** or Escape (after the pin). Picking one shows the stats columns if they were off. A plain drag still zooms.
+
+### Driver Station logs
+
+The Driver Station writes a `.dslog` while it's open (a record every 20 ms) and a `.dsevents` beside it (`src/main/signals/ds-log.ts`). Both are version 4: a LabVIEW time, then big-endian records.
+
+- **Signals:** trip time, packet loss, battery voltage, roboRIO CPU, CAN use (and Wi-Fi and bandwidth when the Driver Station fills them in, which it only does on a field), each while the robot was there; and as flags or a band, whether it was there, enabled, the mode, brownout and the watchdog. They're under **DS log** in the signal list.
+- **What's not read:** each record ends with power distribution data (33 bytes for a CTRE PDP), whose packing isn't documented and couldn't be checked; its length is skipped. Other types (REV's PDH) are measured from the file.
+- **Dropped packets:** a record with nothing from the robot is usually one packet that didn't arrive, many times a match. Up to 0.25 s of them takes the record before's mode, so a match isn't split into hundreds of enables; past that, the robot was lost.
+- **.dsevents:** the robot's errors and warnings (with where they came from: a CTRE device's name and bus heads the message, so each device's are their own), its printed lines, and the Driver Station's own coded messages, less the ones a DS log says already (lost communication, 44004) or that say nothing (time since boot, radio detection). It writes them down every 2 s or so, so repeats up to 5 s apart are one event. "FMS Connected: Qualification - 12" makes it a match, for the endgame. With a data log that has the robot's console, the robot's messages here (a copy) are left out.
+- **Which logs:** only ones a robot was connected to (most are the Driver Station open with no robot). One goes with a data log of the same robot that started while it was being written, or within a minute before; the rest are sessions of their own ("DS log only"), listed in a group of their own below the other logs: Team 973 has 170 of them. Each is read whole once and kept by size and time.
+- **Lining up:** by the first enable in both, if that's within 120 s of what the clocks say, otherwise by the clocks (the data log's `systemTime` against the DS log's own start). With a data log, the DS log doesn't stretch the timeline (it runs while the Driver Station's open, often many minutes either side), and only its events in the timeline are listed.
+- **Checked:** against Team 973's DS logs (297, 2024–2026: practice and the pit, none on a field) and a copy of one shifted onto Q39 to test pairing. A real match's FMS line and a REV PDH log weren't available.
 
 ## Installers
 
@@ -283,7 +298,7 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 - **Hoot logs (#142):** the data log reader keeps an object per value, which is fine for single-signal exports (about 136,000 values each) but not for exporting many signals at once. Per-entry typed arrays would fix that.
 - **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal).
 - **The rest of the live view** is [#146](https://github.com/Team973/greybots-apps/issues/146): the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables.
-- **The rest of log review (#94):** Driver Station logs (`.dslog`, `.dsevents`) as signals and events (trip time, packet loss, mode); subsystem state changes and driver commands as events, which need to know which signals they are (with dashboards, #95); automated test steps (#100); syncing notes to other computers (#103).
+- **The rest of log review (#94):** automated test steps as events come with the tests (#100); syncing notes to other computers with Preflight's data sharing (#103); picking which subsystems and buttons a team cares about with dashboards (#95); a DS log's power distribution currents, once their packing can be checked.
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
 - **Sign-in.** The app has none: it works with no internet and holds nothing private. If #103 syncs through Supabase, it will need the account link Preflight's kiosk mode uses.

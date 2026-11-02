@@ -18,9 +18,11 @@ export function eventColor(event: LogEvent, dark: boolean): string {
 }
 
 // Information that's the robot doing as it should (a current limit holding,
-// a dashboard closing): hidden unless asked for. Enables and notes always show.
+// a dashboard closing): hidden unless asked for. Enables, notes, states and
+// driver input show whenever their kind's picked.
+const neverRoutine: EventKind[] = ['mode', 'note', 'state', 'command'];
 export function isRoutine(event: LogEvent): boolean {
-  return event.severity === 'info' && event.kind !== 'mode' && event.kind !== 'note';
+  return event.severity === 'info' && !neverRoutine.includes(event.kind);
 }
 
 export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
