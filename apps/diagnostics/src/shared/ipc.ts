@@ -2,11 +2,14 @@
 // one function per entry as `window.diagnostics`; the main process handles
 // each on the channel of the same name.
 
+import type { AccountStatus } from './account';
 import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { ImportStatus, ImportSummary } from './import';
 import type { Annotation, SessionEvents } from './events';
+import type { LibraryItem, LibraryItemOf, LibraryKind, Report, ReportSummary } from './library';
 import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
+import type { PipelineRun, PipelineStatus } from './reports';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
 
@@ -214,6 +217,32 @@ export interface DiagnosticsApi {
   acceptCtreLicense(): Promise<OwletStatus>;
   // Checks CTRE for owlet again.
   downloadOwlet(): Promise<OwletStatus>;
+  // The library (#148): saved views, report templates, pipelines, robot
+  // mappings. Saving one with no id (or an id not here) adds it.
+  getLibrary<K extends LibraryKind>(kind: K): Promise<LibraryItemOf[K][]>;
+  saveLibraryItem(item: LibraryItem): Promise<LibraryItem>;
+  // Resolves to why it can't be deleted (someone else's in the cloud), or ''.
+  deleteLibraryItem(kind: LibraryKind, id: string): Promise<string>;
+  // Adds the starter views, templates and pipeline that aren't here yet.
+  // Resolves to how many were added.
+  addStarters(): Promise<number>;
+  getReports(): Promise<ReportSummary[]>;
+  getReport(id: string): Promise<Report | null>;
+  // Makes a report from a template and a log, and keeps it.
+  generateReport(templateId: string, logId: string): Promise<Report>;
+  deleteReport(id: string): Promise<void>;
+  // Runs a pipeline on logs by hand (whatever its triggers say).
+  runPipeline(pipelineId: string, logIds: string[]): Promise<PipelineRun[]>;
+  getPipelineStatus(): Promise<PipelineStatus>;
+  // Saves the page as it's shown (a report) as a PDF, asking where.
+  // Resolves to where it was saved, or '' if cancelled.
+  savePdf(suggestedName: string): Promise<string>;
+  // The greybots-apps account the library's shared with the team through.
+  getAccount(): Promise<AccountStatus>;
+  signIn(email: string, password: string): Promise<AccountStatus>;
+  signOut(): Promise<AccountStatus>;
+  // Syncs the library with the team's now. Resolves when it's done.
+  syncLibrary(): Promise<AccountStatus>;
 }
 
 export const ipcChannels: (keyof DiagnosticsApi)[] = [
@@ -243,5 +272,20 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getEarlierRuns',
   'getOwletStatus',
   'acceptCtreLicense',
-  'downloadOwlet'
+  'downloadOwlet',
+  'getLibrary',
+  'saveLibraryItem',
+  'deleteLibraryItem',
+  'addStarters',
+  'getReports',
+  'getReport',
+  'generateReport',
+  'deleteReport',
+  'runPipeline',
+  'getPipelineStatus',
+  'savePdf',
+  'getAccount',
+  'signIn',
+  'signOut',
+  'syncLibrary'
 ];

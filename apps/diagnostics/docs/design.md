@@ -70,6 +70,8 @@ Everything the app pulls off the robot or works out is kept under one data folde
   logs/<robot>/<yyyy-mm-dd>/<source>/<original file name>
   results/<kind>/<id>.json
   notes/<log>.json
+  library/<kind>/<id>.json
+  reports/<id>.json
   index/
   README.txt
 ```
@@ -77,6 +79,8 @@ Everything the app pulls off the robot or works out is kept under one data folde
 - **`logs/`** holds files exactly as they came off the robot, under their original names, and they are never edited. `<source>` is where the file came from: `roborio`, `driver-station`, `ctre-hoot`, `coprocessor-<name>`, `custom-<name>`. The day is the local date the file was recorded.
 - **`results/`** holds what the app computes from the logs (match summaries, test runs), one JSON file each. Results can always be rebuilt from `logs/`.
 - **`notes/`** holds notes people add while reviewing a log, one file per log, named for its path under `logs/` (see Log review). Unlike `results/`, these can't be rebuilt.
+- **`library/`** holds saved views, report templates, pipelines and robot mappings (`<kind>` is `view`, `template`, `pipeline` or `mapping`), one file each, shared with the team when signed in (see Reports).
+- **`reports/`** holds reports made from logs, each with the data it shows, so it reads the same later.
 - **`index/`** records what has been offloaded and what each file belongs to: `index/offloaded.json` (see Log offload).
 
 Which event, match, or test run a log belongs to is recorded in the index, not in its path. That is often only known after the file is pulled (from FMS data inside the log, or from timestamps), and a path that had to change afterwards would mean moving files that are meant to stay put.
@@ -85,10 +89,11 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 
 ## Pages
 
-- **Signals** (what the app opens on): logs and live signals, plotted.
+- **Signals** (what the app opens on): logs and live signals, plotted; saved views.
+- **Reports:** reports, report templates, pipelines, and robot mappings.
 - **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
 - **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
-- **Settings:** automatic offload and how far back, the data folder, keyboard shortcuts, and CTRE's licence.
+- **Settings:** automatic offload and how far back, the data folder, keyboard shortcuts, CTRE's licence, and the team account.
 
 ## Log offload
 
@@ -280,6 +285,39 @@ The Driver Station writes a `.dslog` while it's open (a record every 20 ms) and 
 - **Lining up:** by the first enable in both, if that's within 120 s of what the clocks say, otherwise by the clocks (the data log's `systemTime` against the DS log's own start). With a data log, the DS log doesn't stretch the timeline (it runs while the Driver Station's open, often many minutes either side), and only its events in the timeline are listed.
 - **Checked:** against Team 973's DS logs (297, 2024–2026: practice and the pit, none on a field) and a copy of one shifted onto Q39 to test pairing. A real match's FMS line and a REV PDH log weren't available.
 
+## Reports
+
+Reports are made quickly from matches and tests (#148). Their parts are kept in the library (`src/shared/library.ts`), checked and cleaned whenever they're read or received (`library-check.ts`).
+
+**Saved views.** **Views** on the Signals page saves the chart as it is (its signals, axes, bands, colours, which are hidden, and which kinds of event show) by name, with the span it shows: the whole log, or the match, autonomous, teleop or endgame. Bringing one back works on any log, and live. The list puts first the views whose signals are most here ("4/5 here"), and finds them by name or by any part of a signal's path.
+
+**Finding signals** (`src/shared/signal-match.ts`). A view or template names signals as the log it was made from did. In another log each is found, in order:
+
+1. by the robot's mapping, if it has one, which can also say the robot hasn't the signal (flagged, and reported as missing rather than guessed);
+2. by the same name;
+3. by the same end of the path: the most trailing parts in common, if no other signal has as many, and at least two (unless the name is one part). Simulation logs `/Robot/robot/drive/speedXMPS` for what the robot logs as `/Robot/drive/speedXMPS`; that's two parts in common, and found. `state` alone is everywhere, and isn't.
+
+**Robot mappings** (Reports → Robot mappings) are for robots that name things differently: another team's, or code that changed. For a robot, every signal the templates and views ask for is listed as it's found in one of its logs, and those not found have the likeliest of its signals to choose from: by the end of the path, then words in common (the last part's most), then the unit. Asking an LLM for suggestions is #149.
+
+**Report templates** say what a report is of and what it shows:
+
+- **Of:** the whole match (first enable to last, or the whole log without one), autonomous only, teleop only, or wherever chosen signals all hold (a test mode: `isTestEnabled` true, say).
+- **Sections:** headings and text; a summary (the log, the span, the phases, errors, warnings, brownouts, the battery's lowest and average); charts, copied in from saved views (with the view's span when the log has that phase); stats tables (min, max and mean over the span, weighted by how long each value held, across all its stretches); and events, of chosen kinds, errors and warnings only or not.
+- A template can be for one robot only. Made from a report (**Make a template from it**), it's the template the report was made from, as it was then.
+
+**Reports** (`src/main/reports.ts`) are made by hand (Reports → Make a report) or by pipelines. Making one waits for Hoot logs to line up and for their faults, then reads everything it shows once and keeps it: each line at about 1200 points. A report says what it couldn't find. **Save as PDF** prints the page (in the light theme) without the app around it.
+
+**Pipelines** make reports from new logs. After an offload or an import, the logs that weren't there before are matched against each pipeline that's on: offloaded, imported or both; these robots (or any); these kinds of match, or logs that aren't one (or any). Each template the pipeline has makes a report. They run one at a time, in the background; **Lately** on the Pipelines tab lists what they made or why they couldn't. A pipeline can also be run by hand on any log.
+
+**Starters.** **Add the starters** (Templates) adds a view and a template for each of #95's starter dashboards (Pit Health, Drivetrain, Shooter, Electrical, Match Review, Controls Debug, Automated Test, Battery Health), an Autonomous template, and a pipeline for qualification matches, off until it's turned on (`src/shared/starters.ts`). They're named as Team 973's code logs things, and have fixed ids, so adding them again adds nothing. On Q39 all but Automated Test make a report (Q39 has no test mode, and the report says so).
+
+**Sharing with the team** (`src/main/cloud-sync.ts`). Signed in to a greybots-apps account (Settings → Team account), the library is kept the same as the team's in Supabase (`DiagnosticsLibraryItem`, `supabase/migrations/20261101120000_diagnostics_library.sql`). Reports and notes aren't shared.
+
+- **Who:** Diagnostics has its own role (`diagnostics_role`), given on the People page like the others, and started at each person's Preflight role. Observers get the library; members and above add to it and change it; only leads and admins delete shared items. The database enforces all three.
+- **When:** at start, a few seconds after any change, every five minutes, and on **Sync now**.
+- **How** (`src/shared/library-sync.ts`): an item in the cloud only is brought here; one here only, never synced, is sent; one here only that was synced before was deleted by a lead, and is deleted here; one changed on one side takes that side's copy, and one changed on both the copy changed last.
+- **The session** is kept in the app's own folder, encrypted with the system's keychain where there is one. Supabase is reached from the main process only: the window's content security policy still allows no other site.
+
 ## Installers
 
 `npm run dist:diagnostics` builds an installer for the computer it's run on into `apps/diagnostics/release`. The Diagnostics CI workflow does this on Windows, Linux and macOS for every change and attaches the three installers to the workflow run:
@@ -299,6 +337,7 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 - **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal).
 - **The rest of the live view** is [#146](https://github.com/Team973/greybots-apps/issues/146): the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables.
 - **The rest of log review (#94):** automated test steps as events come with the tests (#100); syncing notes to other computers with Preflight's data sharing (#103); picking which subsystems and buttons a team cares about with dashboards (#95); a DS log's power distribution currents, once their packing can be checked.
+- **Reports (#148):** the Diagnostics migration has to be applied to the team's database before sharing works (until then, signing in says so). Sign-in and sync haven't been tried against it. Suggesting mappings with an LLM is #149.
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
 - **Sign-in.** The app has none: it works with no internet and holds nothing private. If #103 syncs through Supabase, it will need the account link Preflight's kiosk mode uses.

@@ -16,6 +16,7 @@ import { checkPort } from './connection-check';
 import { loadIndex } from './offload/offload-index';
 import { offloadLogs, type OffloadResult } from './offload/offload';
 import { LocalReader, SftpReader } from './offload/readers';
+import { afterNewLogs, logIdsNow } from './reports';
 import { loadSettings } from './settings-store';
 import { dataDirectory, ensureStorageLayout } from './storage';
 
@@ -85,9 +86,12 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     errors: []
   };
   const onProgress = (progress: OffloadStatus['current']) => { status.current = progress; };
+  // The logs there before, so the pipelines run on the new ones after.
+  let before: Set<string> | null = null;
 
   try {
     const settings = await loadSettings();
+    before = await logIdsNow(settings);
     const directory = dataDirectory(settings);
     await ensureStorageLayout(directory);
     const robot = robotFolderName(settings);
@@ -123,6 +127,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     status.lastRun = summary;
     status.current = null;
     status.running = false;
+    if (before && summary.copied > 0) afterNewLogs(before, 'offload').catch(() => {});
   }
   return '';
 }

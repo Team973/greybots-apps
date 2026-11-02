@@ -1,13 +1,19 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, shell } from 'electron';
+import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 
 import type { DiagnosticsApi } from '@shared/ipc';
+import { libraryKinds, type LibraryKind } from '@shared/library';
+import { starterLibrary } from '@shared/starters';
 import { normalizeSettings, settingsErrors, type Settings } from '@shared/settings';
+import { accountName, accountStatus, deleteItem, signIn, signOut, startCloudSync, syncLibrary, syncSoon } from './cloud-sync';
 import { checkConnection } from './connection-check';
 import { chooseImport, importStatus, runImport } from './import-service';
 import { earlierRuns, liveStatus } from './live-service';
+import { getLibraryItem, listLibrary, saveLibraryItem, storeLibraryItem } from './library-store';
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { deleteNote, saveNote } from './notes-store';
+import { deleteReport, generateReport, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
 import { loadSettings, storeSettings } from './settings-store';
 import {
   acceptCtreLicense,
@@ -66,6 +72,11 @@ function createWindow() {
 // Notes go only on logs in the data folder: the window names the log.
 async function knownLog(settings: Settings, id: string) {
   if (!(await signalLogs(settings)).some((log) => log.id === id)) throw new Error('That log is not in the data folder.');
+}
+
+function libraryKind(kind: unknown): LibraryKind {
+  if (!libraryKinds.includes(kind as LibraryKind)) throw new Error('There is no such kind of library item.');
+  return kind as LibraryKind;
 }
 
 const handlers: DiagnosticsApi = {
@@ -171,6 +182,76 @@ const handlers: DiagnosticsApi = {
   },
   async downloadOwlet() {
     return downloadOwlet();
+  },
+  async getLibrary<K extends LibraryKind>(kind: K) {
+    return listLibrary(await loadSettings(), libraryKind(kind) as K);
+  },
+  async saveLibraryItem(item) {
+    libraryKind((item as { kind?: unknown })?.kind);
+    const saved = await saveLibraryItem(await loadSettings(), item, accountName());
+    syncSoon();
+    return saved;
+  },
+  async deleteLibraryItem(kind, id) {
+    return deleteItem(await loadSettings(), libraryKind(kind), String(id));
+  },
+  async addStarters() {
+    const settings = await loadSettings();
+    let added = 0;
+    for (const item of starterLibrary()) {
+      if (await getLibraryItem(settings, item.kind, item.id)) continue;
+      await storeLibraryItem(settings, item);
+      added += 1;
+    }
+    if (added) syncSoon();
+    return added;
+  },
+  async getReports() {
+    return listReports(await loadSettings());
+  },
+  async getReport(id) {
+    return loadReport(await loadSettings(), String(id));
+  },
+  async generateReport(templateId, logId) {
+    const settings = await loadSettings();
+    await knownLog(settings, logId);
+    return generateReport(settings, String(templateId), logId);
+  },
+  async deleteReport(id) {
+    return deleteReport(await loadSettings(), String(id));
+  },
+  async runPipeline(pipelineId, logIds) {
+    const settings = await loadSettings();
+    for (const id of logIds) await knownLog(settings, id);
+    return runPipelines(logIds, 'manual', String(pipelineId));
+  },
+  async getPipelineStatus() {
+    return pipelineStatus();
+  },
+  async savePdf(suggestedName) {
+    if (!mainWindow) return '';
+    const name = `${String(suggestedName).replace(/[<>:"/\|?* -]/g, '_').slice(0, 150) || 'Report'}.pdf`;
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save the report as a PDF',
+      defaultPath: join(app.getPath('documents'), name),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (result.canceled || !result.filePath) return '';
+    const pdf = await mainWindow.webContents.printToPDF({ printBackground: true, pageSize: 'Letter', margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } });
+    await fs.writeFile(result.filePath, pdf);
+    return result.filePath;
+  },
+  async getAccount() {
+    return accountStatus();
+  },
+  async signIn(email, password) {
+    return signIn(String(email), String(password));
+  },
+  async signOut() {
+    return signOut();
+  },
+  async syncLibrary() {
+    return syncLibrary();
   }
 };
 
@@ -197,6 +278,7 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     watchForRobot();
     watchOwlet();
+    startCloudSync().catch((error) => console.error(error));
 
     // macOS: clicking the dock icon with no windows open makes one.
     app.on('activate', () => {
