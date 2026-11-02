@@ -8,14 +8,17 @@ import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
+import { eventKinds, phaseClock, type LogEvent, type SessionEvents } from '@shared/events';
 import type { HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
-import { isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
+import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
 import { chartPng } from '@/chart-image';
 import ColorPicker from '@/components/ColorPicker.vue';
-import PlotChart, { type ChartAxis, type ChartLine, type ZoomGesture } from '@/components/PlotChart.vue';
+import EventList from '@/components/EventList.vue';
+import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomGesture } from '@/components/PlotChart.vue';
 import { formatBytes, formatTime } from '@/format';
+import { eventColor, isProblem, noteEvent, shownEvent, type EventFilter } from '@/review';
 import { maxTraces, usePlotStore, type AxisSide, type BandSide, type PlotTarget, type TraceColor } from '@/stores/plot-store';
 
 // The reference palette's categorical order, a step per theme, validated
@@ -37,6 +40,8 @@ const colorOf = (color: TraceColor) => (typeof color === 'number' ? themePalette
 const logs = ref<SignalLogFile[] | null>(null);
 const selectedLog = ref('');
 const summary = ref<SignalLogSummary | null>(null);
+// The moment pinned on the chart: clicked, jumped to, or the playhead.
+const pin = ref<number | null>(null);
 const opening = ref(false);
 const openError = ref('');
 const message = ref('');
@@ -217,19 +222,28 @@ function describeAlignment(hoot: HootSessionStatus['hoots'][number]): string {
 // --- Opening a log ---
 
 async function openLog() {
+  pause();
+  pin.value = null;
+  review.value = null;
+  selectedEvent.value = null;
+  clearTimeout(eventsTimer);
   summary.value = null;
   hootStatus.value = null;
   liveStatus.value = null;
   clearTimeout(liveTimer);
   openError.value = '';
   series.value = new Map();
-  plotStore.setView(null);
+  // Back to the log the chart was last on (another page, or the app opened
+  // again): as it was left. Live follows again.
+  if (isLive.value || plotStore.logId !== selectedLog.value) plotStore.setView(null);
   if (!selectedLog.value) return;
+  plotStore.logId = selectedLog.value;
   opening.value = true;
   try {
     summary.value = await window.diagnostics.openSignalLog(selectedLog.value);
     if (isLive.value) pollLive();
     if (logs.value?.find((log) => log.id === selectedLog.value)?.hoots.length) pollHoots();
+    loadEvents();
   } catch (error) {
     openError.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   } finally {
@@ -320,6 +334,12 @@ function onDragOverZone(event: DragEvent, zone: string) {
   dropTarget.value = zone;
 }
 
+// Out of the chart altogether: nothing's highlighted.
+function onDragLeaveChart(event: DragEvent) {
+  const into = event.relatedTarget as Node | null;
+  if (!into || !(event.currentTarget as HTMLElement).contains(into)) dropTarget.value = '';
+}
+
 function onDrop(event: DragEvent, target?: PlotTarget) {
   const key = event.dataTransfer?.getData(dragType);
   dragging.value = false;
@@ -405,12 +425,18 @@ async function readTraces() {
   }
 }
 
+// Hidden signals stay listed (with their values) but are off the chart, and
+// so is an axis with only hidden signals on it. Axes keep their names.
+const shownTraces = computed(() => plotStore.traces.filter((t) => !t.hidden));
+
 const chartAxes = computed<ChartAxis[]>(() =>
-  plotStore.axes.map((a) => ({ id: a.id, side: a.side, name: plotStore.axisName(a.id) }))
+  plotStore.axes
+    .filter((a) => shownTraces.value.some((t) => t.axis === a.id))
+    .map((a) => ({ id: a.id, side: a.side, name: plotStore.axisName(a.id) }))
 );
 
 const chartLines = computed<ChartLine[]>(() =>
-  plotStore.traces.map((trace) => {
+  shownTraces.value.map((trace) => {
     const signal = signalsByKey.value.get(trace.key);
     return {
       key: trace.key,
@@ -465,7 +491,9 @@ function formatValue(value: SignalValue, kind: SignalKind | undefined, unit: str
 // --- Values: the latest while following live, otherwise at the right edge
 // of the span shown ---
 
-const valueHeading = computed(() => (following.value ? 'Now' : `At ${view.value[1].toFixed(2)} s`));
+// Or at the pin (or the playhead), when there is one.
+const valueTime = computed(() => (!following.value && pin.value !== null ? pin.value : view.value[1]));
+const valueHeading = computed(() => (following.value ? 'Now' : `At ${valueTime.value.toFixed(2)} s`));
 
 // The list under the chart: each signal's value, and whichever of its
 // stats over the span shown the person adds. Kept between visits.
@@ -497,7 +525,7 @@ function cell(key: string, column: Column): string {
   const line = series.value.get(key);
   if (!line) return '';
   const unit = unitOf(key);
-  if (column === 'value') return formatValue(valueAtTime(line, view.value[1]), line.kind, unit);
+  if (column === 'value') return formatValue(valueAtTime(line, valueTime.value), line.kind, unit);
   return line.stats ? formatNumber(line.stats[column], unit) : '';
 }
 
@@ -517,10 +545,10 @@ async function readLeafValues() {
   const id = summary.value?.id;
   const keys = shownLeaves.value;
   if (!id || keys.length === 0) return;
-  const result = await window.diagnostics.readValues(id, [...keys], view.value[1]).catch(() => null);
+  const result = await window.diagnostics.readValues(id, [...keys], valueTime.value).catch(() => null);
   if (result && summary.value?.id === id) leafValues.value = new Map(Object.entries(result));
 }
-watch([() => summary.value?.id, () => shownLeaves.value.join('\n'), () => view.value[1]], scheduleValues);
+watch([() => summary.value?.id, () => shownLeaves.value.join('\n'), valueTime], scheduleValues);
 onUnmounted(() => clearTimeout(valuesTimer));
 
 function leafText(signal: SignalInfo): string {
@@ -571,7 +599,7 @@ async function copyImage() {
   if (!snapshot) return;
   copying.value = true;
   try {
-    const legend = plotStore.traces.map((trace) => {
+    const legend = shownTraces.value.map((trace) => {
       const signal = signalsByKey.value.get(trace.key);
       return {
         color: colorOf(trace.color),
@@ -624,14 +652,187 @@ function zoomBy(factor: number) {
   zoomTo([from, from + span]);
 }
 
+// --- Review (#94): events, the match's phases, notes, and playing back ---
+
+const review = ref<SessionEvents | null>(null);
+const selectedEvent = ref<string | null>(null);
+
+// Which kinds of event show, on the chart and in the list. Kept between visits.
+function storedFilter(): EventFilter {
+  const all = eventKinds.map((k) => k.kind);
+  try {
+    const saved = JSON.parse(localStorage.getItem('signals.eventFilter') ?? 'null') as EventFilter | null;
+    if (saved && Array.isArray(saved.kinds)) return { kinds: all.filter((k) => saved.kinds.includes(k)), routine: !!saved.routine };
+  } catch {
+    // Fall through to everything but the routine.
+  }
+  return { kinds: all, routine: false };
+}
+const eventFilter = ref<EventFilter>(storedFilter());
+watch(eventFilter, (value) => localStorage.setItem('signals.eventFilter', JSON.stringify(value)));
+
+const allEvents = computed<LogEvent[]>(() =>
+  review.value ? [...review.value.events, ...review.value.notes.map(noteEvent)].sort((a, b) => a.start - b.start) : []
+);
+const shownEvents = computed(() => allEvents.value.filter((e) => shownEvent(e, eventFilter.value)));
+const markers = computed<ChartMarker[]>(() => shownEvents.value.map((e) => ({
+  id: e.id,
+  start: e.start,
+  end: e.end,
+  color: eventColor(e, viewMode.isDarkMode),
+  title: e.detail ? `${e.title} (${e.detail})` : e.title
+})));
+
+// Events are found when a log's opened; device faults in Hoot logs take a
+// little longer (owlet exports them first), so it's asked again until done.
+let eventsTimer: ReturnType<typeof setTimeout> | undefined;
+async function loadEvents() {
+  clearTimeout(eventsTimer);
+  const id = summary.value?.id;
+  if (!id || isLiveId(id)) return;
+  try {
+    const found = await window.diagnostics.getEvents(id);
+    if (summary.value?.id !== id) return;
+    review.value = found;
+    if (found.pending) eventsTimer = setTimeout(loadEvents, 1500);
+  } catch (error) {
+    message.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  }
+}
+onUnmounted(() => clearTimeout(eventsTimer));
+
+// Brings a time (and as much of what lasts from it as fits) into view,
+// leaving the span shown as it was if it's there already.
+function showTime(start: number, end: number | null = null) {
+  const [from, to] = view.value;
+  const until = end ?? start;
+  if (start >= from && until <= to) return;
+  const [fullStart, fullEnd] = full.value;
+  const span = Math.min(fullEnd - fullStart, Math.max(to - from, (until - start) * 1.25));
+  const left = Math.max(fullStart, Math.min(start - span * 0.2, fullEnd - span));
+  zoomTo([left, left + span]);
+}
+
+function selectEvent(event: LogEvent) {
+  selectedEvent.value = event.id;
+  pin.value = event.start;
+  showTime(event.start, event.end);
+}
+
+function onMarker(id: string) {
+  const event = allEvents.value.find((e) => e.id === id);
+  if (event) selectEvent(event);
+}
+
+// The next (or previous) error or warning from the one picked or the pin;
+// with neither, the first (or last) in the span shown.
+function stepProblem(direction: 1 | -1) {
+  const edge = direction === 1 ? view.value[0] - 1e-3 : view.value[1] + 1e-3;
+  const from = allEvents.value.find((e) => e.id === selectedEvent.value)?.start ?? pin.value ?? edge;
+  const problems = shownEvents.value.filter(isProblem);
+  const next = direction === 1 ? problems.find((e) => e.start > from + 1e-6) : [...problems].reverse().find((e) => e.start < from - 1e-6);
+  if (next) selectEvent(next);
+}
+
+const canNote = computed(() => !!summary.value && !isLiveId(summary.value.id));
+const noteTime = computed(() => pin.value ?? (view.value[0] + view.value[1]) / 2);
+
+async function saveNote(note: { id?: string; time: number; text: string }) {
+  const id = summary.value?.id;
+  if (!id || !review.value) return;
+  try {
+    // A plain copy: the editor's is reactive, which IPC can't send.
+    const plain = { ...(note.id ? { id: note.id } : {}), time: note.time, text: note.text };
+    review.value = { ...review.value, notes: await window.diagnostics.saveNote(id, plain) };
+  } catch (error) {
+    message.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  }
+}
+
+async function deleteNote(noteId: string) {
+  const id = summary.value?.id;
+  if (!id || !review.value) return;
+  try {
+    review.value = { ...review.value, notes: await window.diagnostics.deleteNote(id, noteId) };
+  } catch (error) {
+    message.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  }
+}
+
+// Playing back: the pin moves through the log as it happened (or faster),
+// and the span shown moves along to keep it in sight.
+const speeds = [0.25, 0.5, 1, 2, 4, 8];
+const speed = ref(1);
+const playing = ref(false);
+let frame = 0;
+let lastFrame = 0;
+
+function play() {
+  if (!summary.value || isLive.value) return;
+  const [start, end] = full.value;
+  if (pin.value === null || pin.value >= end - 1e-3) pin.value = pin.value === null ? Math.max(start, view.value[0]) : start;
+  showTime(pin.value);
+  playing.value = true;
+  lastFrame = performance.now();
+  frame = requestAnimationFrame(advance);
+}
+
+function pause() {
+  playing.value = false;
+  cancelAnimationFrame(frame);
+}
+
+function advance(now: number) {
+  if (!playing.value || pin.value === null) return;
+  const end = full.value[1];
+  const t = Math.min(end, pin.value + ((now - lastFrame) / 1000) * speed.value);
+  lastFrame = now;
+  pin.value = t;
+  const [from, to] = view.value;
+  const span = to - from;
+  if (t > to - span * 0.02 || t < from) {
+    const left = Math.max(full.value[0], Math.min(t - span * 0.1, end - span));
+    zoomTo([left, left + span]);
+  }
+  if (t >= end) pause();
+  else frame = requestAnimationFrame(advance);
+}
+onUnmounted(pause);
+
+function scrub(event: Event) {
+  pin.value = Number((event.target as HTMLInputElement).value);
+  showTime(pin.value);
+}
+
+// Space plays and pauses; [ and ] step through errors and warnings.
+function onReviewKey(event: KeyboardEvent) {
+  if (!summary.value || isLive.value || event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (target?.closest('input, textarea, select, button, [contenteditable], md-outlined-button, md-outlined-icon-button')) return;
+  if (event.key === ' ') {
+    event.preventDefault();
+    if (playing.value) pause();
+    else play();
+  } else if (event.key === '[' || event.key === ']') {
+    stepProblem(event.key === ']' ? 1 : -1);
+  }
+}
+onMounted(() => window.addEventListener('keydown', onReviewKey));
+onUnmounted(() => window.removeEventListener('keydown', onReviewKey));
+
 // Lists the data logs again (new ones copied in, offloads since), keeping
-// the open one if it's still there.
+// the open one if it's still there. On coming to the page, that's the one
+// last open, here or before the app was closed.
 async function loadLogs() {
   [logs.value, earlierRuns.value] = await Promise.all([window.diagnostics.getSignalLogs(), window.diagnostics.getEarlierRuns()]);
-  const there = isLiveNow(selectedLog.value) || logs.value.some((log) => log.id === selectedLog.value) ||
-    earlierRuns.value.some((run) => run.id === selectedLog.value);
-  if (!there) selectedLog.value = logs.value[0]?.id ?? '';
+  const wanted = selectedLog.value || plotStore.logId;
+  const there = isLiveNow(wanted) || logs.value.some((log) => log.id === wanted) ||
+    earlierRuns.value.some((run) => run.id === wanted);
+  selectedLog.value = there ? wanted : logs.value[0]?.id ?? '';
 }
+
+// The chart, saved as it changes.
+plotStore.$subscribe(() => plotStore.save());
 
 onMounted(loadLogs);
 
@@ -812,12 +1013,16 @@ watch(() => route.query.session, (session) => {
       <p v-if="isLive" class="hint small">
         Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
       </p>
-      <p v-else class="hint small">Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all.</p>
+      <p v-else class="hint small">
+        Scroll to zoom, Shift+scroll to pan, drag across the chart to zoom to it, double-click to show all. Click to pin a moment, or a
+        marker along the top for what happened there. Space plays from the pin; [ and ] step through errors and warnings.
+      </p>
 
       <div class="chart-body">
-      <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @drop.prevent="onDrop($event)">
-        <PlotChart v-if="summary" ref="chartElement" :lines="chartLines" :axes="chartAxes" :view="view" :full="full" :height="460"
-          @zoom="zoomTo" @width="plotWidth = $event" />
+      <div class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @dragleave="onDragLeaveChart" @drop.prevent="onDrop($event)">
+        <PlotChart v-if="summary" ref="chartElement" v-model:pin="pin" :lines="chartLines" :axes="chartAxes" :view="view" :full="full"
+          :height="460" :markers="markers" :phases="review?.phases ?? []" :selected-marker="selectedEvent"
+          :pin-label="playing ? 'Playing at' : 'Pinned at'" @zoom="zoomTo" @width="plotWidth = $event" @marker="onMarker" />
         <div v-if="summary && plotStore.traces.length === 0 && !dragging" class="empty">
           Drag signals here, or click one in the list.
         </div>
@@ -826,50 +1031,71 @@ watch(() => route.query.session, (session) => {
           can, to show a number as states (0/1 as false/true, a mode). -->
         <div v-if="dragging && draggingText" class="drop-zones bands">
           <div class="drop" :class="{ over: dropTarget === 'band-top' }"
-            @dragover="onDragOverZone($event, 'band-top')" @drop.prevent.stop="onDrop($event, { band: 'top' })">
+            @dragover.stop="onDragOverZone($event, 'band-top')" @drop.prevent.stop="onDrop($event, { band: 'top' })">
             Top band <span class="hint">above the plot</span>
           </div>
           <div class="drop" :class="{ over: dropTarget === 'band-bottom' }"
-            @dragover="onDragOverZone($event, 'band-bottom')" @drop.prevent.stop="onDrop($event, { band: 'bottom' })">
+            @dragover.stop="onDragOverZone($event, 'band-bottom')" @drop.prevent.stop="onDrop($event, { band: 'bottom' })">
             Bottom band <span class="hint">below the plot</span>
           </div>
         </div>
         <div v-else-if="dragging" class="drop-zones">
           <div class="drop-column">
             <div v-for="axis in leftAxes" :key="axis.id" class="drop" :class="{ over: dropTarget === axis.id }"
-              @dragover="onDragOverZone($event, axis.id)" @drop.prevent.stop="onDrop($event, { axis: axis.id })">
+              @dragover.stop="onDragOverZone($event, axis.id)" @drop.prevent.stop="onDrop($event, { axis: axis.id })">
               {{ plotStore.axisName(axis.id) }} <span class="hint">{{ axisUnits(axis.id) }}</span>
             </div>
             <div class="drop new" :class="{ over: dropTarget === 'new-left' }"
-              @dragover="onDragOverZone($event, 'new-left')" @drop.prevent.stop="onDrop($event, { newAxis: 'left' })">
+              @dragover.stop="onDragOverZone($event, 'new-left')" @drop.prevent.stop="onDrop($event, { newAxis: 'left' })">
               + New left axis
             </div>
           </div>
           <div class="drop-column">
             <div class="drop band" :class="{ over: dropTarget === 'band-top' }"
-              @dragover="onDragOverZone($event, 'band-top')" @drop.prevent.stop="onDrop($event, { band: 'top' })">
+              @dragover.stop="onDragOverZone($event, 'band-top')" @drop.prevent.stop="onDrop($event, { band: 'top' })">
               Top band <span class="hint">as states</span>
             </div>
             <div class="drop center" :class="{ over: dropTarget === 'default' }"
-              @dragover="onDragOverZone($event, 'default')" @drop.prevent.stop="onDrop($event)">
+              @dragover.stop="onDragOverZone($event, 'default')" @drop.prevent.stop="onDrop($event)">
               {{ leftAxes.length ? `Add to ${plotStore.axisName(leftAxes[0].id)}` : 'Add to the chart' }}
             </div>
             <div class="drop band" :class="{ over: dropTarget === 'band-bottom' }"
-              @dragover="onDragOverZone($event, 'band-bottom')" @drop.prevent.stop="onDrop($event, { band: 'bottom' })">
+              @dragover.stop="onDragOverZone($event, 'band-bottom')" @drop.prevent.stop="onDrop($event, { band: 'bottom' })">
               Bottom band <span class="hint">as states</span>
             </div>
           </div>
           <div class="drop-column">
             <div v-for="axis in rightAxes" :key="axis.id" class="drop" :class="{ over: dropTarget === axis.id }"
-              @dragover="onDragOverZone($event, axis.id)" @drop.prevent.stop="onDrop($event, { axis: axis.id })">
+              @dragover.stop="onDragOverZone($event, axis.id)" @drop.prevent.stop="onDrop($event, { axis: axis.id })">
               {{ plotStore.axisName(axis.id) }} <span class="hint">{{ axisUnits(axis.id) }}</span>
             </div>
             <div class="drop new" :class="{ over: dropTarget === 'new-right' }"
-              @dragover="onDragOverZone($event, 'new-right')" @drop.prevent.stop="onDrop($event, { newAxis: 'right' })">
+              @dragover.stop="onDragOverZone($event, 'new-right')" @drop.prevent.stop="onDrop($event, { newAxis: 'right' })">
               + New right axis
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Playing back: Material's play_arrow and pause icons. -->
+      <div v-if="summary && !isLive" id="playback" class="playback">
+        <md-outlined-icon-button id="play" :title="playing ? 'Pause (Space)' : 'Play (Space)'" :aria-label="playing ? 'Pause' : 'Play'"
+          @click="playing ? pause() : play()">
+          <svg viewBox="0 -960 960 960" width="20" height="20" aria-hidden="true">
+            <path v-if="playing" d="M520-200v-560h240v560H520Zm-320 0v-560h240v560H200Z" />
+            <path v-else d="M320-200v-560l440 280-440 280Z" />
+          </svg>
+        </md-outlined-icon-button>
+        <select id="speed" v-model.number="speed" aria-label="Playback speed">
+          <option v-for="choice in speeds" :key="choice" :value="choice">{{ choice }}×</option>
+        </select>
+        <input id="scrub" type="range" :min="full[0]" :max="full[1]" step="0.01" :value="pin ?? view[0]" aria-label="Time"
+          @input="scrub" />
+        <span id="playhead" class="hint small playhead">
+          <template v-if="pin !== null">{{ pin.toFixed(2) }} s<template v-if="phaseClock(review?.phases ?? [], pin)">
+            · {{ phaseClock(review?.phases ?? [], pin) }}</template></template>
+          <template v-else>Click the chart to pin a moment</template>
+        </span>
       </div>
 
       <p v-if="message" class="error-text">{{ message }}</p>
@@ -895,9 +1121,17 @@ watch(() => route.query.session, (session) => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="trace in plotStore.traces" :key="trace.key" draggable="true"
+            <tr v-for="trace in plotStore.traces" :key="trace.key" draggable="true" :class="{ 'hidden-trace': trace.hidden }"
               @dragstart="onDragStart($event, trace.key)" @dragend="onDragEnd">
-              <td>
+              <td class="trace-buttons">
+                <button class="remove eye" :aria-pressed="!trace.hidden"
+                  :aria-label="`${trace.hidden ? 'Show' : 'Hide'} ${trace.key}`" :title="trace.hidden ? 'Show on the chart' : 'Hide from the chart'"
+                  @click="plotStore.toggleHidden(trace.key)">
+                  <svg viewBox="0 -960 960 960" width="18" height="18" aria-hidden="true">
+                    <path v-if="trace.hidden" d="m644-428-58-58q9-47-27-88t-93-32l-58-58q17-8 34.5-12t37.5-4q75 0 127.5 52.5T660-500q0 20-4 37.5T644-428Zm128 126-58-56q38-29 67.5-63.5T832-500q-50-101-143.5-160.5T480-720q-29 0-57 4t-55 12l-62-62q41-17 84-25.5t90-8.5q151 0 269 83.5T920-500q-23 59-60.5 109.5T772-302Zm20 246L624-222q-35 11-70.5 16.5T480-200q-151 0-269-83.5T40-500q21-53 53-98.5t73-81.5L56-792l56-56 736 736-56 56ZM222-624q-29 26-53 57t-41 67q50 101 143.5 160.5T480-280q20 0 39-2.5t39-5.5l-36-38q-11 3-21 4.5t-21 1.5q-75 0-127.5-52.5T300-500q0-11 1.5-21t4.5-21l-84-82Zm319 93Zm-151 75Z" />
+                    <path v-else d="M480-320q75 0 127.5-52.5T660-500q0-75-52.5-127.5T480-680q-75 0-127.5 52.5T300-500q0 75 52.5 127.5T480-320Zm0-72q-45 0-76.5-31.5T372-500q0-45 31.5-76.5T480-608q45 0 76.5 31.5T588-500q0 45-31.5 76.5T480-392Zm0 192q-146 0-266-81.5T40-500q54-137 174-218.5T480-800q146 0 266 81.5T920-500q-54 137-174 218.5T480-200Zm0-300Zm0 220q113 0 207.5-59.5T832-500q-50-101-144.5-160.5T480-720q-113 0-207.5 59.5T128-500q50 101 144.5 160.5T480-280Z" />
+                  </svg>
+                </button>
                 <ColorPicker :color="colorOf(trace.color)" :palette="themePalette" :label="trace.key"
                   @pick="plotStore.setColor(trace.key, $event)" />
               </td>
@@ -926,10 +1160,14 @@ watch(() => route.query.session, (session) => {
       </div>
       </div>
       <p v-if="plotStore.traces.length" class="hint small">
-        {{ following ? 'Values are the latest.' : 'Values are at the right edge of the span shown.' }}
+        {{ following ? 'Values are the latest.' : pin !== null ? 'Values are at the pin.' : 'Values are at the right edge of the span shown.' }}
         <template v-if="showsStats">Min, max and mean are of the span shown.</template> Up to {{ maxTraces }} signals; drag a row onto the chart to move it to another axis
-        or band, and click a colour to change it.
+        or band, click a colour to change it, and click the eye to hide it from the chart for now.
       </p>
+
+      <EventList v-if="summary && !isLive" v-model:filter="eventFilter" :events="allEvents" :phases="review?.phases ?? []"
+        :selected="selectedEvent" :pending="review ? review.pending : 'Looking through the log…'" :can-note="canNote" :note-time="noteTime"
+        :dark="viewMode.isDarkMode" :caption="selectedLabel" @select="selectEvent" @step="stepProblem" @save-note="saveNote" @delete-note="deleteNote" />
     </section>
   </div>
 </template>
@@ -1287,6 +1525,26 @@ select {
   background: color-mix(in srgb, #2a78d6 18%, transparent);
 }
 
+.playback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.playback md-outlined-icon-button svg {
+  fill: currentColor;
+}
+
+.playback input[type='range'] {
+  flex: 1;
+  accent-color: #2a78d6;
+}
+
+.playhead {
+  min-width: 170px;
+  font-variant-numeric: tabular-nums;
+}
+
 .chart-body {
   display: flex;
   flex-direction: column;
@@ -1335,5 +1593,24 @@ select {
 
 .remove:hover {
   opacity: 1;
+}
+
+.trace-buttons {
+  white-space: nowrap;
+}
+
+.eye {
+  display: inline-flex;
+  vertical-align: middle;
+  padding: 2px;
+}
+
+.eye svg {
+  fill: currentColor;
+}
+
+/* Off the chart for now: the row stays, quieter. */
+.hidden-trace > td:not(.trace-buttons) {
+  opacity: 0.5;
 }
 </style>

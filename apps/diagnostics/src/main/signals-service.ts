@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 
+import type { LogEvent, MatchPhase, SessionEvents } from '@shared/events';
 import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogStatus, type HootProgress, type OwletStatus } from '@shared/hoot';
 import type { HootSessionStatus, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
@@ -22,8 +23,22 @@ import {
 import { exportedName, HootLog } from './hoot/hoot-log';
 import { hootCompliancy, Owlet } from './hoot/owlet';
 import { openLive, readLive } from './live-service';
+import { loadNotes } from './notes-store';
 import { loadIndex } from './offload/offload-index';
 import { loadSettings, storeSettings } from './settings-store';
+import {
+  dataLogEvents,
+  dataLogModes,
+  eventsFrom,
+  faultSeverity,
+  faultTitle,
+  hasDriverStationEnable,
+  hootModes,
+  matchPhases,
+  modeEvents,
+  spansWhere,
+  type ModeChange
+} from './signals/events';
 import { LogSignalSource } from './signals/log-source';
 import { dataDirectory } from './storage';
 
@@ -253,6 +268,8 @@ interface Session {
   placements: Placement[];
   start: number;
   end: number;
+  // Found once, when first asked for.
+  events?: FoundEvents;
 }
 
 // The session open for reading. One at a time: a data log is held in
@@ -539,4 +556,105 @@ export async function readValues(settings: Settings, id: string, keys: string[],
     out[key] = series ? valueAtTime(series, time) : null;
   }
   return out;
+}
+
+// --- Events ---
+
+interface FoundEvents {
+  dataLog: LogEvent[];
+  // From the data log, if it says; Hoot logs' RobotMode once read.
+  modes: { changes: ModeChange[]; key: string | null } | null;
+  hoot: LogEvent[];
+  fmsAttached: boolean;
+  // Looking through the Hoot logs, until done.
+  scanning: boolean;
+}
+
+// What's exported from each Hoot log to find events: every device's
+// faults (not the sticky ones: those stay set after the fault's gone), the
+// robot's mode, and whether the Driver Station and CAN bus were there.
+const hootEventSignal = /\/Fault_|^RobotMode$|^DS:IsDSAttached$|^DS:IsFMSAttached$|^CANBusIsUp$/;
+
+async function scanHoots(session: Session, found: FoundEvents) {
+  for (const placement of session.placements) {
+    await placement.aligned;
+    const { hoot } = placement;
+    if (hoot.state !== 'ready') continue;
+    const offset = placement.offset ?? 0;
+    const end = session.end - offset;
+    const wanted = hoot.signals.filter((s) => hootEventSignal.test(s.name));
+    // Together, so owlet reads the log once for all of them.
+    const read = await Promise.all(wanted.map(async (signal) => {
+      const source = await hoot.sourceFor(signal.id).catch(() => null);
+      return { signal, series: source?.read(exportedName(signal.name)) ?? null };
+    }));
+    const shifted = (spans: { start: number; end: number | null }[]) =>
+      spans.map((span) => ({ start: span.start + offset, end: span.end === null ? null : span.end + offset }));
+    for (const { signal, series } of read) {
+      if (!series) continue;
+      const key = `${hoot.label}/${signal.name}`;
+      if (signal.name.includes('/Fault_')) {
+        const spans = shifted(spansWhere(series, (v) => v > 0, end));
+        found.hoot.push(...eventsFrom('fault', faultSeverity(signal.name), faultTitle(signal.name), spans, {
+          key,
+          detail: (count) => `${hoot.label}${count > 1 ? `, ${count} times` : ''}`
+        }));
+      } else if (signal.name === 'RobotMode' && !found.modes) {
+        const changes = hootModes(series, offset);
+        if (changes) found.modes = { changes, key };
+      } else if (signal.name === 'DS:IsFMSAttached') {
+        found.fmsAttached ||= (series.values as Float64Array).some((v) => v === 1);
+      } else if (signal.name === 'DS:IsDSAttached') {
+        // Only once it had been there: before that, it's the robot starting up.
+        const first = (series.values as Float64Array).findIndex((v) => v === 1);
+        if (first === -1) continue;
+        const after = { ...series, times: series.times.slice(first), values: (series.values as Float64Array).slice(first) };
+        found.hoot.push(...eventsFrom('network', 'error', 'Driver Station disconnected', shifted(spansWhere(after, (v) => v === 0, end)), { key }));
+      } else if (signal.name === 'CANBusIsUp') {
+        found.hoot.push(...eventsFrom('can', 'error', `${hoot.label}: CAN bus down`, shifted(spansWhere(series, (v) => v === 0, end)), { key }));
+      }
+    }
+  }
+}
+
+function findEvents(session: Session): FoundEvents {
+  const dataLog = session.dataLog;
+  const found: FoundEvents = {
+    dataLog: dataLog ? dataLogEvents(dataLog) : [],
+    // The Driver Station's own record wins; robot code's flags only if
+    // there's nothing better once the Hoot logs are read.
+    modes: dataLog && hasDriverStationEnable(dataLog) ? { changes: dataLogModes(dataLog)!, key: null } : null,
+    hoot: [],
+    fmsAttached: false,
+    scanning: session.placements.length > 0
+  };
+  const fallback = () => {
+    const changes = dataLog ? dataLogModes(dataLog) : null;
+    if (!found.modes && changes) found.modes = { changes, key: null };
+  };
+  if (found.scanning) {
+    scanHoots(session, found).catch(() => {}).finally(() => {
+      fallback();
+      found.scanning = false;
+    });
+  } else {
+    fallback();
+  }
+  return found;
+}
+
+export async function sessionEvents(settings: Settings, id: string): Promise<SessionEvents> {
+  if (isLiveId(id)) return { events: [], phases: [], notes: [], pending: '' };
+  const session = await openSession(settings, id);
+  const found = (session.events ??= findEvents(session));
+  // While the Hoot logs are read, robot code's own flags stand in.
+  const modes = found.modes ?? (found.scanning && session.dataLog ? { changes: dataLogModes(session.dataLog) ?? [], key: null } : null);
+  const phases: MatchPhase[] = modes ? matchPhases(modes.changes, session.end, !!session.file.match || found.fmsAttached) : [];
+  const events = [...(modes ? modeEvents(modes.changes, modes.key) : []), ...found.dataLog, ...found.hoot].sort((a, b) => a.start - b.start);
+  return {
+    events,
+    phases,
+    notes: await loadNotes(settings, id),
+    pending: found.scanning ? 'Looking for device faults in the Hoot logs…' : ''
+  };
 }

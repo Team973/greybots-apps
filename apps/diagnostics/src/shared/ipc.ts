@@ -4,6 +4,7 @@
 
 import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { ImportStatus, ImportSummary } from './import';
+import type { Annotation, SessionEvents } from './events';
 import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { Settings, SettingsErrors } from './settings';
@@ -163,6 +164,13 @@ export interface DiagnosticsApi {
   // list; null where there's none. Hoot signals not read yet are null.
   readValues(id: string, keys: string[], time: number): Promise<Record<string, SignalValue>>;
   getHootStatus(id: string): Promise<HootSessionStatus>;
+  // What happened in a log: events found in it, the match's phases, and
+  // notes. `pending` says what's still being looked for; ask again.
+  getEvents(id: string): Promise<SessionEvents>;
+  // Adds a note to a log (no id) or changes one; blank text deletes it.
+  // Resolves to the log's notes.
+  saveNote(id: string, note: { id?: string; time: number; text: string }): Promise<Annotation[]>;
+  deleteNote(id: string, noteId: string): Promise<Annotation[]>;
   // Puts a PNG on the clipboard. Resolves to an error message, or ''.
   copyImage(png: Uint8Array): Promise<string>;
   // A live session's connection, and how far its timeline goes. Asking keeps
@@ -196,6 +204,9 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'readSignal',
   'readValues',
   'getHootStatus',
+  'getEvents',
+  'saveNote',
+  'deleteNote',
   'copyImage',
   'getLiveStatus',
   'getEarlierRuns',

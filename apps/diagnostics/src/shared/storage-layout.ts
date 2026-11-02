@@ -4,6 +4,7 @@
 //   <data folder>/
 //     logs/<robot>/<yyyy-mm-dd>/<source>/<original file name>
 //     results/<kind>/<id>.json
+//     notes/<log>.json
 //     index/
 //     README.txt
 
@@ -23,6 +24,10 @@ export const storageFolders: StorageFolder[] = [
   {
     name: 'results',
     purpose: 'What the app works out from the logs: match summaries, test runs.'
+  },
+  {
+    name: 'notes',
+    purpose: 'Notes people added to logs while reviewing them.'
   },
   {
     name: 'index',
@@ -53,6 +58,12 @@ export function resultPathSegments(kind: string, id: string): string[] {
   return ['results', safeSegment(kind), `${safeSegment(id)}.json`];
 }
 
+// Where the notes on a log are kept, below the data folder: one file per
+// log, named for its path under logs/.
+export function notesPathSegments(logId: string): string[] {
+  return ['notes', `${safeSegment(logId.replace(/^logs\//, '').replace(/\//g, '~'))}.json`];
+}
+
 // Names come from robots and from people, so anything that could step out of
 // the folder or isn't allowed in a file name on Windows is replaced.
 export function safeSegment(name: string): string {
@@ -71,6 +82,9 @@ logs/<robot>/<yyyy-mm-dd>/<source>/<file>
 
 results/<kind>/<id>.json
     What the app works out from the logs: match summaries, test runs.
+
+notes/<log>.json
+    Notes people added to logs while reviewing them.
 
 index/
     What has been offloaded, and which match or test each file belongs to.

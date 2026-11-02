@@ -69,12 +69,14 @@ Everything the app pulls off the robot or works out is kept under one data folde
 <data folder>/
   logs/<robot>/<yyyy-mm-dd>/<source>/<original file name>
   results/<kind>/<id>.json
+  notes/<log>.json
   index/
   README.txt
 ```
 
 - **`logs/`** holds files exactly as they came off the robot, under their original names, and they are never edited. `<source>` is where the file came from: `roborio`, `driver-station`, `ctre-hoot`, `coprocessor-<name>`, `custom-<name>`. The day is the local date the file was recorded.
 - **`results/`** holds what the app computes from the logs (match summaries, test runs), one JSON file each. Results can always be rebuilt from `logs/`.
+- **`notes/`** holds notes people add while reviewing a log, one file per log, named for its path under `logs/` (see Log review). Unlike `results/`, these can't be rebuilt.
 - **`index/`** records what has been offloaded and what each file belongs to: `index/offloaded.json` (see Log offload).
 
 Which event, match, or test run a log belongs to is recorded in the index, not in its path. That is often only known after the file is pulled (from FMS data inside the log, or from timestamps), and a path that had to change afterwards would mean moving files that are meant to stay put.
@@ -142,10 +144,10 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 **The Signals page.** The chart is the main part, with the log's signals beside it.
 
 - **The signal list** is one tree of the signals' own paths. A folder holding only one folder is shown as one (`Robot / robot`), each folder shows how many signals it holds, and the filter opens everything that matches. The top level starts open.
-- **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …), for a new left or right axis, and for the top and bottom bands (only the bands, for text). Clicking a signal adds it to L1.
+- **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …), for a new left or right axis, and for the top and bottom bands (only the bands, for text). The zone under the pointer is highlighted. Clicking a signal adds it to L1.
 - **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
 - **Bands:** text signals (subsystem states) are drawn as bands of labelled spans in the signal's colour, above the plot or below it. Any other signal can go in a band too, to show a number as states: a 0/1 flag as false/true (true darker), or a mode number. A value repeated is one span.
-- **Under the chart:** a list of what's plotted, with each signal's colour, its axis or band (changeable, including to a new axis), and its value: the latest while following live, otherwise at the right edge of the span shown. **Show** adds its min, max or mean over the span shown; the choice is kept between visits. Four signals show before the list scrolls. Rows can be dragged onto the chart to move them.
+- **Under the chart:** a list of what's plotted, with each signal's colour, its axis or band (changeable, including to a new axis), and its value: the latest while following live, otherwise at the right edge of the span shown. **Show** adds its min, max or mean over the span shown; the choice is kept between visits. Four signals show before the list scrolls. Rows can be dragged onto the chart to move them. The eye beside each hides it from the chart for now (and an axis left with nothing shown goes too); it stays in the list with its value.
 - **Values in the signal list:** each signal in the tree shows its value too, at the same moment as the list under the chart, a few times a second at most. They're read for just the rows showing (`readValues`). A Hoot signal's shows once it's been exported (plotted), since exporting is slow.
 - **Room:** the sidebar can be hidden to a thin strip, and the log's details at its top folded away to give the signal list more room. Both are kept between visits.
 - **Zoom:** scroll to zoom around the pointer, Shift+scroll to pan, drag across the plot to zoom to that span, and double-click (or **Show all**) to see everything. Zoom buttons do the same. Each change re-reads only the span shown, at about two points a pixel, so zooming in shows full detail.
@@ -154,7 +156,7 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 - **Copying as an image:** the copy button (Material's two-sheets icon) puts the chart on the clipboard as a PNG, for pasting into a PR or a message: a caption naming the log and span, the chart (with any pinned readout), and a legend of every signal with its colour and value. It's drawn off screen (`src/renderer/src/chart-image.ts`): the chart's own SVG, with the page's styles copied onto it, on a canvas at twice the size for sharpness, with the caption, readout and legend drawn around it. So nothing on the page moves while it's made, and it's the same however the page is scrolled. The main process only puts it on the clipboard, and only a PNG.
 - **Warnings:** opening a log warns when DogLog's queue filled up (its `QueueRemainingCapacity` reached 0), since DogLog drops values while it's full.
 - **Colours:** up to 8 signals, in the reference palette's fixed order. A signal keeps its colour while it's on the chart. Clicking a colour in the list under the chart picks another palette colour or any colour; the choice is kept by signal, between visits, so the signal gets it back when added again. Any colour picked is the same in both themes. Light and dark each have their own steps, validated against the card colours. Three of the light ones are under 3:1 against white, so every signal is also named in the list under the chart.
-- **What's kept:** the chart survives going to another page and back (`src/renderer/src/stores/plot-store.ts`). Saving charts, and reports of several charts, are dashboards (#95).
+- **What's kept:** the log or live session open, the signals plotted (axes, bands, colours, which are hidden) and the span shown are kept going to another page and back, and saved for the next time the app opens (`src/renderer/src/stores/plot-store.ts`). Live sessions follow again when returned to. An earlier live run is gone once the app closes, so the newest log opens instead. Saving charts by name, and reports of several charts, are dashboards (#95).
 
 **Reading data logs.** `src/main/signals/wpilog.ts` reads WPILib data logs (`.wpilog`, [format](https://github.com/wpilibsuite/allwpilib/blob/main/wpiutil/doc/datalog.adoc)) in plain TypeScript, with no Node or Electron. `structs.ts` decodes `struct:` values (Pose2d, team-defined structs) from the schemas the log carries: nested structs, fixed arrays, enums, and bitfields. A 15 MB log of about 1M values opens in about 250 ms. The log is held in memory whole, one at a time.
 
@@ -230,6 +232,39 @@ The Signals page's list starts with two live sessions: **the robot**, and **a si
 
 **Testing without a robot.** Team 973's robot code runs in simulation (`./gradlew simulateJavaRelease` in the robot repo, with `ROBOT_SIM_NO_GUI=1` for no window) and publishes the same `/Robot` signals. Its `test/` tools enable it through the simulated Driver Station.
 
+## Log review
+
+The Signals page is also where a log is reviewed (#94): what happened in it is found, marked along the top of the chart, and listed under it.
+
+**Events** (`src/main/signals/events.ts`) are found by the signals' names, the way WPILib, DogLog, AdvantageKit and CTRE log them, so they turn up for any robot without the app knowing its code:
+
+| Kind | From |
+| --- | --- |
+| Enable and mode | The Driver Station's own record (`DS:enabled`, AdvantageKit's `DriverStation/Enabled`), else CTRE's `RobotMode` in a Hoot log, else robot code's own flags (`isAutoEnabled`, `isTeleopEnabled`) |
+| Brownouts | `.../BrownedOut` true |
+| CAN | `CANBus/ReceiveErrorCount` and `TransmitErrorCount` above 0; `OffCount` and `TxFullCount` going up; a Hoot log's `CANBusIsUp` false |
+| Device faults | Every CTRE device's `Fault_*` signals in the Hoot logs (not the sticky ones) |
+| Loop overruns | "Loop time of … overrun" in the console |
+| Network | NetworkTables clients leaving (console); the Driver Station going away (`DS:IsDSAttached` in a Hoot log) |
+| Alerts | WPILib Alerts (`Alerts/errors`, `warnings`, `infos`) and DogLog's faults, from when each appears until it goes |
+| Console | Other `Error` and `Warning` lines; ones that differ only in numbers or past their first 40 characters are one event |
+
+- **Merging:** the same event less than 2 s apart is one, with a count and its span (overruns loop after loop, a fault that flickers).
+- **Severity:** errors (red), warnings (amber) and information (grey); notes are purple. Device faults that are a device doing as it's told (current limits, limit switches, the static brake) are routine, and so is information other than enables: they're hidden unless **Routine too** is ticked. Team 973's Q39 had 299 of them, almost all current limits.
+- **Hoot logs:** device faults need owlet to export about 450 signals from each Hoot log, which takes about 12 s the first time a log is opened (once for both of a match's Hoot logs, kept like any export). Until then the list says it's still looking; everything else shows at once.
+
+**Match phases.** Auto and teleop are where the robot was enabled in each mode; in a match (a match name, or FMS attached per the Hoot log), the last 30 s of teleop is the endgame (`endgameSeconds` in `src/shared/events.ts`, 2026's game). They're shaded behind the chart, and times show with the phase clock ("Teleop 1:05").
+
+**Moving about.** Clicking an event (in the list, or its mark on the chart) pins its time and brings it into view. **Previous** and **Next** (or `[` and `]`) step through the errors and warnings shown, from the one picked, the pin, or the edge of the span shown. Which kinds show is kept between visits.
+
+**Playing back.** Play (or Space) moves the pin through the log at 0.25× to 8×, and the chart moves along to keep it in sight; the slider scrubs. The values under the chart are at the pin when there is one.
+
+**Copying the events.** **Copy as image** puts the events listed on the clipboard as a PNG, the way the chart's copied (`src/renderer/src/events-image.ts`): a caption naming the log, the counts and which kinds are shown, then every event listed, not just those scrolled into view, so filter to what matters first. Past 200 events the rest are counted.
+
+**Notes** are added at the pin (or the middle of the span shown), changed and deleted from the list, and kept in the data folder (`src/main/notes-store.ts`). The first line is the note's title. Live sessions and earlier live runs can't have notes, since they aren't kept.
+
+**Min, max and mean of a range:** drag across the chart to zoom to the range; the stats columns are of the span shown.
+
 ## Installers
 
 `npm run dist:diagnostics` builds an installer for the computer it's run on into `apps/diagnostics/release`. The Diagnostics CI workflow does this on Windows, Linux and macOS for every change and attaches the three installers to the workflow run:
@@ -247,7 +282,8 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 - **The rest of log offload** is [#140](https://github.com/Team973/greybots-apps/issues/140): coprocessor and vision logs, custom paths, more match association, Hoot conversion, and reporting to Preflight (#103). Clearing logs off the robot is #139.
 - **Hoot logs (#142):** the data log reader keeps an object per value, which is fine for single-signal exports (about 136,000 values each) but not for exporting many signals at once. Per-entry typed arrays would fix that.
 - **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal).
-- **The rest of the live view (#93):** the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables (CTRE devices' own status, the PDH) unless robot code publishes them.
+- **The rest of the live view** is [#146](https://github.com/Team973/greybots-apps/issues/146): the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables.
+- **The rest of log review (#94):** Driver Station logs (`.dslog`, `.dsevents`) as signals and events (trip time, packet loss, mode); subsystem state changes and driver commands as events, which need to know which signals they are (with dashboards, #95); automated test steps (#100); syncing notes to other computers (#103).
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
 - **Sign-in.** The app has none: it works with no internet and holds nothing private. If #103 syncs through Supabase, it will need the account link Preflight's kiosk mode uses.
