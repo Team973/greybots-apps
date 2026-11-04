@@ -29,6 +29,7 @@
     "dev:diagnostics": "npm run dev -w apps/diagnostics",
     "build:diagnostics": "npm run build -w apps/diagnostics",
     "type-check:diagnostics": "npm run type-check -w apps/diagnostics",
+    "test:diagnostics": "npm run test -w apps/diagnostics",
     "dist:diagnostics": "npm run dist -w apps/diagnostics"
   },
   "devDependencies": {

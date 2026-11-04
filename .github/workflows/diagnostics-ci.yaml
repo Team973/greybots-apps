@@ -15,8 +15,9 @@ on:
       - 'packages/common/**'
 
 jobs:
-  # Type-checks, builds, and packages the app on each operating system it
-  # runs on. The installers are attached to the workflow run.
+  # Runs the unit tests, then type-checks, builds, and packages the app on
+  # each operating system it runs on. The installers are attached to the
+  # workflow run.
   build:
     strategy:
       fail-fast: false
@@ -30,6 +31,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm run test:diagnostics
       - run: npm run dist:diagnostics
       - uses: actions/upload-artifact@v4
         with:

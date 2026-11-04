@@ -39,6 +39,10 @@ All packages are `devDependencies`, on purpose. electron-vite bundles everything
 
 Electron is pinned to an exact version in `package.json` because electron-builder requires it.
 
+**Tests:** `npm run test:diagnostics` from the repo root (`npm test` here) runs `test/*.test.ts`: each bundled with esbuild, with the app's `@shared` and `@main` aliases, and run with Node (`test/run.mjs`). They're plain asserts over code that doesn't need Electron: signal matching, library items and the starters, energy and pies, poses and records (from data logs written by `test/wpilog-writer.ts`), match phases and faults, Driver Station logs, the roboRIO console's framing. They're type-checked with the main process's code (`tsconfig.node.json`), and run in Diagnostics CI and before every release.
+
+**Releasing** (`.github/workflows/diagnostics-release.yaml`): on GitHub, Actions → **Diagnostics release** → **Run workflow**, on `main`. It takes the next patch, minor or major version after the last release (`diagnostics-v*` tags; the first goes up from `package.json`'s), or an exact version, and can be marked a prerelease. It runs the unit tests, type-checks and packages the app on Windows, macOS and Linux with that version, and only when all three pass does it tag the commit and publish a GitHub Release with the installers, with notes listing the app's commits since the last release and how to install an unsigned build. A failure anywhere leaves no tag and no release. `package.json`'s version isn't changed in the repository: the release's version is set for its build only.
+
 ## Robot connection settings
 
 Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Offload page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
