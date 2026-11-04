@@ -1,0 +1,169 @@
+name: Diagnostics release
+
+# One click: Actions → Diagnostics release → Run workflow (on main). It
+# works out the version, runs the unit tests, type-checks and packages the
+# app on every operating system, and only when all of that passes tags the commit
+# (diagnostics-v1.2.3) and publishes a GitHub Release with the installers.
+# A failure anywhere leaves no tag and no release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version goes up (after the last release, or package.json's for the first)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Or this exact version (like 0.3.0), instead
+        type: string
+        required: false
+      prerelease:
+        description: Mark it a prerelease
+        type: boolean
+        default: false
+
+# One release at a time.
+concurrency:
+  group: diagnostics-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous: ${{ steps.version.outputs.previous }}
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main; this was run on ${GITHUB_REF}."
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Work out the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          previous=$(git tag --list 'diagnostics-v*' --sort=-v:refname | head -n 1)
+          if [ -n "$EXACT" ]; then
+            version="${EXACT#v}"
+          else
+            # After the last release; the first goes up from package.json's.
+            base="${previous#diagnostics-v}"
+            [ -n "$base" ] || base=$(node -p "require('./apps/diagnostics/package.json').version")
+            IFS=. read -r major minor patch <<< "${base%%-*}"
+            case "$BUMP" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              *) version="$major.$minor.$((patch + 1))" ;;
+            esac
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' isn't a version like 1.2.3."
+            exit 1
+          fi
+          tag="diagnostics-v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag has been released already."
+            exit 1
+          fi
+          echo "Releasing $tag (the last was ${previous:-none})."
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+
+  # The same as Diagnostics CI (unit tests, type check, build, package) on
+  # every operating system, with the release's version in the app and
+  # installers.
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Nothing is code signed yet: don't look for a signing identity.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:diagnostics
+      - name: Set the version
+        run: npm version ${{ needs.prepare.outputs.version }} --no-git-tag-version --allow-same-version --workspace apps/diagnostics
+      - run: npm run dist:diagnostics
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            apps/diagnostics/release/*.exe
+            apps/diagnostics/release/*.AppImage
+            apps/diagnostics/release/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only once every check and build has passed: tag the commit and publish.
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+      - name: Write the release notes
+        env:
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+        run: |
+          {
+            if [ -n "$PREVIOUS" ]; then
+              echo "## Changes since $PREVIOUS"
+              range="$PREVIOUS..HEAD"
+            else
+              echo "## Changes"
+              range="HEAD"
+            fi
+            echo
+            # The app's own commits (others' that touch packages/common too aren't news here).
+            git log --format='- %s' "$range" -- apps/diagnostics
+            echo
+            echo "## Installing"
+            echo
+            echo "- **Windows:** \`greybots-diagnostics-*-win-x64.exe\`. It isn't code signed yet, so Windows says it protected your PC: choose **More info**, then **Run anyway**."
+            echo "- **macOS:** the \`.dmg\` for your Mac (\`arm64\` for Apple silicon, \`x64\` for Intel). It isn't signed yet: the first time, right-click the app and choose **Open**. If macOS says it's damaged, run \`xattr -cr \"/Applications/Greybots Diagnostics.app\"\`."
+            echo "- **Linux:** the \`.AppImage\`; make it executable (\`chmod +x\`) and run it."
+            echo
+            echo "To read Hoot logs, accept CTRE's licence in Settings and download owlet while online."
+          } > notes.md
+          cat notes.md
+      - name: Tag and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          gh release create "$TAG" installers/* \
+            --target "$GITHUB_SHA" \
+            --title "Greybots Diagnostics $VERSION" \
+            --notes-file notes.md \
+            $([ "$PRERELEASE" = "true" ] && echo --prerelease)

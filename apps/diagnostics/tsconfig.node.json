@@ -5,6 +5,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
+    "test/**/*",
     "../../packages/common/src/lib/user-roles.ts",
     "../../packages/common/src/supabase/client.ts"
   ],
@@ -20,6 +21,7 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["./src/shared/*"],
+      "@main/*": ["./src/main/*"],
       "@greybots/common/*": ["../../packages/common/src/*"]
     }
   }
