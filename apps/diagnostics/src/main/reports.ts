@@ -16,6 +16,7 @@ import {
   type RenderedSection,
   type Report,
   type ReportLine,
+  type ReportPieSlice,
   type ReportScope,
   type ReportStatsRow,
   type ReportSummary,
@@ -26,12 +27,12 @@ import { describeMatch } from '@shared/offload';
 import type { PipelineRun, PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
 import { matchKey, type KeyMatch } from '@shared/signal-match';
-import type { SignalInfo, SignalSeries } from '@shared/signals';
+import { integrateProduct, pairedVoltage, type SignalInfo, type SignalSeries } from '@shared/signals';
 import { reportPathSegments } from '@shared/storage-layout';
 import { getLibraryItem, listLibrary } from './library-store';
 import { loadNotes } from './notes-store';
 import { loadSettings } from './settings-store';
-import { hootStatus, openSignalLog, readSignal, sessionEvents, signalLogs } from './signals-service';
+import { hootStatus, openSignalLog, prepareSignals, readSignal, sessionEvents, signalLogs } from './signals-service';
 import { dataDirectory } from './storage';
 
 const reportPath = (settings: Settings, id: string) => join(dataDirectory(settings), ...reportPathSegments(id));
@@ -164,6 +165,22 @@ async function statsOver(context: Context, key: string, spans: [number, number][
   return Number.isFinite(min) ? { min, max, mean: total > 0 ? weighted / total : (min + max) / 2 } : null;
 }
 
+// Energy over the spans, in watt-hours, of a current times a voltage: each
+// held until its next value, as the line chart draws them. Null when either
+// has no values there.
+async function energyOver(context: Context, currentKey: string, voltageKey: string, spans: [number, number][]): Promise<number | null> {
+  let joules = 0;
+  let any = false;
+  for (const [start, end] of spans) {
+    const current = await readSignal(context.settings, context.logId, currentKey, { start, end }).catch(() => null);
+    const voltage = await readSignal(context.settings, context.logId, voltageKey, { start, end }).catch(() => null);
+    if (!current?.times.length || !voltage?.times.length) continue;
+    any = true;
+    joules += integrateProduct(current.times, current.values as Float64Array, voltage.times, voltage.values as Float64Array, start, end);
+  }
+  return any ? joules / 3600 : null;
+}
+
 const formatSeconds = (s: number) => (s >= 120 ? `${Math.floor(s / 60)} min ${Math.round(s % 60)} s` : `${s.toFixed(1)} s`);
 
 // Battery, from whichever signal the log calls it.
@@ -189,6 +206,7 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
   return facts;
 }
 
+export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
 const isRoutine = (event: LogEvent) => event.severity === 'info' && !['mode', 'note', 'state', 'command'].includes(event.kind);
 
 async function waitForSession(settings: Settings, logId: string): Promise<SessionEvents> {
@@ -227,7 +245,22 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     review
   };
   // The cache of matches starts with every signal the template asks for.
-  for (const key of templateKeys(template.sections, template.scope)) resolve(context, key);
+  const wanted = new Set<string>();
+  for (const key of templateKeys(template.sections, template.scope)) {
+    const found = resolve(context, key);
+    if (found) wanted.add(found);
+  }
+  // With each energy pie's currents, their own voltages.
+  for (const section of template.sections) {
+    if (section.type !== 'pie' || section.measure !== 'energy' || section.voltage) continue;
+    for (const key of section.slices.flatMap((s) => s.keys)) {
+      const current = context.matches.get(key)?.key;
+      const voltage = current ? resolve(context, pairedVoltage(current)) : null;
+      if (voltage) wanted.add(voltage);
+    }
+  }
+  // Hoot signals exported all at once, rather than one by one as read.
+  await prepareSignals(settings, logId, [...wanted]);
 
   const spans = await scopeSpans(context, template.scope);
   const inSpans = (e: { start: number; end: number | null }) => spans.some(([s, end]) => e.start <= end && (e.end ?? e.start) >= s);
@@ -298,10 +331,52 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         sections.push({ type: 'stats', title: section.title, rows, missing });
         break;
       }
+      case 'pie': {
+        const seconds = spans.reduce((t, [s, e]) => t + (e - s), 0);
+        const energy = section.measure === 'energy';
+        const shared = energy && section.voltage ? resolve(context, section.voltage) : null;
+        const slices: ReportPieSlice[] = [];
+        let unit = energy ? 'W' : '';
+        for (const spec of section.slices) {
+          const slice: ReportPieSlice = { label: spec.label, keys: [], missing: [], mean: 0, total: 0 };
+          for (const wanted of spec.keys) {
+            const key = resolve(context, wanted);
+            if (!key) {
+              slice.missing.push(wanted);
+            } else if (energy) {
+              // Watt-hours; the mean is power, in watts.
+              const voltage = section.voltage ? shared : resolve(context, pairedVoltage(key));
+              const wh = voltage ? await energyOver(context, key, voltage, spans) : null;
+              if (wh === null) {
+                slice.missing.push(voltage ? wanted : section.voltage || pairedVoltage(key));
+                continue;
+              }
+              slice.keys.push(key);
+              slice.total += wh;
+            } else {
+              const stats = await statsOver(context, key, spans);
+              if (!stats) {
+                slice.missing.push(wanted);
+                continue;
+              }
+              slice.keys.push(key);
+              slice.mean += stats.mean;
+              unit ||= signals.get(key)?.unit ?? '';
+            }
+          }
+          // Unnamed, a slice is called after its signal.
+          if (!slice.label.trim()) slice.label = slice.keys.length === 1 ? labelOf(signals.get(slice.keys[0]), slice.keys[0]) : spec.keys.join(', ');
+          if (energy) slice.mean = seconds > 0 ? (slice.total * 3600) / seconds : 0;
+          else slice.total = slice.mean * seconds;
+          slices.push(slice);
+        }
+        sections.push({ type: 'pie', title: section.title, measure: section.measure, unit, seconds, slices });
+        break;
+      }
       case 'events': {
         const chosen = events.filter((e) =>
           (section.kinds.length === 0 || section.kinds.includes(e.kind)) &&
-          (section.problemsOnly ? e.severity === 'error' || e.severity === 'warning' : !isRoutine(e)));
+          (section.problemsOnly ? isProblem(e) : !isRoutine(e)));
         sections.push({ type: 'events', title: section.title, events: chosen });
         break;
       }
@@ -323,6 +398,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     spans,
     phases: review.phases,
     sections,
+    problems: events.filter(isProblem),
     missing: [...context.missing]
   };
 }

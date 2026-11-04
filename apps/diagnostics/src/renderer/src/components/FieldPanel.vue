@@ -68,7 +68,7 @@ function addItem(key: string) {
   const color = [...Array(maxFieldItems).keys()].find((slot) => !used.has(slot)) ?? 0;
   // A list of poses is likelier a trajectory than robots.
   const style: FieldStyle = isSinglePoseType(type) || type === 'double[]' ? 'robot' : 'path';
-  update({ items: [...props.panel.items, { key, style, color, opacity: 0.3 }] });
+  update({ items: [...props.panel.items, { key, style, color, opacity: 1 }] });
 }
 
 function removeItem(index: number) {
@@ -219,13 +219,17 @@ function draw() {
       ctx.save();
       ctx.translate(X(pose.x), Y(pose.y));
       ctx.rotate(-yawOf(pose));
+      // A black body in bumpers of its colour, the whole of it as see-through
+      // as it's set, so the arrow shows however solid it is.
       ctx.globalAlpha = item.opacity;
+      ctx.fillStyle = '#000';
       ctx.fillRect(-robot / 2, -robot / 2, robot, robot);
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 3;
       ctx.strokeRect(-robot / 2, -robot / 2, robot, robot);
       if (pose.heading) {
-        // Which way is the front: a line from the middle to it, and a notch.
+        // Which way is the front: a white line from the middle to it, and a notch.
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
         ctx.moveTo(0, 0);
         ctx.lineTo(robot / 2, 0);
@@ -335,7 +339,7 @@ defineExpose({ image: () => canvas.value });
             </select>
           </td>
           <td v-if="panel.items[i].style === 'robot'">
-            <input type="range" min="0" max="1" step="0.05" :value="panel.items[i].opacity" :aria-label="`Fill of ${row.key}`"
+            <input type="range" min="0" max="1" step="0.05" :value="panel.items[i].opacity" :aria-label="`Opacity of ${row.key}`"
               title="How solid the robot is" @input="updateItem(i, { opacity: Number(($event.target as HTMLInputElement).value) })" />
           </td>
           <td v-else></td>

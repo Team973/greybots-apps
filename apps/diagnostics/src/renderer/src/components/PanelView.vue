@@ -86,6 +86,11 @@ function onDrop(event: DragEvent) {
   const signal = byKey.value.get(event.dataTransfer?.getData(dragType) ?? '');
   if (!signal) return;
   event.preventDefault();
+  add(signal);
+}
+
+// A signal dropped here, or clicked in the list while this tab's shown.
+function add(signal: SignalInfo) {
   message.value = '';
   const panel = props.panel;
   switch (panel.type) {
@@ -96,7 +101,7 @@ function onDrop(event: DragEvent) {
     case 'pie':
       if (panel.mode === 'states') update({ ...panel, keys: [signal.key] });
       else if (signal.kind !== 'number') message.value = "A pie of shares is of numbers. Choose 'Time at each value' in its settings for states.";
-      else if (!panel.keys.includes(signal.key)) update({ ...panel, keys: [...panel.keys, signal.key].slice(0, maxPieKeys) });
+      else if (!panel.keys.includes(signal.key)) update({ ...panel, keys: [...panel.keys, signal.key].slice(0, maxPieKeys - panel.groups.length) });
       return;
     case 'field': {
       // A pose's field (its x, say) stands for the pose.
@@ -105,7 +110,7 @@ function onDrop(event: DragEvent) {
       else if (!panel.items.some((i) => i.key === pose.key) && panel.items.length < maxFieldItems) {
         const used = new Set(panel.items.map((i) => i.color));
         const color = [...Array(maxFieldItems).keys()].find((slot) => !used.has(slot)) ?? 0;
-        update({ ...panel, items: [...panel.items, { key: pose.key, style: 'robot', color, opacity: 0.3 }] });
+        update({ ...panel, items: [...panel.items, { key: pose.key, style: 'robot', color, opacity: 1 }] });
       }
       return;
     }
@@ -116,6 +121,7 @@ function onDrop(event: DragEvent) {
     }
   }
 }
+defineExpose({ add });
 
 // --- Copying the plot as a picture ---
 

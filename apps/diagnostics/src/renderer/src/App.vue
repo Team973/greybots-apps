@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { RouterView, useRouter } from 'vue-router';
+import { RouterView, useRoute, useRouter } from 'vue-router';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import { liveSessions } from '@shared/live';
@@ -21,6 +21,7 @@ viewMode.updateDarkMode();
 // signals, Ctrl+Shift+K for a simulator's, unless changed). The Signals
 // page picks the session up from the address.
 const router = useRouter();
+const route = useRoute();
 const settings = useSettingsStore();
 onMounted(() => settings.load());
 window.addEventListener('keydown', (event) => {
@@ -34,8 +35,11 @@ window.addEventListener('keydown', (event) => {
 </script>
 
 <template>
-  <NavBar />
-  <main class="main-content">
-    <RouterView />
-  </main>
+  <RouterView v-if="route.meta.bare" />
+  <template v-else>
+    <NavBar />
+    <main class="main-content">
+      <RouterView />
+    </main>
+  </template>
 </template>

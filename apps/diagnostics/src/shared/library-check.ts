@@ -97,6 +97,17 @@ function cleanSection(raw: Raw): ReportSection | null {
       };
     case 'stats':
       return { type: 'stats', title: text(raw.title), keys: strings(raw.keys, 40) };
+    case 'pie':
+      return {
+        type: 'pie',
+        title: text(raw.title),
+        measure: raw.measure === 'energy' ? 'energy' : 'charge',
+        voltage: text(raw.voltage, 500),
+        slices: (Array.isArray(raw.slices) ? raw.slices : [])
+          .filter(isObject)
+          .slice(0, 40)
+          .map((slice) => ({ label: text(slice.label), keys: strings(slice.keys, 40).map((k) => k.slice(0, 500)) }))
+      };
     case 'events':
       return { type: 'events', title: text(raw.title), kinds: eventKindList(raw.kinds), problemsOnly: raw.problemsOnly !== false };
     default:

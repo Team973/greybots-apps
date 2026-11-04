@@ -240,9 +240,9 @@ export interface DiagnosticsApi {
   // Runs a pipeline on logs by hand (whatever its triggers say).
   runPipeline(pipelineId: string, logIds: string[]): Promise<PipelineRun[]>;
   getPipelineStatus(): Promise<PipelineStatus>;
-  // Saves the page as it's shown (a report) as a PDF, asking where.
-  // Resolves to where it was saved, or '' if cancelled.
-  savePdf(suggestedName: string): Promise<string>;
+  // Saves a report as a PDF, asking where: the whole report, laid out for
+  // Letter paper. Resolves to where it was saved, or '' if cancelled.
+  savePdf(reportId: string): Promise<string>;
   // The greybots-apps account the library's shared with the team through.
   getAccount(): Promise<AccountStatus>;
   signIn(email: string, password: string): Promise<AccountStatus>;
