@@ -67,10 +67,58 @@ function createWindow() {
   });
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
 
+  loadPage(mainWindow);
+}
+
+// The app's page, at a route (`/print/report/<id>`) or where it starts.
+function loadPage(window: BrowserWindow, route = '') {
   // electron-vite sets this while `npm run dev` is serving the window.
   const devUrl = process.env.ELECTRON_RENDERER_URL;
-  if (!app.isPackaged && devUrl) mainWindow.loadURL(devUrl);
-  else mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+  if (!app.isPackaged && devUrl) return window.loadURL(route ? `${devUrl}#${route}` : devUrl);
+  return window.loadFile(join(__dirname, '../renderer/index.html'), route ? { hash: route } : undefined);
+}
+
+// Letter paper's printable width at half-inch margins: 7.5 in at 96 px an inch.
+const pageWidthPx = 720;
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// A report as a PDF: drawn for paper in a hidden window the width of the
+// page (the whole report, in the light theme, nothing of the app around
+// it), then printed with its name and page numbers along the bottom.
+async function reportPdf(id: string, name: string): Promise<Buffer> {
+  const window = new BrowserWindow({
+    show: false,
+    width: pageWidthPx,
+    height: 1000,
+    useContentSize: true,
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event) => event.preventDefault());
+  try {
+    await loadPage(window, `/print/report/${encodeURIComponent(id)}`);
+    // The page says when it's drawn: the report read, its charts sized.
+    const until = Date.now() + 30_000;
+    let state = '';
+    while (Date.now() < until) {
+      state = String(await window.webContents.executeJavaScript('document.body.dataset.ready ?? ""'));
+      if (state) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (state !== 'yes') throw new Error(state && state !== 'yes' ? state : 'The report took too long to lay out.');
+    const footer = `<div style="width: 100%; padding: 0 0.5in; display: flex; justify-content: space-between; font: 8px sans-serif; color: #666;">
+      <span>${escapeHtml(name)}</span><span><span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`;
+    return await window.webContents.printToPDF({
+      pageSize: 'Letter',
+      printBackground: true,
+      margins: { top: 0.5, bottom: 0.6, left: 0.5, right: 0.5 },
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: footer
+    });
+  } finally {
+    window.destroy();
+  }
 }
 
 // One handler per function the window can call (see shared/ipc.ts).
@@ -254,17 +302,18 @@ const handlers: DiagnosticsApi = {
   async readModelFile(id, file) {
     return readModelFile(await loadSettings(), String(id), String(file));
   },
-  async savePdf(suggestedName) {
+  async savePdf(reportId) {
     if (!mainWindow) return '';
-    const name = `${String(suggestedName).replace(/[<>:"/\|?* -]/g, '_').slice(0, 150) || 'Report'}.pdf`;
+    const report = await loadReport(await loadSettings(), String(reportId));
+    if (!report) throw new Error('That report is gone.');
+    const name = `${report.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 150) || 'Report'}.pdf`;
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Save the report as a PDF',
       defaultPath: join(app.getPath('documents'), name),
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     });
     if (result.canceled || !result.filePath) return '';
-    const pdf = await mainWindow.webContents.printToPDF({ printBackground: true, pageSize: 'Letter', margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } });
-    await fs.writeFile(result.filePath, pdf);
+    await fs.writeFile(result.filePath, await reportPdf(report.id, report.name));
     return result.filePath;
   },
   async getAccount() {

@@ -8,7 +8,7 @@
 
 import type { EventKind, LogEvent, MatchPhase } from './events';
 import type { MatchInfo, MatchType } from './offload';
-import { panelKeys, type PlotPanel } from './plots';
+import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
 
 export type LibraryKind = 'view' | 'template' | 'pipeline' | 'mapping';
@@ -99,7 +99,24 @@ export type ReportSection =
   // A chart, from a saved view (copied in, so the template stands alone).
   | { type: 'chart'; title: string; viewId: string | null; view: ViewBody }
   | { type: 'stats'; title: string; keys: string[] }
+  // Each slice's share of the total over the span: a signal (a motor's
+  // current), or a group of them added up (a subsystem's motors).
+  | { type: 'pie'; title: string; measure: PieMeasure; voltage: string; slices: PieSliceSpec[] }
   | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean };
+
+// What a pie adds up, as a pie plot's (plots.ts): `voltage` is the signal
+// every current is multiplied by for energy, or '' for each current's own.
+export type { PieMeasure };
+
+export const pieMeasureLabels: Record<PieMeasure, string> = {
+  charge: 'Current over time (amp-seconds)',
+  energy: 'Energy: voltage times current over time (watt-hours)'
+};
+
+export interface PieSliceSpec {
+  label: string;
+  keys: string[];
+}
 
 export type ReportSectionType = ReportSection['type'];
 
@@ -165,6 +182,7 @@ export const sectionLabels: Record<ReportSectionType, string> = {
   summary: 'Summary',
   chart: 'Chart',
   stats: 'Stats table',
+  pie: 'Pie chart',
   events: 'Events'
 };
 
@@ -196,12 +214,26 @@ export interface ReportStatsRow {
   mean: number | null;
 }
 
+export interface ReportPieSlice {
+  label: string;
+  // The signals found, and those asked for that weren't.
+  keys: string[];
+  missing: string[];
+  // The slice's signals' time-weighted means added up (amps for currents),
+  // and that times the span's length (amp-seconds), which the share is of.
+  // For energy, its average power (watts) and its energy (watt-hours).
+  mean: number;
+  total: number;
+}
+
 export type RenderedSection =
   | { type: 'heading'; text: string }
   | { type: 'text'; text: string }
   | { type: 'summary'; facts: { label: string; value: string }[] }
   | { type: 'chart'; title: string; axes: ViewAxis[]; lines: ReportLine[]; view: [number, number]; missing: string[] }
   | { type: 'stats'; title: string; rows: ReportStatsRow[]; missing: string[] }
+  // `measure` is missing from reports made before energy (charge).
+  | { type: 'pie'; title: string; measure?: PieMeasure; unit: string; seconds: number; slices: ReportPieSlice[] }
   | { type: 'events'; title: string; events: LogEvent[] };
 
 export interface Report {
@@ -222,6 +254,9 @@ export interface Report {
   spans: [number, number][];
   phases: MatchPhase[];
   sections: RenderedSection[];
+  // The errors and warnings in its spans, shown first. Missing from
+  // reports made before they were kept.
+  problems?: LogEvent[];
   // Signals asked for that this log doesn't have, mapped or not.
   missing: string[];
 }
@@ -257,6 +292,10 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
   for (const section of sections) {
     if (section.type === 'chart') for (const trace of section.view.traces) keys.add(trace.key);
     if (section.type === 'stats') for (const key of section.keys) keys.add(key);
+    if (section.type === 'pie') {
+      for (const slice of section.slices) for (const key of slice.keys) keys.add(key);
+      if (section.measure === 'energy' && section.voltage) keys.add(section.voltage);
+    }
   }
   if (scope?.type === 'conditions') for (const condition of scope.conditions) keys.add(condition.key);
   return [...keys];

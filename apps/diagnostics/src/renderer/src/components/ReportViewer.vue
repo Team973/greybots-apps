@@ -2,19 +2,22 @@
 import { computed, reactive } from 'vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
-import { eventKinds, phaseClock } from '@shared/events';
-import type { RenderedSection, Report, ReportLine } from '@shared/library';
+import { eventKinds, phaseClock, type LogEvent } from '@shared/events';
+import type { RenderedSection, Report, ReportLine, ReportPieSlice } from '@shared/library';
 import type { SignalSeries } from '@shared/signals';
+import PieChart, { sharePercent, type DonutSlice } from '@/components/PieChart.vue';
 import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChart.vue';
 import { formatTime } from '@/format';
-import { colorFor } from '@/palette';
+import { colorFor, palette } from '@/palette';
 import { eventColor } from '@/review';
 
 // A report as it was made: its charts from the data kept with it, so it
-// reads the same whether or not the log is still here.
+// reads the same whether or not the log is still here. On paper (a PDF),
+// in the light theme, sized for the page, kept whole across pages.
 
-const props = defineProps<{ report: Report }>();
+const props = defineProps<{ report: Report; paper?: boolean }>();
 const viewMode = useViewModeStore();
+const dark = computed(() => !props.paper && viewMode.isDarkMode);
 
 function seriesOf(line: ReportLine): SignalSeries {
   return {
@@ -35,7 +38,7 @@ const charts = computed(() => props.report.sections.map((section) => {
     key: line.key,
     label: line.label,
     unit: line.unit,
-    color: colorFor(line.color, viewMode.isDarkMode),
+    color: colorFor(line.color, dark.value),
     axis: line.axis,
     band: line.band,
     series: seriesOf(line)
@@ -48,6 +51,61 @@ const views = reactive<Record<number, [number, number]>>({});
 const viewOf = (i: number, section: Extract<RenderedSection, { type: 'chart' }>) => views[i] ?? section.view;
 function zoom(i: number, section: Extract<RenderedSection, { type: 'chart' }>, next: [number, number], gesture: string) {
   views[i] = gesture === 'all' ? section.view : next;
+}
+
+// --- Problems: every error and warning, first ---
+
+const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
+// Reports made before they were kept have them in their events sections.
+const problems = computed<LogEvent[]>(() => {
+  if (props.report.problems) return props.report.problems;
+  const byId = new Map<string, LogEvent>();
+  for (const section of props.report.sections) {
+    if (section.type === 'events') for (const event of section.events) if (isProblem(event)) byId.set(event.id, event);
+  }
+  return [...byId.values()].sort((a, b) => a.start - b.start);
+});
+// So an events section lower down has what's left; one of only problems goes.
+const otherEvents = (section: Extract<RenderedSection, { type: 'events' }>) => section.events.filter((e) => !isProblem(e));
+const shown = (section: RenderedSection) => section.type !== 'events' || otherEvents(section).length > 0 || !section.events.some(isProblem);
+
+// --- Pies ---
+
+interface PieRow {
+  slice: ReportPieSlice;
+  color: string;
+}
+
+// Largest first. Coloured in the template's order, so a slice keeps its
+// colour from report to report. Past the palette's steps, the smallest
+// are grey (not cycled), each still a slice of its own.
+// The totals are of the slices in the pie (those above zero), so the
+// shares add up to 100%.
+function pieRows(section: Extract<RenderedSection, { type: 'pie' }>): { rows: PieRow[]; donut: DonutSlice[]; total: number; mean: number; signals: number } {
+  const steps = dark.value ? palette.dark : palette.light;
+  const other = dark.value ? '#6b6b6b' : '#a3a3a3';
+  const positive = section.slices.filter((s) => s.total > 0);
+  const kept = positive.length <= steps.length ? positive : [...positive].sort((a, b) => b.total - a.total).slice(0, steps.length - 1);
+  const inOrder = section.slices.filter((s) => kept.includes(s));
+  const colorOf = (slice: ReportPieSlice) => (kept.includes(slice) ? steps[inOrder.indexOf(slice)] : other);
+  const rows = [...section.slices].sort((a, b) => b.total - a.total).map((slice) => ({ slice, color: colorOf(slice) }));
+  const donut: DonutSlice[] = rows.filter((r) => r.slice.total > 0)
+    .map((r) => ({ label: r.slice.label, value: r.slice.total, color: r.color, note: totalText(section, r.slice) }));
+  return {
+    rows,
+    donut,
+    total: positive.reduce((t, s) => t + s.total, 0),
+    mean: positive.reduce((t, s) => t + s.mean, 0),
+    signals: positive.reduce((t, s) => t + s.keys.length, 0)
+  };
+}
+const pies = computed(() => props.report.sections.map((section) => (section.type === 'pie' ? pieRows(section) : null)));
+const hoveredSlice = reactive<Record<number, number | null>>({});
+const missingOf = (section: Extract<RenderedSection, { type: 'pie' }>) => section.slices.flatMap((s) => s.missing);
+const isEnergy = (section: Extract<RenderedSection, { type: 'pie' }>) => section.measure === 'energy';
+// A slice's total: watt-hours of energy, or the average of a current.
+function totalText(section: Extract<RenderedSection, { type: 'pie' }>, slice: ReportPieSlice): string {
+  return isEnergy(section) ? `${number(slice.total, 'Wh')}` : `${number(slice.mean, section.unit)} on average`;
 }
 
 const kindLabel = (kind: string) => eventKinds.find((k) => k.kind === kind)?.label ?? kind;
@@ -63,7 +121,7 @@ const at = (t: number) => {
 </script>
 
 <template>
-  <article class="report">
+  <article class="report" :class="{ paper }">
     <header class="report-head">
       <h2>{{ report.name }}</h2>
       <p class="hint small">
@@ -74,8 +132,24 @@ const at = (t: number) => {
       </p>
     </header>
 
+    <section class="events-section problems">
+      <h3 class="heading">Problems <span class="hint small">({{ problems.length }})</span></h3>
+      <p v-if="problems.length === 0" class="hint small">No errors or warnings.</p>
+      <ul class="events">
+        <li v-for="event in problems" :key="event.id" class="event">
+          <span class="mark" :style="{ background: eventColor(event, dark) }" :title="event.severity"></span>
+          <span class="time small">{{ at(event.start) }}</span>
+          <span>
+            {{ event.title }}
+            <span class="hint small">{{ kindLabel(event.kind) }}{{ event.detail ? ` · ${event.detail}` : '' }}</span>
+          </span>
+        </li>
+      </ul>
+    </section>
+
     <template v-for="(section, i) in report.sections" :key="i">
-      <h3 v-if="section.type === 'heading'" class="heading">{{ section.text }}</h3>
+      <template v-if="!shown(section)"></template>
+      <h3 v-else-if="section.type === 'heading'" class="heading">{{ section.text }}</h3>
       <p v-else-if="section.type === 'text'" class="text">{{ section.text }}</p>
 
       <table v-else-if="section.type === 'summary'" class="plain summary">
@@ -90,7 +164,7 @@ const at = (t: number) => {
       <section v-else-if="section.type === 'chart'" class="chart-section">
         <h4>{{ section.title }}</h4>
         <PlotChart v-if="section.lines.length" :lines="charts[i]!.lines" :axes="charts[i]!.axes" :view="viewOf(i, section)" :full="section.view"
-          :height="300" :phases="report.phases" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
+          :height="paper ? 240 : 300" :phases="report.phases" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
         <p v-else class="hint small">None of this chart's signals are in the log.</p>
         <p class="legend small">
           <span v-for="line in charts[i]!.lines" :key="line.key" class="legend-item">
@@ -118,12 +192,60 @@ const at = (t: number) => {
         <p v-if="section.missing.length" class="hint small">Missing: {{ section.missing.join(', ') }}</p>
       </section>
 
+      <section v-else-if="section.type === 'pie'" class="pie-section">
+        <h4>{{ section.title }}</h4>
+        <div v-if="pies[i]!.donut.length" class="pie-body">
+          <PieChart v-model:hovered="hoveredSlice[i]" :slices="pies[i]!.donut" />
+          <table class="plain pie-legend">
+            <thead>
+              <tr>
+                <th></th><th></th><th class="number">Share</th>
+                <th v-if="isEnergy(section)" class="number">Energy</th>
+                <th class="number">{{ isEnergy(section) ? 'Average power' : 'Average' }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, j) in pies[i]!.rows" :key="row.slice.label" :title="row.slice.keys.join('\n')"
+                :class="{ dim: hoveredSlice[i] != null && hoveredSlice[i] !== j }"
+                @mouseenter="hoveredSlice[i] = row.slice.total > 0 ? j : null" @mouseleave="hoveredSlice[i] = null">
+                <td><span class="swatch" :style="{ background: row.color }"></span></td>
+                <td>
+                  {{ row.slice.label }}
+                  <span v-if="row.slice.keys.length > 1" class="hint small">{{ row.slice.keys.length }} signals</span>
+                </td>
+                <td class="number">{{ sharePercent(Math.max(0, row.slice.total), pies[i]!.total) || '—' }}</td>
+                <td v-if="isEnergy(section)" class="number">{{ row.slice.keys.length ? number(row.slice.total, 'Wh') : '—' }}</td>
+                <td class="number">{{ row.slice.keys.length ? number(row.slice.mean, section.unit) : '—' }}</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="total">
+                <td></td>
+                <td>Total <span class="hint small">{{ pies[i]!.signals }} signals</span></td>
+                <td class="number">100%</td>
+                <td v-if="isEnergy(section)" class="number">{{ number(pies[i]!.total, 'Wh') }}</td>
+                <td class="number">{{ number(pies[i]!.mean, section.unit) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <p v-else class="hint small">None of this pie's signals are in the log, or they're all zero.</p>
+        <p class="hint small">
+          <template v-if="isEnergy(section)">
+            Shares of the {{ number(pies[i]!.total, 'Wh') }} drawn over {{ section.seconds.toFixed(1) }} s: each signal's voltage times its current,
+            added up over time.
+          </template>
+          <template v-else>Shares of the total over {{ section.seconds.toFixed(1) }} s: each slice's average times the span.</template>
+          <template v-if="missingOf(section).length">Missing: {{ missingOf(section).join(', ') }}</template>
+        </p>
+      </section>
+
       <section v-else-if="section.type === 'events'" class="events-section">
-        <h4>{{ section.title }} <span class="hint small">({{ section.events.length }})</span></h4>
-        <p v-if="section.events.length === 0" class="hint small">None.</p>
+        <h4>{{ section.title }} <span class="hint small">({{ otherEvents(section).length }})</span></h4>
+        <p v-if="otherEvents(section).length === 0" class="hint small">None.</p>
         <ul class="events">
-          <li v-for="event in section.events" :key="event.id" class="event">
-            <span class="mark" :style="{ background: eventColor(event, viewMode.isDarkMode) }" :title="event.severity"></span>
+          <li v-for="event in otherEvents(section)" :key="event.id" class="event">
+            <span class="mark" :style="{ background: eventColor(event, dark) }" :title="event.severity"></span>
             <span class="time small">{{ at(event.start) }}</span>
             <span>
               {{ event.title }}
@@ -224,7 +346,103 @@ h4 {
 
 .chart-section,
 .stats-section,
+.pie-section,
 .events-section {
   break-inside: avoid;
+}
+
+.pie-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.pie-legend {
+  flex: 1;
+  min-width: 260px;
+  width: auto;
+}
+
+.pie-legend td {
+  padding: 3px 6px;
+  vertical-align: middle;
+}
+
+.pie-legend .swatch {
+  display: inline-block;
+}
+
+.pie-legend .total td {
+  border-top: 2px solid rgba(127, 127, 127, 0.5);
+  font-weight: 600;
+}
+
+/* On paper: whole sections on a page where they fit, headings (and the
+   text under them) with what follows them, long lists broken between their
+   rows; tables ruled lightly, as printed tables are, not shaded like the
+   screen's; rows close together. */
+.paper {
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.paper h3,
+.paper h4,
+.paper .heading,
+.paper .text {
+  break-after: avoid;
+}
+
+.paper .events-section {
+  break-inside: auto;
+}
+
+.paper .event,
+.paper tr {
+  break-inside: avoid;
+}
+
+.paper .event {
+  padding: 2px 0;
+}
+
+.paper :deep(table) {
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+.paper :deep(thead tr) {
+  border-bottom: 1.5px solid #000;
+  background: none;
+  color: #000;
+}
+
+.paper :deep(th),
+.paper :deep(td) {
+  padding: 3px 8px;
+}
+
+.paper :deep(tbody tr) {
+  border-bottom: 0.5px solid #ccc;
+  background: none !important;
+}
+
+.paper :deep(tbody tr:last-of-type) {
+  border-bottom: 1.5px solid #000;
+}
+
+.paper .summary {
+  break-inside: avoid;
+}
+
+.paper .summary th {
+  text-align: left;
+  font-weight: 600;
+}
+
+.pie-legend .dim {
+  opacity: 0.45;
 }
 </style>

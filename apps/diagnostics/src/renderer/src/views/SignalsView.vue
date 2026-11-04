@@ -14,7 +14,7 @@ import type { SavedView, ViewBody, ViewSpan } from '@shared/library';
 import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
 import { describeMatch } from '@shared/offload';
 import { matchKey } from '@shared/signal-match';
-import type { PanelType } from '@shared/plots';
+import { isPoseType, type PanelType } from '@shared/plots';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
 import { chartPng } from '@/chart-image';
 import { seasonFor } from '@/fields';
@@ -24,7 +24,7 @@ import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomG
 import PanelView from '@/components/PanelView.vue';
 import PlotTabs from '@/components/PlotTabs.vue';
 import ViewsMenu from '@/components/ViewsMenu.vue';
-import { formatBytes, formatTime } from '@/format';
+import { formatBytes, formatTime, logCompanions } from '@/format';
 import { palette } from '@/palette';
 import { eventColor, isProblem, noteEvent, shownEvent, type EventFilter } from '@/review';
 import { maxTraces, usePlotStore, type AxisSide, type BandSide, type PlotTarget, type TraceColor } from '@/stores/plot-store';
@@ -115,8 +115,9 @@ const view = computed<[number, number]>(() => {
 
 // --- The signal list ---
 
+// Structs aren't, but for poses, which the field and the 3D robot show.
 function shown(signal: SignalInfo | undefined): signal is SignalInfo {
-  if (!signal || signal.kind === 'other') return false;
+  if (!signal || (signal.kind === 'other' && !isPoseType(signal.type))) return false;
   if (!showEmpty.value && signal.count === 0) return false;
   const text = filter.value.trim().toLowerCase();
   return text === '' || signal.key.toLowerCase().includes(text);
@@ -133,7 +134,7 @@ interface TreeNode {
 }
 
 type TreeRow =
-  | { type: 'folder'; path: string; name: string; depth: number; count: number; open: boolean }
+  | { type: 'folder'; path: string; name: string; depth: number; count: number; open: boolean; signal: SignalInfo | null }
   | { type: 'signal'; signal: SignalInfo; name: string; depth: number };
 
 // Folders the person has opened (or, for the top level, closed).
@@ -181,8 +182,9 @@ const treeRows = computed<TreeRow[]>(() => {
       }
       // The top level starts open; everything opens while filtering.
       const open = filtering || (depth === 0 ? !toggled.value.has(shownFolder.path) : toggled.value.has(shownFolder.path));
-      rows.push({ type: 'folder', path: shownFolder.path, name, depth, count: shownFolder.count, open });
-      if (shownFolder.signal) rows.push({ type: 'signal', signal: shownFolder.signal, name: '(value)', depth: depth + 1 });
+      rows.push({ type: 'folder', path: shownFolder.path, name, depth, count: shownFolder.count, open, signal: shownFolder.signal });
+      const own = shownFolder.signal;
+      if (own) rows.push({ type: 'signal', signal: own, name: own.kind === 'other' ? '(pose)' : '(value)', depth: depth + 1 });
       if (open) visit(shownFolder, depth + 1);
     }
     for (const leaf of leaves) if (leaf.signal) rows.push({ type: 'signal', signal: leaf.signal, name: leaf.name, depth });
@@ -207,9 +209,7 @@ function signalLabel(signal: SignalInfo): string {
 function logLabel(log: SignalLogFile): string {
   const when = formatTime(log.recorded);
   const what = log.match ? `${describeMatch(log.match)}, ${when}` : `${when} (${log.name})`;
-  if (!log.localPath) return `${what}, ${log.hoots.length ? 'Hoot' : 'DS log'} only`;
-  const also = [log.hoots.length ? `${log.hoots.length} Hoot` : '', log.dsLogs.length ? 'DS log' : ''].filter(Boolean);
-  return also.length ? `${what} + ${also.join(' + ')}` : what;
+  return `${what}${logCompanions(log)}`;
 }
 
 function describeDsLog(ds: DsLogStatus): string {
@@ -318,8 +318,17 @@ function describeLive(status: LiveStatus | null): string {
 
 // --- Putting signals on the chart ---
 
+// With another plot's tab shown, a clicked signal goes to that plot.
+const panelView = ref<{ add: (signal: SignalInfo) => void } | null>(null);
 function place(signal: SignalInfo, target?: PlotTarget) {
-  message.value = plotStore.place(signal.key, signal.kind, target);
+  if (!target && panelView.value) {
+    message.value = '';
+    panelView.value.add(signal);
+  } else if (signal.kind === 'other') {
+    message.value = 'Poses show on a 2D field or the 3D robot: open one with + above the chart, then click or drag the pose there.';
+  } else {
+    message.value = plotStore.place(signal.key, signal.kind, target);
+  }
 }
 
 // Drags carry the signal's key. From the list it's added; from the trace
@@ -572,7 +581,7 @@ function cell(key: string, column: Column): string {
 // main process for just the rows on screen, a few times a second at most.
 const leafValues = shallowRef(new Map<string, SignalValue>());
 const shownLeaves = computed(() =>
-  treeRows.value.flatMap((row) => (row.type === 'signal' ? [row.signal.key] : [])).slice(0, 500)
+  treeRows.value.flatMap((row) => (row.type === 'signal' && row.signal.kind !== 'other' ? [row.signal.key] : [])).slice(0, 500)
 );
 const valuesEveryMs = 250;
 let valuesTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1054,7 +1063,8 @@ watch(() => route.query.session, (session) => {
           <p v-if="treeRows.length === 0" class="hint">No signals match.</p>
           <template v-for="row in treeRows" :key="row.type === 'folder' ? `f${row.path}` : `s${row.signal.key}`">
             <button v-if="row.type === 'folder'" class="folder" :style="{ paddingLeft: `${row.depth * 14 + 4}px` }"
-              :aria-expanded="row.open" @click="toggleFolder(row.path)">
+              :aria-expanded="row.open" :draggable="!!row.signal" @click="toggleFolder(row.path)"
+              @dragstart="row.signal && onDragStart($event, row.signal.key)" @dragend="onDragEnd">
               <span class="chevron" :class="{ closed: !row.open }">▾</span>
               <span class="signal-name">{{ row.name }}</span>
               <span class="hint small">{{ row.count }}</span>
@@ -1127,7 +1137,7 @@ watch(() => route.query.session, (session) => {
       </p>
 
       <div class="chart-body">
-      <PanelView v-if="summary && shownPanel" :key="shownPanel.id" :panel="shownPanel" :session="summary.id" :signals="summary.signals"
+      <PanelView v-if="summary && shownPanel" ref="panelView" :key="shownPanel.id" :panel="shownPanel" :session="summary.id" :signals="summary.signals"
         :time="valueTime" :span="view" :following="following" :dark="viewMode.isDarkMode" :height="chartHeight" @seek="seek" />
       <div v-else class="chart-wrap" @dragover="onDragOverZone($event, 'default')" @dragleave="onDragLeaveChart" @drop.prevent="onDrop($event)">
         <PlotChart v-if="summary" ref="chartElement" v-model:pin="pin" v-model:range="range" :lines="chartLines" :axes="chartAxes" :view="view" :full="full"
@@ -1717,7 +1727,7 @@ select {
   padding: 0;
   border: none;
   background: none;
-  color: inherit;
+  color: var(--link-color);
   font: inherit;
   text-decoration: underline;
   cursor: pointer;

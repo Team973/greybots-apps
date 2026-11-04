@@ -667,6 +667,23 @@ export async function readSignal(settings: Settings, id: string, key: string, ra
   };
 }
 
+// Exports every Hoot signal of `keys` that isn't yet, together. Each export
+// reads the whole Hoot log (minutes for an hour-long one), so a report's
+// dozens of signals asked for at once take one read, not one each: asked
+// for within moments of each other, they go in one batch. Signals that
+// aren't Hoot signals, or can't be read, are left for reading to report.
+export async function prepareSignals(settings: Settings, id: string, keys: string[]): Promise<void> {
+  if (isLiveId(id)) return;
+  const session = await openSession(settings, id);
+  await Promise.all(session.placements.map(({ hoot }) => {
+    const ids = keys
+      .filter((key) => key.startsWith(`${hoot.label}/`))
+      .map((key) => hoot.signals.find((s) => s.name === key.slice(hoot.label.length + 1))?.id)
+      .filter((signal): signal is string => !!signal && !hoot.isExported(signal));
+    return Promise.all(ids.map((signal) => hoot.sourceFor(signal).catch(() => null)));
+  }));
+}
+
 // Every value over a span, decoded whole, for poses and lists of them. Only
 // data logs and live sessions have structs; Hoot and Driver Station signals
 // are read as series.

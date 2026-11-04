@@ -3,10 +3,12 @@ import { ref } from 'vue';
 
 import { eventKinds, type EventKind } from '@shared/events';
 import {
+  pieMeasureLabels,
   scopeLabels,
   sectionLabels,
   type ReportScope,
   type ReportSection,
+  type PieMeasure,
   type ReportSectionType,
   type ReportTemplate,
   type SavedView
@@ -41,6 +43,7 @@ function newSection(type: ReportSectionType): ReportSection {
       return { type, title: view?.name ?? 'Chart', viewId: view?.id ?? null, view: view ? viewBody(view) : { axes: [], traces: [], span: { type: 'all' }, eventKinds: null } };
     }
     case 'stats': return { type, title: 'Stats', keys: [] };
+    case 'pie': return { type, title: 'Pie chart', measure: 'charge', voltage: '', slices: [] };
     case 'events': return { type, title: 'Errors and warnings', kinds: [], problemsOnly: true };
   }
 }
@@ -74,6 +77,19 @@ const setKeys = (section: Extract<ReportSection, { type: 'stats' }>, text: strin
 function addViewKeys(section: Extract<ReportSection, { type: 'stats' }>, id: string) {
   const view = props.views.find((v) => v.id === id);
   if (view) section.keys = [...new Set([...section.keys, ...view.traces.filter((t) => t.kind !== 'string').map((t) => t.key)])];
+}
+
+// A pie's slices: each a name and its signals, one per line; or many at
+// once, a slice for each signal.
+type PieSection = Extract<ReportSection, { type: 'pie' }>;
+const sliceKeys = (slice: PieSection['slices'][number], text: string) => {
+  slice.keys = text.split('\n').map((k) => k.trim()).filter(Boolean);
+};
+const eachText = ref<Record<number, string>>({});
+function addEach(section: PieSection, i: number) {
+  const keys = (eachText.value[i] ?? '').split('\n').map((k) => k.trim()).filter(Boolean);
+  section.slices.push(...keys.map((key) => ({ label: '', keys: [key] })));
+  eachText.value[i] = '';
 }
 
 function toggleKind(section: Extract<ReportSection, { type: 'events' }>, kind: EventKind) {
@@ -149,6 +165,32 @@ const canSave = () => draft.value.name.trim() !== '';
           <option value="">Add a saved view's signals…</option>
           <option v-for="view in views" :key="view.id" :value="view.id">{{ view.name }}</option>
         </select>
+      </template>
+      <template v-else-if="section.type === 'pie'">
+        <input v-model="section.title" aria-label="Pie title" maxlength="120" />
+        <select v-model="section.measure" aria-label="What the slices add up">
+          <option v-for="(label, measure) in pieMeasureLabels" :key="measure" :value="measure as PieMeasure">{{ label }}</option>
+        </select>
+        <p v-if="section.measure === 'charge'" class="hint small">
+          Each slice's share of the total over the report's span: its signals' averages added up, times the span. Currents, say: amp-seconds drawn.
+        </p>
+        <template v-else>
+          <input v-model="section.voltage" aria-label="Voltage signal" placeholder="Voltage: empty for each current's own (…Voltage beside …Current)" />
+          <p class="hint small">
+            Each slice's share of the energy over the report's span: each of its signals (a current) times the voltage, added up over time, in
+            watt-hours. Leave the voltage empty to use each current's own supply voltage, as motor controllers log it (SupplyVoltage beside
+            SupplyCurrent); or name one, the battery's, for all of them.
+          </p>
+        </template>
+        <div v-for="(slice, j) in section.slices" :key="j" class="slice">
+          <input v-model="slice.label" :aria-label="`Slice ${j + 1} name`" placeholder="Name (or the signal's)" maxlength="120" />
+          <textarea :value="keysText(slice.keys)" :rows="Math.min(4, Math.max(1, slice.keys.length))" :aria-label="`Slice ${j + 1} signals, one per line`"
+            placeholder="Signals, one per line" @change="sliceKeys(slice, ($event.target as HTMLTextAreaElement).value)"></textarea>
+          <button type="button" class="icon" :aria-label="`Remove slice ${j + 1}`" @click="section.slices.splice(j, 1)">✕</button>
+        </div>
+        <button type="button" class="small-button" @click="section.slices.push({ label: '', keys: [] })">Add a slice</button>
+        <textarea v-model="eachText[i]" rows="3" aria-label="Signals to add, a slice each" placeholder="Or signals, one per line, a slice each"></textarea>
+        <button type="button" class="small-button" :disabled="!eachText[i]?.trim()" @click="addEach(section, i)">Add a slice for each</button>
       </template>
       <template v-else-if="section.type === 'events'">
         <input v-model="section.title" aria-label="Events title" maxlength="120" />
@@ -233,6 +275,17 @@ select option {
 
 .condition input {
   flex: 1;
+}
+
+.slice {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) auto;
+  align-items: start;
+  gap: 6px;
+}
+
+.small-button {
+  align-self: flex-start;
 }
 
 h3 {

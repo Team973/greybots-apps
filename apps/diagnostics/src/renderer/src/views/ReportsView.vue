@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
-import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { SignalLogFile } from '@shared/ipc';
 import {
@@ -21,7 +20,7 @@ import { searchMatches } from '@shared/signal-match';
 import MappingEditor from '@/components/MappingEditor.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
 import TemplateEditor from '@/components/TemplateEditor.vue';
-import { formatTime } from '@/format';
+import { formatTime, logCompanions } from '@/format';
 
 // Reports (#148): made from templates, by hand or by pipelines as logs
 // arrive; the templates and pipelines themselves; and robot mappings, for
@@ -36,7 +35,6 @@ const tabs: { id: Tab; label: string }[] = [
 ];
 
 const route = useRoute();
-const viewMode = useViewModeStore();
 const router = useRouter();
 const tab = computed<Tab>(() => (tabs.some((t) => t.id === route.query.tab) ? (route.query.tab as Tab) : 'reports'));
 const go = (query: Record<string, string>) => router.replace({ query });
@@ -62,7 +60,8 @@ async function load() {
   }
 }
 
-const logLabel = (log: SignalLogFile) => `${log.match ? describeMatch(log.match) : log.name} · ${formatTime(log.recorded)}${log.robot ? ` · ${log.robot}` : ''}`;
+const logLabel = (log: SignalLogFile) =>
+  `${log.match ? describeMatch(log.match) : log.name} · ${formatTime(log.recorded)}${log.robot ? ` · ${log.robot}` : ''}${logCompanions(log)}`;
 // Logs a report can be made from, newest first; Driver Station logs on their own last.
 const reportLogs = computed(() => [...logs.value].sort((a, b) =>
   Number(!a.localPath && a.hoots.length === 0) - Number(!b.localPath && b.hoots.length === 0) || b.recorded.localeCompare(a.recorded)));
@@ -103,20 +102,10 @@ async function removeReport(id: string) {
 
 const savedTo = ref('');
 // On paper, light: a dark report is switched for the PDF, and back after.
+// Drawn for paper in a window of its own, so nothing here changes.
 async function savePdf() {
   if (!openReport.value) return;
-  const wasDark = viewMode.isDarkMode;
-  const preference = viewMode.themePreference;
-  if (wasDark) {
-    viewMode.setThemePreference('light');
-    await nextTick();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-  try {
-    savedTo.value = await window.diagnostics.savePdf(openReport.value.name).catch((error) => { problem.value = cleanError(error); return ''; });
-  } finally {
-    if (wasDark) viewMode.setThemePreference(preference);
-  }
+  savedTo.value = await window.diagnostics.savePdf(openReport.value.id).catch((error) => { problem.value = cleanError(error); return ''; });
 }
 
 // A report's template, again a template of its own.
@@ -342,8 +331,8 @@ onUnmounted(() => clearInterval(statusTimer));
         </span>
       </div>
       <p class="hint small">
-        The starters are Pit Health, Drivetrain, Shooter, Electrical, Match Review, Controls Debug, Automated Test and Battery Health (each a view
-        and a template), an Autonomous template, and a pipeline for qualification matches (off until it's turned on).
+        The starters are the Match Report, Match Review, Autonomous and Power Analysis templates; views for Pit Health, Drivetrain, Shooter,
+        Electrical, Match Review, Controls Debug, Automated Test and Battery Health; and a pipeline for qualification matches (off until it's turned on).
       </p>
       <p v-if="templates.length === 0" class="hint">None yet.</p>
       <ul class="items">
@@ -560,7 +549,7 @@ select option {
   padding: 0;
   border: none;
   background: none;
-  color: inherit;
+  color: var(--link-color);
   font: inherit;
   text-decoration: underline;
   cursor: pointer;

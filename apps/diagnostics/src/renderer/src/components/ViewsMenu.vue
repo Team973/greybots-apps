@@ -191,7 +191,7 @@ onUnmounted(() => {
   padding: 10px;
   border: 1px solid rgba(127, 127, 127, 0.4);
   border-radius: 8px;
-  background: var(--card-background-color, Canvas);
+  background: var(--tile-background-color, Canvas);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
@@ -216,7 +216,15 @@ onUnmounted(() => {
 
 .naming select {
   padding: 4px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
   font: inherit;
+}
+
+.naming select option {
+  background: var(--tile-background-color, Canvas);
 }
 
 .views {

@@ -1,6 +1,9 @@
-// Starter views, report templates and a pipeline (#148), from the starter
-// dashboards #95 listed: Pit Health, Drivetrain, Shooter, Electrical, Match
-// Review, Controls Debug, Automated Test and Battery Health. Named as Team
+// Starter views, report templates and a pipeline (#148). The views are the
+// starter dashboards #95 listed: Pit Health, Drivetrain, Shooter, Electrical,
+// Match Review, Controls Debug, Automated Test and Battery Health, and an
+// Energy view with pies of what each motor drew. The
+// templates are Match Report (Pit Health, Battery Health and the
+// mechanisms together), Match Review, Autonomous and Power Analysis. Named as Team
 // 973's robot code logs things (DogLog under /Robot); other robots' signals
 // are found by the end of their path, or by a robot mapping. They have fixed
 // ids, so adding them again changes nothing.
@@ -9,6 +12,7 @@
 
 import type { EventKind } from './events';
 import type { LibraryItem, Pipeline, ReportSection, ReportTemplate, SavedView, ViewBody, ViewSpan, ViewTrace } from './library';
+import type { PiePanel } from './plots';
 
 const robot = '/Robot/robot';
 const stats = '/Robot/SystemStats';
@@ -117,28 +121,82 @@ const chart = (name: string, title = name, span?: ViewSpan): ReportSection => {
 };
 const problems = (title: string, kinds: EventKind[] = []): ReportSection => ({ type: 'events', title, kinds, problemsOnly: true });
 
+// Each motor's supply current, the battery's current it draws: by motor,
+// and added up by subsystem.
+const motors: [string, string][] = [
+  ...[0, 1, 2, 3].map((m): [string, string] => [`Module ${m} drive`, `${robot}/drive/swerve/mod${m}/Drive Motor/supplyCurrent`]),
+  ...[0, 1, 2, 3].map((m): [string, string] => [`Module ${m} angle`, `${robot}/drive/swerve/mod${m}/Angle Motor/supplyCurrent`]),
+  ['Intake left roller', `${robot}/intake/leftRollerMotor/supplyCurrent`],
+  ['Intake right roller', `${robot}/intake/rightRollerMotor/supplyCurrent`],
+  ['Intake arm left', `${robot}/intakeArm/left/motor/supplyCurrent`],
+  ['Intake arm right', `${robot}/intakeArm/right/motor/supplyCurrent`],
+  ['Shooter leader', `${robot}/shooter/motorLeader/supplyCurrent`],
+  ['Shooter follower', `${robot}/shooter/motorFollower/supplyCurrent`],
+  ['Conveyor', `${robot}/conveyor/motor/supplyCurrent`],
+  ['Queuer', `${robot}/queuer/Motor/supplyCurrent`],
+  ['Upper kicker', `${robot}/upperKicker/motor/supplyCurrent`],
+  ['Lower kicker', `${robot}/lowerKicker/motor/supplyCurrent`]
+];
+// The same motors as their TalonFXs log themselves in the Hoot logs, by CAN
+// id: told apart on Q39 by how alike each one's supply current is to the
+// robot code's, and by their averages (the kickers and shooter's). Found
+// by the end of the name, whatever the CANivore's serial is.
+const talons: Record<string, number> = {
+  'Module 0 drive': 2, 'Module 0 angle': 3, 'Module 2 drive': 5, 'Module 2 angle': 6,
+  'Module 1 drive': 8, 'Module 1 angle': 9, 'Module 3 drive': 11, 'Module 3 angle': 12,
+  Queuer: 20, Conveyor: 30, 'Upper kicker': 40, 'Lower kicker': 41, 'Intake arm left': 50, 'Intake arm right': 52,
+  'Shooter leader': 58, 'Shooter follower': 59, 'Intake right roller': 60, 'Intake left roller': 61
+};
+const talonCurrent = (name: string) => `TalonFX-${talons[name]}/SupplyCurrent`;
+
+const subsystems: [string, string[]][] = [
+  ['Drive motors', ['Module 0 drive', 'Module 1 drive', 'Module 2 drive', 'Module 3 drive']],
+  ['Angle motors', ['Module 0 angle', 'Module 1 angle', 'Module 2 angle', 'Module 3 angle']],
+  ['Intake rollers', ['Intake left roller', 'Intake right roller']],
+  ['Intake arm', ['Intake arm left', 'Intake arm right']],
+  ['Shooter', ['Shooter leader', 'Shooter follower']],
+  ['Conveyor', ['Conveyor']],
+  ['Queuer', ['Queuer']],
+  ['Kickers', ['Upper kicker', 'Lower kicker']]
+];
+const keyOf = new Map(motors);
+
+// Energy pies, by motor and by subsystem: the robot code's currents times
+// the battery's voltage, or the Hoot logs' currents times each Talon's own.
+// The Signals page's view of the same: the battery on the chart, and pies of
+// the energy each motor and subsystem drew over the span shown, as tabs.
+const battery = `${stats}/BatteryVoltage`;
+const energyPie = (id: string, title: string, groups: [string, string[]][]): PiePanel =>
+  ({ id, type: 'pie', title, mode: 'share', keys: [], groups: groups.map(([label, keys]) => ({ label, keys })), measure: 'energy', voltage: battery });
+const energyView: [string, string, string, ViewBody] = ['5f0c2a10-0001-4000-8000-000000000009', 'Energy',
+  "The battery, and the energy each motor and subsystem drew over the span shown (their supply current times the battery's voltage) in the pie tabs.", {
+    ...body([
+      [battery, 'L'],
+      [`${stats}/BatteryCurrent`, 'R'],
+      [`${stats}/BrownedOut`, 'band']
+    ]),
+    panels: [
+      energyPie('panel1', 'Energy by motor', motors.map(([name, key]) => [name, [key]])),
+      energyPie('panel2', 'Energy by subsystem', subsystems.map(([label, names]) => [label, names.map((name) => keyOf.get(name)!)]))
+    ]
+  }];
+
+function energyPies(source: string, key: (name: string) => string, voltage: string): ReportSection[] {
+  return [
+    { type: 'pie', title: `Energy by motor${source}`, measure: 'energy', voltage, slices: motors.map(([name]) => ({ label: name, keys: [key(name)] })) },
+    { type: 'pie', title: `Energy by subsystem${source}`, measure: 'energy', voltage, slices: subsystems.map(([label, names]) => ({ label, keys: names.map(key) })) }
+  ];
+}
+
 const templates: [string, string, string, ReportTemplate['scope'], ReportSection[]][] = [
-  ['5f0c2a10-0002-4000-8000-000000000001', 'Pit Health', 'Is the robot healthy to go out again? Battery, CAN, the roboRIO, faults.', { type: 'match' }, [
+  ['5f0c2a10-0002-4000-8000-000000000010', 'Match Report', 'Is the robot ready for the next match? Its health, the battery, and how the mechanisms did.', { type: 'match' }, [
     { type: 'summary' },
-    chart('Pit Health'),
-    { type: 'stats', title: 'Health', keys: [`${stats}/BatteryVoltage`, `${stats}/CANBus/Utilization`, `${robot}/canivoreUtilization`, `${stats}/CPUTempCelcius`] },
-    problems('Problems to look at before the next match', ['brownout', 'can', 'fault', 'network', 'overrun'])
-  ]],
-  ['5f0c2a10-0002-4000-8000-000000000002', 'Drivetrain', 'The drivetrain through teleop: speed, module currents, and their faults.', { type: 'teleop' }, [
-    chart('Drivetrain'),
-    { type: 'stats', title: 'Module drive current', keys: [0, 1, 2, 3].map((m) => `${robot}/drive/swerve/mod${m}/Drive Motor/supplyCurrent`) },
-    problems('Faults and CAN', ['fault', 'can'])
-  ]],
-  ['5f0c2a10-0002-4000-8000-000000000003', 'Shooter', 'How well the shooter kept up with its target through teleop.', { type: 'teleop' }, [
-    chart('Shooter'),
-    { type: 'stats', title: 'Shooter', keys: [`${robot}/shooter/velocityErrorMPS`, `${robot}/shooter/currentLinearVelocityMPS`, `${robot}/shooter/motorLeader/supplyCurrent`] },
-    { type: 'events', title: 'Its states', kinds: ['state'], problemsOnly: false }
-  ]],
-  ['5f0c2a10-0002-4000-8000-000000000004', 'Electrical', 'The electrical system over the match: battery, rails, brownouts.', { type: 'match' }, [
-    { type: 'summary' },
-    chart('Electrical'),
-    { type: 'stats', title: 'Battery and rails', keys: [`${stats}/BatteryVoltage`, `${stats}/BatteryCurrent`, `${stats}/5vRail/Current`, `${stats}/3v3Rail/Current`] },
-    problems('Electrical problems', ['brownout', 'can', 'fault'])
+    chart('Pit Health', 'Battery and CAN'),
+    { type: 'stats', title: 'Health', keys: [`${stats}/BatteryVoltage`, `${stats}/BatteryCurrent`, `${stats}/CANBus/Utilization`, `${robot}/canivoreUtilization`, `${stats}/CPUTempCelcius`] },
+    chart('Battery Health', 'The battery: voltage against current drawn'),
+    chart('Shooter', 'Shooter'),
+    chart('Controls Debug', 'Mechanisms against their targets'),
+    { type: 'stats', title: 'Mechanism error', keys: [`${robot}/shooter/velocityErrorMPS`, `${robot}/shooter/filteredMotorError`, `${robot}/upperKicker/filteredMotorError`] }
   ]],
   ['5f0c2a10-0002-4000-8000-000000000005', 'Match Review', 'The match end to end, for the drive team after it.', { type: 'match' }, [
     { type: 'heading', text: 'The match' },
@@ -147,45 +205,38 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
     problems('Errors and warnings'),
     { type: 'events', title: 'Enables and notes', kinds: ['mode', 'note'], problemsOnly: false }
   ]],
-  ['5f0c2a10-0002-4000-8000-000000000006', 'Controls Debug', 'Mechanisms against their targets, for tuning.', { type: 'match' }, [
-    chart('Controls Debug'),
-    { type: 'stats', title: 'Errors', keys: [`${robot}/shooter/velocityErrorMPS`, `${robot}/upperKicker/filteredMotorError`, `${robot}/shooter/filteredMotorError`] },
-    problems('Loop overruns', ['overrun'])
-  ]],
-  ['5f0c2a10-0002-4000-8000-000000000007', 'Automated Test', 'While the robot\'s in test mode (#100\'s automated tests).', { type: 'conditions', conditions: [{ key: 'isTestEnabled', value: true }] }, [
-    { type: 'summary' },
-    chart('Automated Test'),
-    { type: 'stats', title: 'Drive current', keys: [0, 1, 2, 3].map((m) => `${robot}/drive/swerve/mod${m}/Drive Motor/supplyCurrent`) },
-    problems('Problems during the test')
-  ]],
-  ['5f0c2a10-0002-4000-8000-000000000008', 'Battery Health', 'How the battery held up, to decide if it\'s used again.', { type: 'match' }, [
-    { type: 'summary' },
-    chart('Battery Health'),
-    { type: 'stats', title: 'Battery', keys: [`${stats}/BatteryVoltage`, `${stats}/BatteryCurrent`] },
-    problems('Brownouts', ['brownout'])
-  ]],
   ['5f0c2a10-0002-4000-8000-000000000009', 'Autonomous', 'Autonomous only: the path driven and what went wrong.', { type: 'auto' }, [
     chart('Drivetrain', 'Drivetrain in auto', { type: 'phase', phase: 'auto' }),
     chart('Match Review', 'Mechanisms in auto', { type: 'phase', phase: 'auto' }),
     problems('Errors and warnings in auto')
+  ]],
+  ['5f0c2a10-0002-4000-8000-000000000011', 'Power Analysis', "Where the battery's energy goes over the match, in watt-hours: each motor's share, and each subsystem's. From the robot code's log (each motor's supply current times the battery's voltage), and from the Hoot logs alone (each TalonFX's own supply voltage and current).", { type: 'match' }, [
+    { type: 'summary' },
+    problems('Errors and warnings'),
+    { type: 'heading', text: "From the robot code's log" },
+    { type: 'text', text: "Each motor's supply current, as the robot code logs it, times the battery's voltage." },
+    ...energyPies('', (name) => keyOf.get(name)!, `${stats}/BatteryVoltage`),
+    { type: 'heading', text: 'From the Hoot logs' },
+    { type: 'text', text: "Each TalonFX's supply voltage times its supply current, as it logs them itself: sampled faster than the robot code logs them, and with no part from the robot code." },
+    ...energyPies(' (Hoot)', talonCurrent, '')
   ]]
 ];
 
 const pipeline: Pipeline = {
   ...base('5f0c2a10-0003-4000-8000-000000000001', 'pipeline', 'After each qualification match',
-    'Match Review and Pit Health for every qualification match offloaded. Off until someone turns it on.'),
+    'Match Review and Match Report for every qualification match offloaded. Off until someone turns it on.'),
   kind: 'pipeline',
   enabled: false,
   onOffload: true,
   onImport: false,
   robots: [],
   matchTypes: ['qualification'],
-  templateIds: ['5f0c2a10-0002-4000-8000-000000000005', '5f0c2a10-0002-4000-8000-000000000001']
+  templateIds: ['5f0c2a10-0002-4000-8000-000000000005', '5f0c2a10-0002-4000-8000-000000000010']
 };
 
 export function starterLibrary(): LibraryItem[] {
   return [
-    ...views.map(([id, name, description, b]): SavedView => ({ ...base(id, 'view', name, description), kind: 'view', ...b })),
+    ...[...views, energyView].map(([id, name, description, b]): SavedView => ({ ...base(id, 'view', name, description), kind: 'view', ...b })),
     ...templates.map(([id, name, description, scope, sections]): ReportTemplate => ({ ...base(id, 'template', name, description), kind: 'template', scope, sections })),
     pipeline
   ];

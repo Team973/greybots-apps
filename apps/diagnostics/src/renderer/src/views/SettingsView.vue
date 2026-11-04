@@ -194,7 +194,7 @@ onMounted(async () => {
 .reset {
   border: none;
   background: transparent;
-  color: inherit;
+  color: var(--link-color);
   font: inherit;
   font-size: 0.85rem;
   text-decoration: underline;

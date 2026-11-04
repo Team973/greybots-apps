@@ -1,5 +1,20 @@
 @import '@greybots/common/styles/main.css';
 
+/* Links are orange, followed or not: the browser's blue is hard to read on
+   the dark theme's cards. Each is over 4.5:1 against its theme's cards. */
+[theme='dark'] {
+  --link-color: #e69533;
+}
+
+[theme='light'] {
+  --link-color: #b05703;
+}
+
+a,
+a:visited {
+  color: var(--link-color);
+}
+
 .main-content {
   display: flex;
   flex-direction: column;

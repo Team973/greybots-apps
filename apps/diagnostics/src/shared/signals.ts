@@ -75,6 +75,31 @@ export interface SignalRange {
   maxPoints?: number;
 }
 
+// A current's supply voltage: the signal beside it, ...Voltage for ...Current.
+export const pairedVoltage = (key: string) => key.replace(/(current)$/i, (word) => (word[0] === 'C' ? 'Voltage' : 'voltage'));
+
+// The integral over [start, end] of a(t) b(t), each holding its last value
+// (from where both have one).
+export function integrateProduct(ta: ArrayLike<number>, a: ArrayLike<number>, tb: ArrayLike<number>, b: ArrayLike<number>, start: number, end: number): number {
+  let i = 0;
+  let j = 0;
+  let va: number | null = null;
+  let vb: number | null = null;
+  let t = start;
+  let sum = 0;
+  // Values from before the start hold into it.
+  while (i < ta.length && ta[i] <= start) va = a[i++];
+  while (j < tb.length && tb[j] <= start) vb = b[j++];
+  while (t < end) {
+    const next = Math.min(i < ta.length ? ta[i] : Infinity, j < tb.length ? tb[j] : Infinity, end);
+    if (va !== null && vb !== null && Number.isFinite(va) && Number.isFinite(vb)) sum += va * vb * (next - t);
+    t = next;
+    while (i < ta.length && ta[i] <= t) va = a[i++];
+    while (j < tb.length && tb[j] <= t) vb = b[j++];
+  }
+  return sum;
+}
+
 // --- Naming ---
 
 // Leading path segments that hold everything rather than saying what it is:

@@ -59,12 +59,31 @@ export interface ConsolePanel {
 // its values (time in each state or zone).
 export type PieMode = 'share' | 'states';
 
+// What a pie of shares adds up: its signals over time as they are (a
+// current, in amp-seconds), or as energy (a current times a voltage, in
+// watt-hours). For energy, the voltage is one signal for all (the
+// battery's), or '' for each current's own: the signal beside it named
+// ...Voltage for ...Current (a motor controller's supply voltage).
+export type PieMeasure = 'charge' | 'energy';
+
+// Signals added up as one slice: a subsystem's motors.
+export interface PieGroup {
+  label: string;
+  keys: string[];
+}
+
 export interface PiePanel {
   id: string;
   type: 'pie';
+  // Its tab's name, or '' for what it shows.
+  title: string;
   mode: PieMode;
-  // For 'share', numbers; for 'states', one signal.
+  // For 'share', numbers, a slice each; for 'states', one signal.
   keys: string[];
+  // For 'share', more slices: each of signals added up.
+  groups: PieGroup[];
+  measure: PieMeasure;
+  voltage: string;
 }
 
 export interface Robot3dPanel {
@@ -86,14 +105,16 @@ export type PlotPanel = FieldPanel | ConsolePanel | PiePanel | Robot3dPanel;
 // A plot's name, for its tab.
 export function panelTitle(panel: PlotPanel): string {
   if (panel.type === 'console') return panel.key && panel.key !== 'console' ? `Console: ${panel.key.split('/').pop()}` : 'Console';
-  if (panel.type === 'pie') return panel.mode === 'share' ? 'Pie: shares' : 'Pie: time at each value';
+  if (panel.type === 'pie') return panel.title || (panel.mode === 'states' ? 'Pie: time at each value' : panel.measure === 'energy' ? 'Pie: energy' : 'Pie: shares');
   return panelLabels[panel.type];
 }
 
-// At most this many open beside the chart, and this many signals on a field or a pie.
+// At most this many open beside the chart, this many signals on a field,
+// and this many slices in a pie (past the palette's colours, the smallest
+// are grey).
 export const maxPanels = 6;
 export const maxFieldItems = 8;
-export const maxPieKeys = 8;
+export const maxPieKeys = 24;
 
 export const defaultRobotSize = 0.9;
 
@@ -104,7 +125,7 @@ export function newPanel(type: PanelType, id: string, season: string): PlotPanel
     case 'console':
       return { id, type, key: 'console', filter: '' };
     case 'pie':
-      return { id, type, mode: 'share', keys: [] };
+      return { id, type, title: '', mode: 'share', keys: [], groups: [], measure: 'charge', voltage: '' };
     case 'robot3d':
       return { id, type, model: '', poseKey: '', componentsKey: '', season };
   }
@@ -118,7 +139,8 @@ export function panelKeys(panel: PlotPanel): string[] {
     case 'console':
       return panel.key ? [panel.key] : [];
     case 'pie':
-      return panel.keys;
+      if (panel.mode === 'states') return panel.keys.slice(0, 1);
+      return [...panel.keys, ...panel.groups.flatMap((g) => g.keys), ...(panel.measure === 'energy' && panel.voltage ? [panel.voltage] : [])];
     case 'robot3d':
       return [panel.poseKey, panel.componentsKey].filter(Boolean);
   }
@@ -378,20 +400,29 @@ export function cleanPanel(raw: unknown): PlotPanel | null {
               key: text(i.key),
               style: (['robot', 'path', 'points'] as const).find((s) => s === i.style) ?? 'robot',
               color: cleanColor(i.color),
-              opacity: typeof i.opacity === 'number' && i.opacity >= 0 && i.opacity <= 1 ? i.opacity : 0.3
+              opacity: typeof i.opacity === 'number' && i.opacity >= 0 && i.opacity <= 1 ? i.opacity : 1
             };
           })
       };
     }
     case 'console':
       return { id, type: 'console', key: text(p.key), filter: text(p.filter, 200) };
-    case 'pie':
+    case 'pie': {
+      const keys = (Array.isArray(p.keys) ? p.keys : []).map((k) => text(k)).filter(Boolean).slice(0, maxPieKeys);
       return {
         id,
         type: 'pie',
+        title: text(p.title, 120),
         mode: p.mode === 'states' ? 'states' : 'share',
-        keys: (Array.isArray(p.keys) ? p.keys : []).map((k) => text(k)).filter(Boolean).slice(0, maxPieKeys)
+        keys,
+        groups: (Array.isArray(p.groups) ? p.groups : [])
+          .filter((g): g is Record<string, unknown> => typeof g === 'object' && g !== null)
+          .map((g) => ({ label: text(g.label, 120), keys: (Array.isArray(g.keys) ? g.keys : []).map((k) => text(k)).filter(Boolean).slice(0, 40) }))
+          .slice(0, maxPieKeys - keys.length),
+        measure: p.measure === 'energy' ? 'energy' : 'charge',
+        voltage: text(p.voltage)
       };
+    }
     case 'robot3d':
       return {
         id,
@@ -423,7 +454,7 @@ export function mapPanelKeys(panel: PlotPanel, find: (key: string) => string | n
     case 'console':
       return { ...panel, key: map(panel.key) };
     case 'pie':
-      return { ...panel, keys: panel.keys.map(map) };
+      return { ...panel, keys: panel.keys.map(map), groups: panel.groups.map((g) => ({ ...g, keys: g.keys.map(map) })), voltage: map(panel.voltage) };
     case 'robot3d':
       return { ...panel, poseKey: map(panel.poseKey), componentsKey: map(panel.componentsKey) };
   }
