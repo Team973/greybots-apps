@@ -72,6 +72,7 @@ Everything the app pulls off the robot or works out is kept under one data folde
   notes/<log>.json
   library/<kind>/<id>.json
   reports/<id>.json
+  models/<model>/config.json, model.glb, model_0.glb, ...
   index/
   README.txt
 ```
@@ -81,6 +82,7 @@ Everything the app pulls off the robot or works out is kept under one data folde
 - **`notes/`** holds notes people add while reviewing a log, one file per log, named for its path under `logs/` (see Log review). Unlike `results/`, these can't be rebuilt.
 - **`library/`** holds saved views, report templates, pipelines and robot mappings (`<kind>` is `view`, `template`, `pipeline` or `mapping`), one file each, shared with the team when signed in (see Reports).
 - **`reports/`** holds reports made from logs, each with the data it shows, so it reads the same later.
+- **`models/`** holds robot models for the 3D robot plot, one folder each, as AdvantageScope keeps them (see Other plots).
 - **`index/`** records what has been offloaded and what each file belongs to: `index/offloaded.json` (see Log offload).
 
 Which event, match, or test run a log belongs to is recorded in the index, not in its path. That is often only known after the file is pulled (from FMS data inside the log, or from timestamps), and a path that had to change afterwards would mean moving files that are meant to stay put.
@@ -89,7 +91,7 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 
 ## Pages
 
-- **Signals** (what the app opens on): logs and live signals, plotted; saved views.
+- **Signals** (what the app opens on): logs and live signals, plotted, with a field, the console, pies and the robot in 3D in tabs beside the chart; saved views.
 - **Reports:** reports, report templates, pipelines, and robot mappings.
 - **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
 - **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
@@ -237,6 +239,20 @@ The Signals page's list starts with two live sessions: **the robot**, and **a si
 
 **Testing without a robot.** Team 973's robot code runs in simulation (`./gradlew simulateJavaRelease` in the robot repo, with `ROBOT_SIM_NO_GUI=1` for no window) and publishes the same `/Robot` signals. Its `test/` tools enable it through the simulated Driver Station.
 
+## Other plots
+
+The Signals page's chart has tabs (#144): the line chart's, then one for each other plot open, in the same space. **+** at the end opens another (up to six): a 2D field, the console, a pie chart, or the robot in 3D; ✕ on its tab closes it. The line chart's tab is always there. Each plot shows the moment the chart does (the pin, the playhead while playing back, or now when following live) over the span it shows, so the zoom buttons and playing back work on every tab. The tabs are kept with the chart (through other pages and restarts) and in saved views; a view saved before them leaves the plots as they are. Each has its settings, and a signal dragged from the list onto one is added to it. `src/shared/plots.ts`, `src/renderer/src/components/PlotTabs.vue`, `PanelView.vue` and `*Panel.vue`.
+
+**Whole values.** A line needs numbers, but a pose is a struct and a trajectory a list of them. `readRecords` sends a signal's values whole (structs as their fields, arrays as lists) over a span, with the one holding at its start, at most 20,000 (the latest kept). Data logs and live sessions have them; Hoot and Driver Station signals don't. Poses are read from WPILib's `Pose2d`, `Pose3d`, `Translation2d`, `Translation3d` and lists of them, and Field2d's `double[]` (x, y, degrees for each).
+
+**2D field.** WPILib's field images, by season (2022 to 2026; the season's picked from when the log was recorded), with where each field is in its image and its size from WPILib's JSON. WPILib's images are drawn from the red end, so they're turned 180° to put each element where WPILib's coordinates (and its AprilTag layouts) have it: the blue wall at x = 0. **Turn** turns the whole view 90° at a time. Each pose is drawn as a **robot** (a square of the robot's size with a coloured border, a fill as solid as chosen, and a mark at the front, with a trail of where it's been), a **path** (a trajectory's poses; for one pose, where it went over the span), or **dots**. Pointing at the field says where that is in metres.
+
+**Console.** What the robot code printed, over the span, with the line at the moment shown marked and kept in sight; clicking a line pins its moment. From a data log it's `console`, which WPILib's DataLogManager logs. Live from the robot, it's the roboRIO's console (TCP port 1741, as the Driver Station and RioLog get it; `src/main/live/net-console.ts`), added to the live session as `console` so the same plot works on both. A simulator has none. Errors and warnings are coloured; lines can be filtered and copied.
+
+**Pie charts.** Over the span shown, either each number's share of their total (their means times the span: amp-seconds for currents), or how long one signal held each of its values (time in each state, mode or zone; the value carried in from before the span counts). Slices take the palette's colours in a fixed order by signal (or, for states, by name), so they don't change as the span moves; past eight, the smallest are folded into Other.
+
+**3D robot** (three.js). The robot's pose (a `Pose2d` or `Pose3d`) places it on the season's field, or a plain grid. Its model is a folder as AdvantageScope keeps them, so a team's models work in both: `config.json` (`rotations`, applied in order, then `position`, to stand the model on the field the WPILib way; and for each moving part, `zeroedRotations` and `zeroedPosition`), `model.glb` (the robot) and `model_0.glb`, `model_1.glb`, ... (the parts, posed by a `Pose3d[]` signal relative to the robot). **Add a model** copies a model's folder into the data folder's `models/`; with none, a box the size of a robot shows. Drag to turn the view, right-drag to move it, scroll to zoom; **Follow** keeps the robot in the middle. The field and the 3D view can be copied as images.
+
 ## Log review
 
 The Signals page is also where a log is reviewed (#94): what happened in it is found, marked along the top of the chart, and listed under it.
@@ -337,7 +353,8 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 - **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal).
 - **The rest of the live view** is [#146](https://github.com/Team973/greybots-apps/issues/146): the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables.
 - **The rest of log review (#94):** automated test steps as events come with the tests (#100); syncing notes to other computers with Preflight's data sharing (#103); picking which subsystems and buttons a team cares about with dashboards (#95); a DS log's power distribution currents, once their packing can be checked.
-- **Reports (#148):** the Diagnostics migration has to be applied to the team's database before sharing works (until then, signing in says so). Sign-in and sync haven't been tried against it. Suggesting mappings with an LLM is #149.
+- **Reports (#148):** the Diagnostics migration is applied to the team's database, but sign-in and sync haven't been tried against it yet. Suggesting mappings with an LLM is #149.
+- **Other plots (#144):** the live console is only from a roboRIO (a simulator's goes to its terminal), and hasn't been tried against one. The 3D robot's moving parts haven't been tried with a log that has them. Plots aren't in reports yet.
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
 - **Sign-in.** The app has none: it works with no internet and holds nothing private. If #103 syncs through Supabase, it will need the account link Preflight's kiosk mode uses.

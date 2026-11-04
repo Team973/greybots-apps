@@ -7,6 +7,7 @@ import type { LogEvent, MatchPhase, SessionEvents } from '@shared/events';
 import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogStatus, type HootProgress, type OwletStatus } from '@shared/hoot';
 import type { DsAlignment, DsLogStatus, HootSessionStatus, SessionDsLog, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
+import type { SignalRecords } from '@shared/plots';
 import { parseLogName, type MatchInfo } from '@shared/offload';
 import type { Settings } from '@shared/settings';
 import {
@@ -22,7 +23,7 @@ import {
 } from '@shared/signals';
 import { exportedName, HootLog } from './hoot/hoot-log';
 import { hootCompliancy, Owlet } from './hoot/owlet';
-import { openLive, readLive } from './live-service';
+import { openLive, readLive, readLiveRecords } from './live-service';
 import { loadNotes } from './notes-store';
 import { loadIndex } from './offload/offload-index';
 import { loadSettings, storeSettings } from './settings-store';
@@ -664,6 +665,17 @@ export async function readSignal(settings: Settings, id: string, key: string, ra
     times: series.times.map((t) => t + offset),
     unit: source.catalog().find((s) => s.key === entry)?.unit ?? ''
   };
+}
+
+// Every value over a span, decoded whole, for poses and lists of them. Only
+// data logs and live sessions have structs; Hoot and Driver Station signals
+// are read as series.
+export async function readRecords(settings: Settings, id: string, key: string, range: SignalRange, max: number): Promise<SignalRecords | null> {
+  if (isLiveId(id)) return readLiveRecords(id, key, range, max);
+  const session = await openSession(settings, id);
+  if (session.dsLogs.some((p) => key.startsWith(`${p.entry.label}/`))) return null;
+  if (session.placements.some((p) => key.startsWith(`${p.hoot.label}/`))) return null;
+  return session.dataLog?.records(key, range, max) ?? null;
 }
 
 // Many signals' values at one time, for the signal list. Hoot signals not

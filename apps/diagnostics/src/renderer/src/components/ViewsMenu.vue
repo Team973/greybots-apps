@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
-import type { SavedView, SignalMapping, ViewBody, ViewSpan } from '@shared/library';
+import { viewKeys, type SavedView, type SignalMapping, type ViewBody, type ViewSpan } from '@shared/library';
 import { matchKey, searchMatches } from '@shared/signal-match';
 
 // Saved views (#148): the chart as it is, kept by name to bring back on any
@@ -44,10 +44,11 @@ const mapping = computed(() => mappings.value.find((m) => m.robot === props.robo
 // Each view with how many of its signals are here; the best fits first,
 // then those saved for this robot.
 const listed = computed(() => views.value
-  .filter((view) => searchMatches(query.value, view.name, view.traces.map((t) => t.key)))
+  .filter((view) => searchMatches(query.value, view.name, viewKeys(view)))
   .map((view) => {
-    const found = view.traces.filter((t) => matchKey(t.key, props.available, mapping.value).key !== null).length;
-    return { view, found, total: view.traces.length };
+    const keys = viewKeys(view);
+    const found = keys.filter((key) => matchKey(key, props.available, mapping.value).key !== null).length;
+    return { view, found, total: keys.length };
   })
   .sort((a, b) => (b.found / Math.max(1, b.total)) - (a.found / Math.max(1, a.total)) ||
     Number(b.view.robot === props.robot) - Number(a.view.robot === props.robot) || a.view.name.localeCompare(b.view.name)));

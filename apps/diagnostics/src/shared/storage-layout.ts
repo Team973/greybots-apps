@@ -7,6 +7,7 @@
 //     notes/<log>.json
 //     library/<kind>/<id>.json
 //     reports/<id>.json
+//     models/<model>/config.json, model.glb, model_0.glb, ...
 //     index/
 //     README.txt
 
@@ -38,6 +39,10 @@ export const storageFolders: StorageFolder[] = [
   {
     name: 'reports',
     purpose: 'Reports made from logs, by hand or by a pipeline.'
+  },
+  {
+    name: 'models',
+    purpose: 'Robot models for the 3D robot plot, one folder each, as AdvantageScope keeps them.'
   },
   {
     name: 'index',
@@ -84,6 +89,11 @@ export function reportPathSegments(id: string): string[] {
   return ['reports', `${safeSegment(id)}.json`];
 }
 
+// A robot model's file, below the data folder.
+export function modelPathSegments(model: string, file: string): string[] {
+  return ['models', safeSegment(model), safeSegment(file)];
+}
+
 // Names come from robots and from people, so anything that could step out of
 // the folder or isn't allowed in a file name on Windows is replaced.
 export function safeSegment(name: string): string {
@@ -112,6 +122,11 @@ library/<kind>/<id>.json
 
 reports/<id>.json
     Reports made from logs, by hand or by a pipeline.
+
+models/<model>/
+    Robot models for the 3D robot plot: config.json, model.glb (the
+    robot) and model_0.glb, model_1.glb, ... (its moving parts), as
+    AdvantageScope keeps them.
 
 index/
     What has been offloaded, and which match or test each file belongs to.

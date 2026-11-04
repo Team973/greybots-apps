@@ -9,6 +9,7 @@ import type { Annotation, SessionEvents } from './events';
 import type { LibraryItem, LibraryItemOf, LibraryKind, Report, ReportSummary } from './library';
 import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
+import type { RobotModel, SignalRecords } from './plots';
 import type { PipelineRun, PipelineStatus } from './reports';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
@@ -197,6 +198,11 @@ export interface DiagnosticsApi {
   // Each signal's value at one time (seconds, as in series), for the signal
   // list; null where there's none. Hoot signals not read yet are null.
   readValues(id: string, keys: string[], time: number): Promise<Record<string, SignalValue>>;
+  // Every value of a signal over a range, decoded whole (structs, arrays),
+  // for the field and the 3D robot (#144): at most `max`, the latest kept.
+  // Null if the session has no such signal, or it's in a Hoot log or a
+  // Driver Station log (those have none of these).
+  readRecords(id: string, key: string, range: SignalRange, max: number): Promise<SignalRecords | null>;
   getHootStatus(id: string): Promise<HootSessionStatus>;
   // What happened in a log: events found in it, the match's phases, and
   // notes. `pending` says what's still being looked for; ask again.
@@ -243,6 +249,14 @@ export interface DiagnosticsApi {
   signOut(): Promise<AccountStatus>;
   // Syncs the library with the team's now. Resolves when it's done.
   syncLibrary(): Promise<AccountStatus>;
+  // Robot models for the 3D robot plot, in the data folder's models/.
+  getRobotModels(): Promise<RobotModel[]>;
+  // Asks for a model's folder (AdvantageScope's: config.json, model.glb,
+  // ...) and copies it in. Resolves to the model, why it can't, or null if
+  // cancelled.
+  addRobotModel(): Promise<RobotModel | string | null>;
+  removeRobotModel(id: string): Promise<void>;
+  readModelFile(id: string, file: string): Promise<Uint8Array>;
 }
 
 export const ipcChannels: (keyof DiagnosticsApi)[] = [
@@ -263,6 +277,7 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'openSignalLog',
   'readSignal',
   'readValues',
+  'readRecords',
   'getHootStatus',
   'getEvents',
   'saveNote',
@@ -287,5 +302,9 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getAccount',
   'signIn',
   'signOut',
-  'syncLibrary'
+  'syncLibrary',
+  'getRobotModels',
+  'addRobotModel',
+  'removeRobotModel',
+  'readModelFile'
 ];

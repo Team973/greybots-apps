@@ -8,6 +8,7 @@
 
 import type { EventKind, LogEvent, MatchPhase } from './events';
 import type { MatchInfo, MatchType } from './offload';
+import { panelKeys, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
 
 export type LibraryKind = 'view' | 'template' | 'pipeline' | 'mapping';
@@ -66,6 +67,14 @@ export interface ViewBody {
   span: ViewSpan;
   // Which kinds of event show, if the view says.
   eventKinds: EventKind[] | null;
+  // The other plots under the chart (#144). Left out by views saved before
+  // there were any.
+  panels?: PlotPanel[];
+}
+
+// Every signal a view shows, on the chart and in its other plots.
+export function viewKeys(view: ViewBody): string[] {
+  return [...new Set([...view.traces.map((t) => t.key), ...(view.panels ?? []).flatMap(panelKeys)])];
 }
 
 export interface SavedView extends LibraryItemBase, ViewBody {

@@ -12,6 +12,7 @@ import {
   type SignalRange,
   type SignalSeries
 } from '@shared/signals';
+import type { RecordValue, SignalRecords } from '@shared/plots';
 import { StructRegistry } from './structs';
 import { decodeValue, parseLog, type LogValue, type ParsedLog } from './wpilog';
 
@@ -43,6 +44,16 @@ export function pick(value: LogValue, path: (string | number)[]): LogValue | und
     at = (at as Record<string | number, LogValue>)[step];
   }
   return at;
+}
+
+// A decoded value as the window can be sent it: int64s as numbers, raw
+// bytes left out.
+export function plainValue(value: LogValue | undefined): RecordValue {
+  if (value === undefined || value instanceof Uint8Array) return null;
+  if (typeof value === 'bigint') return Number(value);
+  if (Array.isArray(value)) return value.map(plainValue);
+  if (typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, plainValue(item)]));
+  return value;
 }
 
 export function asNumber(value: LogValue | undefined): number | null {
@@ -168,6 +179,32 @@ export class LogSignalSource {
       times: records.map((record) => record.timestamp / 1e6 - this.firstTime),
       values: records.map((record) => decodeValue(this.bytes, record, entry.type, this.structs))
     };
+  }
+
+  // Every value of a signal over a span, decoded whole (structs as their
+  // fields, arrays as lists), for what a line can't show: poses. The value
+  // holding at the start comes too. At most `max`, the latest kept.
+  records(key: string, range: SignalRange = {}, max = Infinity): SignalRecords | null {
+    const location = this.locations.get(key);
+    if (!location) return null;
+    const entry = this.log.entries[location.entry];
+    const records = this.log.records[location.entry];
+    const timeAt = (i: number) => records[i].timestamp / 1e6 - this.firstTime;
+    const order = this.inTimeOrder(location.entry)
+      ? records.map((_, i) => i)
+      : records.map((_, i) => i).sort((a, b) => records[a].timestamp - records[b].timestamp);
+    const at = (i: number) => timeAt(order[i]);
+    const first = Math.max(0, firstAtOrAfter(order.length, at, range.start ?? -Infinity, true) - 1);
+    const last = firstAtOrAfter(order.length, at, range.end ?? Infinity, true);
+    const from = Math.max(first, last - max);
+    const times: number[] = [];
+    const values: RecordValue[] = [];
+    for (let i = from; i < last; i++) {
+      const decoded = decodeValue(this.bytes, records[order[i]], entry.type, this.structs);
+      times.push(at(i));
+      values.push(plainValue(location.path.length === 0 ? decoded : pick(decoded, location.path)));
+    }
+    return { key, type: entry.type, times, values, truncated: from > first };
   }
 
   read(key: string, range: SignalRange = {}): SignalSeries | null {
