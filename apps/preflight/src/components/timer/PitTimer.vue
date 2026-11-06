@@ -73,7 +73,10 @@ const reset = () => act(() => resetTimer(timer.value, editor()));
 </script>
 
 <template>
-  <div class="pit-timer" :class="[variant, phase, { finished }]">
+  <!-- The root also carries the parent's scoped-style id, so its classes must
+       not collide with the parent's (a plain "display" matched the pit
+       display's full-screen .display rule and covered the whole page). -->
+  <div class="pit-timer" :class="[`variant-${variant}`, phase, { finished }]">
     <div class="face" role="timer" :aria-label="`${minutes.join('')} minutes ${seconds.join('')} seconds`">
       <template v-for="(group, g) in [minutes, seconds]" :key="g">
         <span v-if="g === 1" class="colon" aria-hidden="true">:</span>
@@ -107,7 +110,7 @@ const reset = () => act(() => resetTimer(timer.value, editor()));
   font-size: clamp(2rem, 3.4vw, 2.8rem);
 }
 
-.pit-timer.display {
+.pit-timer.variant-display {
   font-size: 2.6em;
 }
 
