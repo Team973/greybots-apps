@@ -4,7 +4,7 @@ import { matchBlockMinutes } from '@/lib/constants';
 import { saveRecord } from '@/lib/sync/local-repo';
 import { uuidFromName } from '@/lib/uuid';
 import { deleteScheduleItem, saveActiveEvent, scheduleTable } from './schedule-repo';
-import { normalizeTeam, type ActiveEvent, type MatchInfo, type ScheduleItem } from './types';
+import { isManualMatch, normalizeTeam, type ActiveEvent, type MatchInfo, type ScheduleItem } from './types';
 
 // Calls the tba-proxy Edge Function (which holds the TBA API key), so an
 // import needs internet and a Supabase session: the web user's own, or a
@@ -133,7 +133,12 @@ export async function importTbaSchedule(activeEvent: ActiveEvent, editorName: st
     }
 
     const table = db.syncedTable<ScheduleItem>(scheduleTable);
-    const existing = await table.where('event_key').equals(activeEvent.event_key).filter((i) => i.kind === 'match').toArray();
+    // Matches added by hand aren't TBA's to update or remove.
+    const existing = await table
+        .where('event_key')
+        .equals(activeEvent.event_key)
+        .filter((i) => i.kind === 'match' && !isManualMatch(i))
+        .toArray();
     const existingById = new Map(existing.map((item) => [item.id, item]));
     const seen = new Set<string>();
     const result: ImportResult = { added: 0, updated: 0, removed: 0, unscheduled: 0 };

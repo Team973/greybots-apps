@@ -446,7 +446,15 @@ view of the whole event, built on FullCalendar's time grid.
 - **Custom events** (lead/admin): drag across empty time to create, drag to
   move, drag the bottom edge to resize, and tap to edit or delete. Each one
   has a type (Event / Practice / Pit / Programming / Admin), which drives its color and the filter
-  toggles. Matches can't be dragged; they're colored by our alliance.
+  toggles. Imported matches can't be dragged; they're colored by our alliance.
+- **Manual matches** (lead/admin, **New match**): for matches TBA doesn't
+  have (e.g. an event it doesn't cover). They're real matches (kind `match`),
+  so the countdown, robot flow, checklists and pit display use them, with a
+  title, time, our alliance and the teams entered by hand. Their `match_key`
+  is `manual_<id>` (`isManualMatch()`), so tasks, repairs and batteries can
+  link to them, and the TBA import never updates or removes them. They can be
+  dragged and edited like custom events; their time is the one entered (no
+  field delay or per-match estimate applies).
 - Times are shown in the device's timezone. A notice appears when that
   differs from the event's TBA timezone.
 - **Event timeline** (`src/lib/schedule/milestones.ts`): milestones for the
@@ -455,7 +463,7 @@ view of the whole event, built on FullCalendar's time grid.
   elimination tournament, event closeout). So they appear on the calendar,
   follow the type filters, and sync like any other item. The Schedule page's
   **Timeline** view lists them by phase. Leads/admins add the standard set
-  from the requirements doc (ids are derived from the event and template key,
+  (taken from the team's 2026mttd schedule; ids are derived from the event and template key,
   so devices converge; planned times are only starting points), then add,
   rename, retime, reorder (neighbors trade start times), or delete them per
   event. `currentPhase()` gives the phase the event is in right now.

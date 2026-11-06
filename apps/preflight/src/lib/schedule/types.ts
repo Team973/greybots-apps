@@ -7,9 +7,18 @@ export type ScheduleCategory = 'event' | 'match' | 'practice' | 'pit' | 'program
 // Display order for filters and pickers.
 export const scheduleCategories: ScheduleCategory[] = ['event', 'match', 'practice', 'pit', 'programming', 'admin'];
 
-// Categories a lead/admin can pick for a custom event ('match' is reserved
-// for TBA-imported matches).
+// Categories a lead/admin can pick for a custom event. Matches are their own
+// kind: imported from TBA, or added by hand (see isManualMatch).
 export const customCategories = scheduleCategories.filter((c) => c !== 'match');
+
+// A match added by hand on the Schedule page (e.g. an event TBA doesn't
+// cover). Its match_key carries this prefix, so it can be linked to like an
+// imported match but is never touched by the TBA import.
+export const manualMatchPrefix = 'manual_';
+
+export function isManualMatch(item: Pick<ScheduleItem, 'kind' | 'match_key'>): boolean {
+    return item.kind === 'match' && !!item.match_key?.startsWith(manualMatchPrefix);
+}
 
 export const categoryLabels: Record<ScheduleCategory, string> = {
     event: 'Event',
