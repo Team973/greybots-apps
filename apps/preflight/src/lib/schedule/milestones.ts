@@ -37,42 +37,31 @@ const t = (
     minutes: number
 ): MilestoneTemplate => ({ key, name, phase, category, day, start, minutes });
 
-// The standard milestones from the requirements doc (§2.1.1). "Alliance
-// selection" is listed there under both competition day and eliminations; it
-// appears once here, opening the elimination tournament.
+// The standard milestones, taken from the team's 2026mttd schedule (a
+// three-day event: load-in day, competition day, last day). Keys are kept
+// from the earlier defaults where the milestone is the same one, so events
+// that already have those don't get duplicates when the defaults are added.
 export const milestoneTemplate: MilestoneTemplate[] = [
-    t('load_in', 'Team arrival / pit load-in', 'prep', 'pit', 0, '08:00', 60),
-    t('pit_setup', 'Pit setup', 'prep', 'pit', 0, '09:00', 90),
-    t('robot_mods', 'Robot modifications', 'prep', 'pit', 0, '10:30', 60),
-    t('power_on', 'Robot power-on / initial systems check', 'prep', 'pit', 0, '11:30', 30),
-    t('radio_setup', 'Radio / network setup', 'prep', 'programming', 0, '12:00', 30),
-    t('inspection_prep', 'Inspection preparation', 'prep', 'pit', 0, '13:00', 30),
-    t('inspection', 'Robot inspection', 'prep', 'event', 0, '13:30', 45),
-    t('field_calibration', 'Field calibration', 'prep', 'programming', 0, '14:30', 30),
-    t('practice_field', 'Practice field opening', 'prep', 'practice', 0, '15:00', 30),
-    t('practice_schedule', 'Practice schedule', 'prep', 'practice', 0, '15:30', 120),
+    t('load_in', 'Team arrival / pit load-in', 'prep', 'pit', 0, '16:00', 90),
+    t('radio_setup', 'Radio / network setup', 'prep', 'programming', 0, '17:30', 30),
+    t('power_on', 'Robot power-on / initial systems check', 'prep', 'pit', 0, '17:30', 30),
+    t('field_calibration', 'Field calibration', 'prep', 'programming', 0, '18:00', 30),
+    t('practice_schedule', 'Practice schedule', 'prep', 'practice', 0, '18:30', 120),
 
-    t('leave_hotel', 'Leaving hotel for event', 'competition', 'admin', 1, '07:00', 30),
-    t('pit_opening', 'Pit opening', 'competition', 'event', 1, '08:00', 15),
-    t('driver_meeting', 'Driver meeting', 'competition', 'event', 1, '08:15', 15),
-    t('practice_matches', 'Practice matches', 'competition', 'practice', 1, '08:30', 30),
-    t('opening_ceremonies', 'Opening ceremonies', 'competition', 'event', 1, '09:00', 30),
-    t('quals', 'Qualification matches', 'competition', 'match', 1, '09:30', 150),
-    t('lunch', 'Lunch / scheduled event break', 'competition', 'event', 1, '12:00', 60),
-    t('leave_event', 'Leaving event for hotel', 'competition', 'admin', 1, '18:00', 30),
-    t('dinner', 'Dinner', 'competition', 'admin', 1, '19:00', 60),
-    t('team_meeting', 'Hotel general meeting / pit meeting', 'competition', 'admin', 1, '20:30', 30),
-    t('quals_complete', 'Qualification matches complete', 'competition', 'match', -1, '12:00', 15),
-    t('reinspection', 'Reinspection after qualification matches', 'competition', 'pit', -1, '12:15', 30),
+    t('leave_hotel', 'Travel to Venue', 'competition', 'admin', 1, '06:40', 30),
+    t('pit_opening', 'Pit opening', 'competition', 'event', 1, '07:15', 15),
+    t('driver_meeting', 'Driver meeting', 'competition', 'event', 1, '08:00', 15),
+    t('lunch', 'Lunch', 'competition', 'event', 1, '12:00', 60),
+    t('leave_event', 'Leaving event for hotel', 'competition', 'admin', 1, '18:30', 30),
+    t('dinner', 'Dinner', 'competition', 'admin', 1, '19:30', 60),
+    t('team_meeting', 'Hotel general meeting / pit meeting', 'competition', 'admin', 1, '20:30', 75),
 
-    t('alliance_selection', 'Alliance selection', 'elimination', 'event', -1, '12:45', 30),
-    t('elims', 'Elimination rounds', 'elimination', 'match', -1, '13:30', 150),
-    t('awards', 'Event awards', 'elimination', 'event', -1, '16:00', 30),
-    t('closing_ceremonies', 'Closing ceremonies', 'elimination', 'event', -1, '16:30', 30),
+    t('alliance_selection', 'Alliance selection', 'elimination', 'event', -1, '11:15', 30),
+    t('elims', 'Elimination rounds', 'elimination', 'match', -1, '13:00', 150),
 
-    t('teardown', 'Pit teardown', 'closeout', 'pit', -1, '17:00', 45),
-    t('load_out', 'Pit load-out', 'closeout', 'pit', -1, '17:45', 45),
-    t('departure', 'Departure', 'closeout', 'admin', -1, '18:30', 15)
+    t('teardown', 'Pit teardown', 'closeout', 'pit', -1, '15:30', 45),
+    t('load_out', 'Pit load-out', 'closeout', 'pit', -1, '16:15', 45),
+    t('departure', 'Departure', 'closeout', 'admin', -1, '17:30', 15)
 ];
 
 function templateId(eventKey: string, key: string) {
