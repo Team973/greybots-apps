@@ -26,6 +26,7 @@ import EventList from '@/components/EventList.vue';
 import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomGesture } from '@/components/PlotChart.vue';
 import PanelView from '@/components/PanelView.vue';
 import PlotTabs from '@/components/PlotTabs.vue';
+import TimeTape from '@/components/TimeTape.vue';
 import ViewsMenu from '@/components/ViewsMenu.vue';
 import { formatBytes, formatTime, logCompanions } from '@/format';
 import { palette } from '@/palette';
@@ -955,10 +956,15 @@ function seek(time: number) {
   showTime(time);
 }
 
-function scrub(event: Event) {
-  pin.value = Number((event.target as HTMLInputElement).value);
-  showTime(pin.value);
+// The tape: one moment for every tab. Moving it pins it, and the line
+// chart's span follows to keep it in sight.
+function scrub(time: number) {
+  pin.value = time;
+  showTime(time);
 }
+// What the tape marks: the pin; or, on another tab with nothing pinned, the
+// moment that tab is showing (the right edge of the span).
+const tapeTime = computed(() => pin.value ?? (onLine.value ? null : valueTime.value));
 
 // Space plays and pauses; [ and ] step through errors and warnings.
 function onReviewKey(event: KeyboardEvent) {
@@ -1284,12 +1290,12 @@ watch(() => route.query.session, (session) => {
         <select id="speed" v-model.number="speed" aria-label="Playback speed">
           <option v-for="choice in speeds" :key="choice" :value="choice">{{ choice }}×</option>
         </select>
-        <input id="scrub" type="range" :min="full[0]" :max="full[1]" step="0.01" :value="pin ?? view[0]" aria-label="Time"
-          @input="scrub" />
+        <TimeTape id="scrub" :full="full" :view="view" :time="tapeTime" :phases="review?.phases ?? []" :enabled="review?.enabled ?? []"
+          @seek="scrub" />
         <span id="playhead" class="hint small playhead">
           <template v-if="pin !== null">{{ pin.toFixed(2) }} s<template v-if="phaseClock(review?.phases ?? [], pin)">
             · {{ phaseClock(review?.phases ?? [], pin) }}</template></template>
-          <template v-else>Click the chart to pin a moment</template>
+          <template v-else>Click the tape or the chart to pin a moment</template>
         </span>
       </div>
 
@@ -1777,10 +1783,6 @@ select {
   fill: currentColor;
 }
 
-.playback input[type='range'] {
-  flex: 1;
-  accent-color: #2a78d6;
-}
 
 .playhead {
   min-width: 170px;

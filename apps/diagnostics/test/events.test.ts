@@ -1,7 +1,7 @@
 // Log review: merging spans, modes and match phases, faults, notes' files.
 
 import assert from 'node:assert/strict';
-import { mergeSpans, phaseClock, phaseAt } from '@shared/events';
+import { mergeSpans, phaseClock, phaseAt, tapeSegments } from '@shared/events';
 import { enabledSpans, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
 import { notesPathSegments } from '@shared/storage-layout';
 const series = (times: number[], values: number[] | string[]) => ({ key: 'k', kind: typeof values[0] === 'string' ? 'string' : 'number', times: Float64Array.from(times), values: typeof values[0] === 'string' ? values : Float64Array.from(values as number[]), downsampled: false, stats: null }) as never;
@@ -49,3 +49,20 @@ const enables = enabledSpans([
 ], 330);
 assert.deepEqual(enables, [[10, 160], [300, 330]]);
 assert.deepEqual(enabledSpans([{ time: 0, mode: 'disabled' }], 100), []);
+
+// The playback tape: disabled, auto, teleop and its endgame, and enabled
+// outside the phases, merged where alike.
+{
+  const tape = tapeSegments([0, 300], [
+    { name: 'auto', start: 10, end: 30 },
+    { name: 'teleop', start: 33, end: 168 },
+    { name: 'endgame', start: 138, end: 168 }
+  ], [[10, 30], [33, 168], [200, 220]]);
+  assert.deepEqual(tape.map((s) => [s.kind, s.start, s.end]), [
+    ['disabled', 0, 10], ['auto', 10, 30], ['disabled', 30, 33], ['teleop', 33, 138], ['endgame', 138, 168],
+    ['disabled', 168, 200], ['enabled', 200, 220], ['disabled', 220, 300]
+  ]);
+  // Never enabled: one stretch.
+  assert.deepEqual(tapeSegments([5, 50], [], []), [{ kind: 'disabled', start: 5, end: 50 }]);
+  assert.deepEqual(tapeSegments([5, 5], [], []), []);
+}
