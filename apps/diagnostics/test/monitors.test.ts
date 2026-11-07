@@ -151,8 +151,8 @@ assert.equal(counterIncrease(counter, 0, 3), 30);
 assert.equal(counterIncrease(counter, 1.5, 2.5), 10);
 // Reset (robot code restarted): what it reached since.
 assert.equal(counterIncrease(series([[1, 50], [2, 5]]), 1, 2), 5);
-assert.equal(visionBins([[10, 70]], 60).length, 60);
-assert.equal(visionBins([[10, 15]], 60).length, 5, 'at least a second each');
+assert.equal(visionBins([[10, 70]]).length, 60, 'a second each');
+assert.deepEqual(visionBins([[10, 12.5]]), [[10, 11], [11, 12], [12, 12.5]], 'the last one shorter');
 {
   const cam = `${R}/drive/providers/llLeft`;
   const log = logOf({
@@ -165,7 +165,7 @@ assert.equal(visionBins([[10, 15]], 60).length, 5, 'at least a second each');
     [`${R}/drive/estimators/fused/pose/translation/y`]: series([[0, 3]]),
     [`${R}/drive/estimators/fused/pose/rotation/value`]: series([[0, 0]])
   });
-  const summary = visionSummary(log.lookup, log.available, [[0, 10]], 10);
+  const summary = visionSummary(log.lookup, log.available, [[0, 10]]);
   assert.equal(summary.cameras.length, 1);
   const left = summary.cameras[0];
   assert.equal(left.name, 'Left');

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import { eventKinds, phaseClock, type LogEvent } from '@shared/events';
@@ -125,6 +125,41 @@ function cellStyle(camera: VisionCamera, bin: number, state: VisionState) {
   const share = total ? counts[state] / total : 0;
   return { background: stateColors[state], opacity: share ? Math.max(0.08, share) : 0 };
 }
+// Hovering the heatmap: the second under the pointer, its column marked
+// across every camera's rows, and all of that column's counts in one
+// readout beside it (as the charts' hover readout is).
+const heatTipWidth = 260;
+const heat = ref<{ section: number; bin: number; left: number; width: number; tipLeft: number } | null>(null);
+function heatHover(index: number, bins: number, event: PointerEvent) {
+  const map = event.currentTarget as HTMLElement;
+  const row = map.querySelector('.heat-row');
+  if (!row || props.paper) return;
+  const box = map.getBoundingClientRect();
+  const rows = row.getBoundingClientRect();
+  const bin = Math.floor(((event.clientX - rows.left) / rows.width) * bins);
+  if (bin < 0 || bin >= bins) {
+    heat.value = null;
+    return;
+  }
+  const width = rows.width / bins;
+  const left = rows.left - box.left + bin * width;
+  const right = left + width + 10;
+  heat.value = { section: index, bin, left, width, tipLeft: right + heatTipWidth > box.width ? Math.max(0, left - 10 - heatTipWidth) : right };
+}
+const binTotal = (camera: VisionCamera, bin: number) => {
+  const c = camera.bins[bin];
+  return c.valid + c.thrown + c.noTargets + c.noData;
+};
+const binCount = (camera: VisionCamera, bin: number, state: VisionState) => {
+  const count = camera.bins[bin][state];
+  const total = binTotal(camera, bin);
+  return total ? `${count} (${Math.round((count / total) * 100)}%)` : '—';
+};
+const binTime = (bin: [number, number]) => {
+  const clock = phaseClock(props.report.phases, bin[0]);
+  return `${bin[0].toFixed(0)}–${bin[1].toFixed(0)} s${clock ? ` · ${clock}` : ''}`;
+};
+
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
 const meters = (value: number | null) => (value === null ? '—' : `${value.toFixed(2)} m`);
 
@@ -313,20 +348,34 @@ const at = (t: number) => {
               </tr>
             </tbody>
           </table>
-          <div class="heatmap" role="img" :aria-label="`When each camera had each state, over ${section.summary.bins.length} stretches of time`">
+          <div class="heatmap" role="img" :aria-label="`When each camera had each state, second by second, over ${section.summary.bins.length} s`"
+            @pointermove="heatHover(i, section.summary.bins.length, $event)" @pointerleave="heat = null">
             <template v-for="camera in section.summary.cameras" :key="camera.name">
               <div class="heat-camera">{{ camera.name }}</div>
               <template v-for="state in visionStates" :key="state.state">
                 <div class="heat-label small">{{ state.label }}</div>
-                <div class="heat-row" :style="{ gridTemplateColumns: `repeat(${section.summary.bins.length}, 1fr)` }">
-                  <span v-for="(_, bin) in section.summary.bins" :key="bin" class="heat-cell" :style="cellStyle(camera, bin, state.state)"
-                    :title="`${state.label}: ${camera.bins[bin][state.state]} (${at(section.summary.bins[bin][0])})`"></span>
+                <div class="heat-row" :style="{ gridTemplateColumns: `repeat(${section.summary.bins.length}, minmax(0, 1fr))`, columnGap: section.summary.bins.length > 300 ? '0' : '1px' }">
+                  <span v-for="(_, bin) in section.summary.bins" :key="bin" class="heat-cell" :style="cellStyle(camera, bin, state.state)"></span>
                 </div>
               </template>
             </template>
             <div class="heat-axis small hint">
               <span>{{ at(section.summary.bins[0][0]) }}</span><span>{{ at(section.summary.bins[section.summary.bins.length - 1][1]) }}</span>
             </div>
+            <template v-if="heat && heat.section === i">
+              <div class="heat-column" :style="{ left: `${heat.left}px`, width: `${heat.width}px` }"></div>
+              <div class="tooltip heat-tip" :style="{ left: `${heat.tipLeft}px`, width: `${heatTipWidth}px` }">
+                <div class="tooltip-time"><span>{{ binTime(section.summary.bins[heat.bin]) }}</span></div>
+                <template v-for="camera in section.summary.cameras" :key="camera.name">
+                  <div class="tooltip-camera">{{ camera.name }}<span v-if="binTotal(camera, heat.bin) === 0" class="hint"> · nothing counted</span></div>
+                  <div v-for="state in visionStates" :key="state.state" class="tooltip-row">
+                    <span class="swatch" :style="{ background: stateColors[state.state] }"></span>
+                    <span class="tooltip-label">{{ state.label }}</span>
+                    <span class="tooltip-value">{{ binCount(camera, heat.bin, state.state) }}</span>
+                  </div>
+                </template>
+              </div>
+            </template>
           </div>
           <p v-if="section.alarms.length" class="small">
             Disagreeing with the fused pose:
@@ -449,6 +498,7 @@ h4 {
 }
 
 .heatmap {
+  position: relative;
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 2px 8px;
@@ -470,6 +520,66 @@ h4 {
 .heat-cell {
   display: block;
   height: 100%;
+  border-radius: 2px;
+}
+
+/* The hovered second, across every row; and its readout, as the charts'. */
+.heat-column {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  outline: 1.5px solid currentColor;
+  outline-offset: 0;
+  border-radius: 2px;
+  opacity: 0.7;
+}
+
+.heat-tip {
+  position: absolute;
+  top: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  pointer-events: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--tile-background-color);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  font-size: 0.8rem;
+}
+
+.heat-tip .tooltip-time {
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.heat-tip .tooltip-camera {
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.heat-tip .tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.heat-tip .tooltip-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heat-tip .tooltip-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.heat-tip .swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
   border-radius: 2px;
 }
 

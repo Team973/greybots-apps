@@ -45,7 +45,7 @@ export interface VisionCamera {
 }
 
 export interface VisionSummary {
-  // The heatmap's bins, in seconds on the log's timeline.
+  // The heatmap's bins, a second each, in seconds on the log's timeline.
   bins: [number, number][];
   cameras: VisionCamera[];
 }
@@ -62,18 +62,18 @@ export function counterIncrease(series: Series, a: number, b: number): number {
   return to >= from ? to - from : to;
 }
 
-// The bins: the spans' extent cut into `count` (at least a second each).
-export function visionBins(spans: [number, number][], count = 60): [number, number][] {
+// The bins: the spans' extent cut into whole seconds (the last one shorter
+// if it ends part way through one).
+export function visionBins(spans: [number, number][], seconds = 1): [number, number][] {
   if (spans.length === 0) return [];
   const start = Math.min(...spans.map((s) => s[0]));
   const end = Math.max(...spans.map((s) => s[1]));
-  const n = Math.max(1, Math.min(count, Math.floor(end - start)));
-  const width = (end - start) / n;
-  return Array.from({ length: n }, (_, i): [number, number] => [start + i * width, start + (i + 1) * width]);
+  const n = Math.max(1, Math.ceil((end - start) / seconds - 1e-9));
+  return Array.from({ length: n }, (_, i): [number, number] => [start + i * seconds, Math.min(end, start + (i + 1) * seconds)]);
 }
 
-export function visionSummary(lookup: Lookup, available: readonly string[], spans: [number, number][], binCount = 60): VisionSummary {
-  const bins = visionBins(spans, binCount);
+export function visionSummary(lookup: Lookup, available: readonly string[], spans: [number, number][], binSeconds = 1): VisionSummary {
+  const bins = visionBins(spans, binSeconds);
   const fused = monitorSettings.vision.fused;
   const fx = lookup(`${fused}/translation/x`)?.series;
   const fy = lookup(`${fused}/translation/y`)?.series;
