@@ -45,7 +45,7 @@ Electron is pinned to an exact version in `package.json` because electron-builde
 
 ## Robot connection settings
 
-Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Offload page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
+Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Download page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
 
 Both pages save each change as it's made (`src/renderer/src/settings-draft.ts`): a switch or a choice at once, a text or number box once typing pauses (600 ms). A change with something wrong with it shows why and isn't saved until it's put right; the top of the page says which.
 
@@ -63,7 +63,7 @@ Both pages save each change as it's made (`src/renderer/src/settings-draft.ts`):
 
 In team mode the robot is looked for at `10.TE.AM.2` (973 → `10.9.73.2`), at `roboRIO-<team>-FRC.local` when mDNS is on, and at the USB address `172.22.11.2` (`src/shared/robot-address.ts`).
 
-**Check connection** on the Offload page tries a TCP connection from the main process to each address on the NetworkTables port (5810) and the SSH port (22). It only says whether something answered; it doesn't speak either protocol yet.
+**Check connection** on the Download page tries a TCP connection from the main process to each address on the NetworkTables port (5810) and the SSH port (22). It only says whether something answered; it doesn't speak either protocol yet.
 
 ## Local storage layout
 
@@ -97,15 +97,24 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 
 - **Signals** (what the app opens on): logs and live signals, plotted, with a field, the console, pies and the robot in 3D in tabs beside the chart; saved views.
 - **Reports:** reports, report templates, pipelines, and robot mappings.
-- **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
-- **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
-- **Settings:** automatic offload and how far back, the data folder, keyboard shortcuts, CTRE's licence, and the team account.
+- **Download** (`/download`; it was called Offload, and `/offload` still goes there): the robot's connection (how to reach it, where it's looked for, Check connection) and downloading its logs.
+- **Storage:** the data folder, importing logs, and every log here: downloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
+- **Settings:** automatic download and how far back, the data folder, keyboard shortcuts, CTRE's licence, and the team account.
 
-## Log offload
+## Log download
 
-The Offload page shows offload status. The work is done in the main process (`src/main/offload-service.ts`, `src/main/offload/`).
+The Download page shows how a download is going. It was called Offload; the code, settings (`autoOffload`, `offloadDays`), pipelines' `onOffload` and `index/offloaded.json` keep that name, so nothing saved needed changing. The work is done in the main process (`src/main/offload-service.ts`, `src/main/offload/`).
 
-**Finding the robot.** Every 10 seconds the app checks the SSH port at each robot address (the same addresses as Check connection). When the robot appears, and `autoOffload` is on, it offloads. It offloads once per appearance: a robot that stays connected isn't offloaded from again until it goes away and comes back, or someone presses **Offload now**.
+**Finding the robot.** Every 10 seconds the app checks the SSH port at each robot address (the same addresses as Check connection). When the robot appears, and `autoOffload` is on, it downloads. It downloads once per appearance: a robot that stays connected isn't downloaded from again until it goes away and comes back, or someone presses **Download now**. Every address is tried at once, and the robot is taken to be at USB as soon as USB answers, without waiting for the radio's address and mDNS name to time out (`find-robot.ts`). **Download now** just after the robot was found (within 10 s) goes straight to where it was found.
+
+**Starting straight away.** Downloading used to list every folder on the robot (one at a time), check every file against the data folder, and only then start pulling; a robot with a folder per Hoot session took a long time to start, with nothing on the page meanwhile. Now:
+
+- Folders are listed six at a time, and each folder's files are checked and queued as soon as it's listed. Four workers pull from the queue as files arrive, so the first file starts while the rest are still being listed.
+- The logs folders are listed once for data logs and Hoot logs together (they used to be listed once for each).
+- Files already here are checked all at once rather than one after another.
+- Driver Station logs (on this computer) are pulled alongside the robot's, not after. Both share one index, so neither writes over the other's entries.
+- The scan of the data folder for pipelines (which logs are new) runs while the robot is found, not before.
+- The page shows each stage: the addresses being tried, logging in, then for each part (the robot, Driver Station logs) the folders looked in, logs found and how many are new, while files are already being pulled. It asks for the status four times a second while a download runs.
 
 **What is pulled.** From the roboRIO, over SFTP as `lvuser` (no password), with [ssh2](https://github.com/mscdex/ssh2):
 
@@ -119,13 +128,13 @@ On Windows, Driver Station logs (`.dslog`, `.dsevents`) are also copied from `C:
 
 Data logs still named `FRC_TBD_…` are skipped. WPILib renames a log once the Driver Station sets the robot's clock, so such a file is either still being written (and would be pulled again under its new name) or from a boot that never saw a Driver Station, with no times or match in it.
 
-**Filing.** A file goes under the day it was recorded: from a data log's name (`FRC_20260315_142201_…`, in UTC), otherwise from its time on the robot. A roboRIO that hasn't been given the time by a Driver Station has a clock in 1970, so times before 2020 are taken as unknown and the file goes under the day it was offloaded. The robot's name is `frc<team>` in team mode and the address in manual mode.
+**Filing.** A file goes under the day it was recorded: from a data log's name (`FRC_20260315_142201_…`, in UTC), otherwise from its time on the robot. A roboRIO that hasn't been given the time by a Driver Station has a clock in 1970, so times before 2020 are taken as unknown and the file goes under the day it was downloaded. The robot's name is `frc<team>` in team mode and the address in manual mode.
 
 **Matches.** Once FMS has told the robot which match it is, WPILib adds it to the data log's name (`…_CASJ_Q42.wpilog`). That event and match are recorded in the index. Associating other files (Driver Station and Hoot logs) with a match is still to come.
 
 **Not pulling twice.** `index/offloaded.json` has one entry per offloaded copy: where it came from, its size and time there, and where it was put. A file is skipped when it's already on disk at the same size and time. A file that changed (still being written last time, or the program log on a new day) is pulled again; if it now belongs to a different day it gets a new copy, and the old one is kept. If the index is lost, files already in `logs/` are recognized by their size and not pulled again.
 
-**Order and age.** Data logs are pulled first, then the robot program log, then Hoot logs; newest first within each. A robot can hold gigabytes of logs (team 973's held 6.4 GB in 230 files in October 2026, mostly Hoot logs of 100-250 MB each), so the small files with the most in them shouldn't wait behind those. Logs recorded more than `offloadDays` ago aren't pulled at all, so an old backlog doesn't hold up today's matches.
+**Order and age.** Of what's been found so far, data logs are pulled first, then the robot program log, then Hoot logs; newest first within each. A robot can hold gigabytes of logs (team 973's held 6.4 GB in 230 files in October 2026, mostly Hoot logs of 100-250 MB each), so the small files with the most in them shouldn't wait behind those. Logs recorded more than `offloadDays` ago aren't pulled at all, so an old backlog doesn't hold up today's matches.
 
 **Speed.** Four files are pulled at once. Over the radio, round trips are what's slow rather than bandwidth. ssh2's own read stream waits for each 32 KB chunk before asking for the next, so the app keeps 32 reads in flight per file instead (as ssh2's `fastGet` does) and puts the chunks back in order. The index is written at most once a second while files come in, and again at the end.
 

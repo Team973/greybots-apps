@@ -138,10 +138,17 @@ export interface OffloadRunSummary {
   errors: string[];
 }
 
-// How the current part of an offload (the robot, or Driver Station logs) is
-// going. Counts only the files being pulled, not those already here.
+// How one part of a download (the robot, or Driver Station logs) is going.
+// Files are pulled as they're found, so while it's still searching the
+// totals grow. The file and byte counts are only of files being pulled, not
+// those already here.
 export interface OffloadProgress {
   label: string;
+  // Still listing folders.
+  searching: boolean;
+  foldersListed: number;
+  // Log files found so far, here already or not.
+  filesFound: number;
   filesDone: number;
   filesTotal: number;
   bytesDone: number;
@@ -150,11 +157,19 @@ export interface OffloadProgress {
   active: string[];
 }
 
+// What a download is doing: looking for the robot (at these addresses),
+// then connected and pulling.
+export type OffloadStage = 'idle' | 'connecting' | 'pulling';
+
 export interface OffloadStatus {
   running: boolean;
   autoOffload: boolean;
   // Where the robot answered on its last check, or null if it didn't.
   robotHost: string | null;
-  current: OffloadProgress | null;
+  stage: OffloadStage;
+  // While connecting: the addresses being tried.
+  looking: string[];
+  // Each part under way (the robot and Driver Station logs go at once).
+  jobs: OffloadProgress[];
   lastRun: OffloadRunSummary | null;
 }

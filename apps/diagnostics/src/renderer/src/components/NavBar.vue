@@ -12,7 +12,7 @@ const toggleTheme = () => viewMode.setThemePreference(viewMode.isDarkMode ? 'lig
     <span class="spacer"></span>
     <RouterLink to="/signals" class="nav-button">Signals</RouterLink>
     <RouterLink to="/reports" class="nav-button">Reports</RouterLink>
-    <RouterLink to="/offload" class="nav-button">Offload</RouterLink>
+    <RouterLink to="/download" class="nav-button">Download</RouterLink>
     <RouterLink to="/storage" class="nav-button">Storage</RouterLink>
     <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
     <button

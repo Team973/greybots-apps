@@ -22,7 +22,9 @@ const router = createRouter({
     { path: '/', redirect: '/signals' },
     { path: '/signals', name: 'signals', component: SignalsView, meta: { title: 'Signals' } },
     { path: '/reports', name: 'reports', component: ReportsView, meta: { title: 'Reports' } },
-    { path: '/offload', name: 'offload', component: OffloadView, meta: { title: 'Offload' } },
+    { path: '/download', name: 'offload', component: OffloadView, meta: { title: 'Download' } },
+    // Its old name, before it was called Download.
+    { path: '/offload', redirect: '/download' },
     { path: '/storage', name: 'storage', component: StorageView, meta: { title: 'Storage' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
     // What Save as PDF prints, in a window of its own (main/index.ts).
