@@ -17,7 +17,7 @@ import StrategyView from "@/views/StrategyView.vue";
 import CustomDataVisualizationView from "@/views/CustomDataVisualizationView.vue";
 import LoginView from "@/views/LoginView.vue";
 import RegisterView from "@/views/RegisterView.vue";
-import ResetPasswordView from "@/views/ResetPasswordView.vue";
+import HubResetRedirect from "@greybots/common/components/HubResetRedirect.vue";
 import AccountView from "@/views/AccountView.vue";
 import EventTeamsView from "@/views/EventTeamsView.vue";
 import EventManagementView from "@/views/EventManagementView.vue";
@@ -158,9 +158,11 @@ const router = createRouter({
       component: RegisterView,
     },
     {
+      // Passwords are reset on the hub; a reset link that still points here
+      // is sent on to it.
       path: "/reset-password",
       name: "Reset Password | GreyScout",
-      component: ResetPasswordView,
+      component: HubResetRedirect,
     },
     {
       // Refreshing event data from TBA, and picking which event this device

@@ -4,20 +4,18 @@ import { RouterLink, useRoute, useRouter } from 'vue-router';
 import '@material/web/button/filled-button';
 import AuthInput from '@greybots/common/components/AuthInput.vue';
 import { readFormValues } from '@greybots/common/lib/account';
-import { supabase } from '@greybots/common/supabase/client';
+import { hubForgotPasswordUrl } from '@greybots/common/lib/hub';
 import { useAuthStore } from '@/stores/auth-store';
 
-// Sign in with the greybots-apps account every app shares, or ask for a
-// password reset email.
+// Sign in with the greybots-apps account every app shares. A forgotten
+// password is reset on the hub, which comes back here afterwards.
 const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 
-const mode = ref<'login' | 'reset'>('login');
 const email = ref('');
 const password = ref('');
 const error = ref<string | null>(null);
-const resetSent = ref(false);
 const busy = ref(false);
 
 // A confirmation or recovery link that failed on the server comes back here
@@ -62,51 +60,19 @@ async function signIn(event: Event) {
   }
 }
 
-async function sendReset(event: Event) {
-  error.value = null;
-  read(event);
-  if (!email.value) {
-    error.value = 'Enter your email.';
-    return;
-  }
-  busy.value = true;
-  try {
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.value, { redirectTo: `${window.location.origin}/reset-password` });
-    if (resetError) throw new Error(resetError.message);
-    resetSent.value = true;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
-}
-
-function show(next: 'login' | 'reset') {
-  mode.value = next;
-  error.value = null;
-  resetSent.value = false;
-}
+const forgotPasswordUrl = hubForgotPasswordUrl(`${window.location.origin}/login`);
 </script>
 
 <template>
-  <form v-if="mode === 'login'" class="card" @submit.prevent="signIn">
+  <form class="card" @submit.prevent="signIn">
     <h1>Sign in</h1>
     <p class="hint">Use your greybots-apps account: the same one as the other greybots apps.</p>
     <AuthInput v-model="email" label="Email" type="email" name="email" autocomplete="username" />
     <AuthInput v-model="password" label="Password" type="password" name="password" autocomplete="current-password" />
     <p v-if="error" class="error-text">{{ error }}</p>
     <md-filled-button type="submit" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in' }}</md-filled-button>
-    <button type="button" class="text-link" @click="show('reset')">Forgot password?</button>
+    <a :href="forgotPasswordUrl" class="text-link">Forgot password?</a>
     <RouterLink to="/register" class="text-link">Need an account? Register</RouterLink>
-  </form>
-
-  <form v-else class="card" @submit.prevent="sendReset">
-    <h1>Reset password</h1>
-    <AuthInput v-model="email" label="Email" type="email" name="email" autocomplete="username" />
-    <p v-if="error" class="error-text">{{ error }}</p>
-    <p v-if="resetSent" class="success-text">If that email has an account, a reset link is on its way.</p>
-    <md-filled-button type="submit" :disabled="busy">{{ busy ? 'Sending…' : 'Send reset email' }}</md-filled-button>
-    <button type="button" class="text-link" @click="show('login')">Back to sign in</button>
   </form>
 </template>
 
