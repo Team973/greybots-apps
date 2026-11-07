@@ -120,6 +120,47 @@ const cardPage = 60;
 const cardLimit = ref(cardPage);
 watch(cardFilter, () => (cardLimit.value = cardPage), { deep: true });
 
+// --- Exporting and importing every report ---
+// Each report as a PDF, and its JSON as the data folder keeps it, into a
+// new folder; and reports' JSON files read back in.
+const transfer = ref<'export' | 'import' | null>(null);
+const transferMessage = ref('');
+async function exportAll() {
+  transfer.value = 'export';
+  transferMessage.value = '';
+  problem.value = '';
+  try {
+    const done = await window.diagnostics.exportReports();
+    if (done) {
+      transferMessage.value = `Exported ${done.count} report${done.count === 1 ? '' : 's'} (PDFs, and their data to import) to ${done.folder}.`;
+      if (done.errors.length) problem.value = done.errors.join('; ');
+    }
+  } catch (error) {
+    problem.value = cleanError(error);
+  } finally {
+    transfer.value = null;
+  }
+}
+async function importAll() {
+  transfer.value = 'import';
+  transferMessage.value = '';
+  problem.value = '';
+  try {
+    const done = await window.diagnostics.importReports();
+    if (done) {
+      const parts = [`Imported ${done.imported} report${done.imported === 1 ? '' : 's'}`];
+      if (done.already) parts.push(`${done.already} already here`);
+      if (done.invalid.length) parts.push(`${done.invalid.length} not reports (${done.invalid.slice(0, 3).join(', ')}${done.invalid.length > 3 ? ', …' : ''})`);
+      transferMessage.value = `${parts.join(', ')}.`;
+      reports.value = await window.diagnostics.getReports();
+    }
+  } catch (error) {
+    problem.value = cleanError(error);
+  } finally {
+    transfer.value = null;
+  }
+}
+
 // --- One log, focused: its reports, what they found, and running the rest ---
 const focusedCard = computed(() => (typeof route.query.log === 'string' ? cards.value.find((c) => c.id === route.query.log) ?? null : null));
 // Where a report open is from, for the way back.
@@ -450,7 +491,16 @@ onUnmounted(() => clearInterval(statusTimer));
       </template>
     </section>
     <section class="card full">
-      <h2>Reports by log</h2>
+      <div class="list-head">
+        <h2>Reports by log</h2>
+        <md-outlined-button id="export-reports" :disabled="!!transfer || reports.length === 0" @click="exportAll">
+          {{ transfer === 'export' ? `Exporting ${reports.length} reports…` : 'Export all reports' }}
+        </md-outlined-button>
+        <md-outlined-button id="import-reports" :disabled="!!transfer" @click="importAll">
+          {{ transfer === 'import' ? 'Importing…' : 'Import reports' }}
+        </md-outlined-button>
+      </div>
+      <p v-if="transferMessage" id="transfer-message" class="hint small path">{{ transferMessage }}</p>
       <div class="card-filter" role="group" aria-label="Which logs to show">
         <input id="report-search" v-model="cardFilter.query" class="search" type="search" placeholder="Find a log or report" aria-label="Find a log or report" />
         <select id="report-event" v-model="cardFilter.event" aria-label="Event">
@@ -792,6 +842,17 @@ fieldset {
 /* The list of logs and a log on its own use the page's whole width. */
 .card.full {
   max-width: none;
+}
+
+.list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-head h2 {
+  margin: 0 auto 0 0;
 }
 
 .log-cards {

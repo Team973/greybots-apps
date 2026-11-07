@@ -14,7 +14,7 @@ import { getLibraryItem, listLibrary, saveLibraryItem, storeLibraryItem } from '
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { deleteNote, saveNote } from './notes-store';
 import { addModel, listModels, readModelFile, removeModel } from './robot-models';
-import { deleteReport, generateReport, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
+import { deleteReport, exportReports, generateReport, importReports, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
 import { loadSettings, storeSettings } from './settings-store';
 import {
   acceptCtreLicense,
@@ -336,6 +336,27 @@ const handlers: DiagnosticsApi = {
     if (result.canceled || !result.filePath) return '';
     await fs.writeFile(result.filePath, await reportPdf(report.id, report.name));
     return result.filePath;
+  },
+  async exportReports() {
+    if (!mainWindow) return null;
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Export all reports into a folder',
+      defaultPath: app.getPath('documents'),
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    return exportReports(await loadSettings(), picked.filePaths[0], (report) => reportPdf(report.id, report.name));
+  },
+  async importReports() {
+    if (!mainWindow) return null;
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import reports',
+      defaultPath: app.getPath('documents'),
+      filters: [{ name: 'Reports', extensions: ['json'] }],
+      properties: ['openFile', 'multiSelections']
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return null;
+    return importReports(await loadSettings(), picked.filePaths);
   },
   async getAccount() {
     return accountStatus();

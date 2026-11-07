@@ -26,6 +26,7 @@ import {
 } from '@shared/library';
 import { describeMatch } from '@shared/offload';
 import { duplicateReports } from '@shared/report-cards';
+import { isReport, reportFileNames, type ReportExport, type ReportImport } from '@shared/report-files';
 import type { PipelineRun, PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
 import { matchKey, type KeyMatch } from '@shared/signal-match';
@@ -647,4 +648,69 @@ export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
   });
   queue = next.catch(() => {});
   return next;
+}
+
+// --- Exporting and importing reports ---
+
+// Every report (the newest of each, as listed), into a new folder in
+// `into`: a PDF of each, and each report's own JSON under reports/, as the
+// data folder keeps it, which Import reports reads back. One PDF at a time:
+// each is drawn in a window of its own.
+export async function exportReports(settings: Settings, into: string, pdfOf: (report: Report) => Promise<Buffer>): Promise<ReportExport> {
+  const reports = (await Promise.all((await listReports(settings)).map((summary) => loadReport(settings, summary.id))))
+    .filter((report): report is Report => report !== null);
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '');
+  const folder = join(into, `Diagnostics reports ${stamp}`);
+  await fs.mkdir(join(folder, 'reports'), { recursive: true });
+  const names = reportFileNames(reports);
+  const errors: string[] = [];
+  let count = 0;
+  for (const report of reports) {
+    try {
+      await fs.writeFile(join(folder, 'reports', `${report.id}.json`), JSON.stringify(report), 'utf-8');
+      await fs.writeFile(join(folder, names.get(report.id)!), await pdfOf(report));
+      count += 1;
+    } catch (error) {
+      errors.push(`${report.name}: ${(error as Error).message}`);
+    }
+  }
+  await fs.writeFile(join(folder, 'README.txt'), [
+    'Reports exported from Greybots Diagnostics.',
+    '',
+    'Each report is here as a PDF, to read or share, and its data is under',
+    'reports/ (one .json file each), as the app keeps it. To bring them into',
+    'Greybots Diagnostics on another computer: Reports > Import reports, and',
+    'pick the .json files in reports/.',
+    ''
+  ].join('\r\n'), 'utf-8');
+  return { folder, count, errors };
+}
+
+// Reports from .json files (an export's reports/, or another data folder's),
+// into this data folder. Each is checked first. One with the same id is
+// already here; a newer run of the same report replaces an older one (see
+// listReports).
+const maxReportBytes = 100 * 1024 * 1024;
+
+export async function importReports(settings: Settings, paths: string[]): Promise<ReportImport> {
+  const result: ReportImport = { imported: 0, already: 0, invalid: [] };
+  for (const path of paths) {
+    const name = path.split(/[\/]/).pop() ?? path;
+    try {
+      const stat = await fs.stat(path);
+      if (!stat.isFile() || stat.size > maxReportBytes) throw new Error('not a report');
+      const raw: unknown = JSON.parse(await fs.readFile(path, 'utf-8'));
+      if (!isReport(raw)) throw new Error('not a report');
+      if (await loadReport(settings, raw.id)) {
+        result.already += 1;
+        continue;
+      }
+      await saveReport(settings, raw);
+      result.imported += 1;
+    } catch {
+      result.invalid.push(name);
+    }
+  }
+  await listReports(settings);
+  return result;
 }

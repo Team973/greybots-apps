@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import type { SignalLogFile } from '@shared/ipc';
 import { reportSummary, type Report, type ReportSummary } from '@shared/library';
 import type { MatchInfo } from '@shared/offload';
+import { isReport, reportFileNames } from '@shared/report-files';
 import { defaultCardFilter, duplicateReports, filterCards, logCards, missingTemplates } from '@shared/report-cards';
 
 function log(id: string, match: MatchInfo | null, recorded: string): SignalLogFile {
@@ -103,4 +104,29 @@ assert.deepEqual(reportSummary({ ...full, problems: undefined }).problems, []);
   assert.deepEqual(duplicateReports([a1, other, a2, elsewhere]).map((r) => r.id), ['a1']);
   assert.deepEqual(duplicateReports([a2, a1]).map((r) => r.id), ['a1']);
   assert.deepEqual(duplicateReports([other, elsewhere]), []);
+}
+
+// --- Exported file names, and telling a report file from anything else ---
+{
+  const template = { name: 'Match Review', sections: [] } as unknown as Report['template'];
+  const one = { id: 'r1', name: 'Match Review · mttd Q12', logLabel: 'q12', match: { event: 'mttd', type: 'qualification' as const, number: 12 }, template };
+  const again = { ...one, id: 'r2' };
+  const odd = { id: 'r3', name: 'x', logLabel: 'Nov 6, 7:09 PM (FRC_1.wpilog)', match: null, template: { ...template, name: 'A/B: "C"?' } };
+  const names = reportFileNames([one, again, odd]);
+  assert.equal(names.get('r1'), 'mttd Q12 - Match Review.pdf');
+  assert.equal(names.get('r2'), 'mttd Q12 - Match Review (2).pdf');
+  // Nothing a file name can't hold.
+  assert.equal(names.get('r3'), 'Nov 6, 7_09 PM (FRC_1.wpilog) - A_B_ _C__.pdf');
+
+  const good = {
+    id: '5f0c2a10-0009-4000-8000-000000000001', name: 'n', generated: '2026-11-07T21:00:00.000Z', by: 'By hand', templateId: 't',
+    template: { name: 'T', sections: [] }, logId: 'l', logLabel: 'L', robot: 'frc973', match: null, spans: [], phases: [], sections: [], missing: []
+  };
+  assert.equal(isReport(good), true);
+  assert.equal(isReport({ ...good, id: '../../escape' }), false);
+  assert.equal(isReport({ ...good, sections: 'no' }), false);
+  assert.equal(isReport({ ...good, generated: 'whenever' }), false);
+  assert.equal(isReport({ ...good, template: null }), false);
+  assert.equal(isReport([]), false);
+  assert.equal(isReport(null), false);
 }
