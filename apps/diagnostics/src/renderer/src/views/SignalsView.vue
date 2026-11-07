@@ -2,8 +2,10 @@
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSettingsStore } from '@/stores/settings-store';
+import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import '@material/web/iconbutton/outlined-icon-button';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
@@ -12,6 +14,7 @@ import { eventKinds, phaseClock, quietKinds, type LogEvent, type SessionEvents }
 import type { DsLogStatus, HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import type { SavedView, ViewBody, ViewSpan } from '@shared/library';
 import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
+import { eventsIn, filesToDelete, filterLogs, noLogFilter, type LogFilter } from '@shared/log-filter';
 import { describeMatch } from '@shared/offload';
 import { matchKey } from '@shared/signal-match';
 import { isPoseType, type PanelType } from '@shared/plots';
@@ -37,11 +40,70 @@ const themePalette = computed(() => (viewMode.isDarkMode ? palette.dark : palett
 const colorOf = (color: TraceColor) => (typeof color === 'number' ? themePalette.value[color] : color);
 
 const logs = ref<SignalLogFile[] | null>(null);
+const selectedLog = ref('');
+
+// Which logs the picker offers: by event, and only real matches. Kept
+// between visits. The open log stays in the list either way.
+const logFilterKey = 'signals.logFilter';
+function loadLogFilter(): LogFilter {
+  try {
+    const saved = JSON.parse(localStorage.getItem(logFilterKey) ?? 'null') as Partial<LogFilter> | null;
+    return {
+      event: typeof saved?.event === 'string' && saved.event ? saved.event : null,
+      realMatches: saved?.realMatches === true
+    };
+  } catch {
+    return { ...noLogFilter };
+  }
+}
+const logFilter = ref<LogFilter>(loadLogFilter());
+watch(logFilter, (value) => localStorage.setItem(logFilterKey, JSON.stringify(value)), { deep: true });
+const logEvents = computed(() => eventsIn(logs.value ?? []));
+const filtering = computed(() => !!logFilter.value.event || logFilter.value.realMatches);
+const shownLogs = computed(() => {
+  const all = logs.value ?? [];
+  const shown = filterLogs(all, logFilter.value);
+  const open = all.find((log) => log.id === selectedLog.value);
+  return open && !shown.includes(open) ? [open, ...shown] : shown;
+});
+const filterHidesAll = computed(() => filtering.value && (logs.value?.length ?? 0) > 0 && filterLogs(logs.value ?? [], logFilter.value).length === 0);
 // Driver Station logs with no data log or Hoot log are listed apart: there
 // are many (each time it was open with a robot), and they'd crowd the rest.
-const dsOnlyLogs = computed(() => (logs.value ?? []).filter((log) => !log.localPath && log.hoots.length === 0));
-const robotLogs = computed(() => (logs.value ?? []).filter((log) => log.localPath || log.hoots.length > 0));
-const selectedLog = ref('');
+const dsOnlyLogs = computed(() => shownLogs.value.filter((log) => !log.localPath && log.hoots.length === 0));
+const robotLogs = computed(() => shownLogs.value.filter((log) => log.localPath || log.hoots.length > 0));
+
+// Deleting the open log: its files go to the Recycle Bin, after asking.
+const selectedFile = computed(() => logs.value?.find((log) => log.id === selectedLog.value) ?? null);
+const deleteOpen = ref(false);
+const deleting = ref(false);
+const deleteError = ref('');
+const toDelete = computed(() => (selectedFile.value ? filesToDelete(selectedFile.value, logs.value ?? []) : { remove: [], kept: [] }));
+const fileName = (localPath: string) => localPath.slice(localPath.lastIndexOf('/') + 1);
+function askToDelete() {
+  deleteError.value = '';
+  deleteOpen.value = true;
+}
+async function deleteSelected() {
+  const log = selectedFile.value;
+  if (!log) return;
+  deleting.value = true;
+  deleteError.value = '';
+  // The next log down the list (or the one before, at the end) is opened.
+  const list = [...robotLogs.value, ...dsOnlyLogs.value];
+  const at = list.findIndex((l) => l.id === log.id);
+  const next = list[at + 1] ?? list[at - 1] ?? null;
+  try {
+    await window.diagnostics.deleteLog(log.id);
+    deleteOpen.value = false;
+    selectedLog.value = next?.id ?? '';
+    plotStore.logId = selectedLog.value;
+    await loadLogs();
+  } catch (error) {
+    deleteError.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  } finally {
+    deleting.value = false;
+  }
+}
 const summary = ref<SignalLogSummary | null>(null);
 // The moment pinned on the chart: clicked, jumped to, or the playhead.
 const pin = ref<number | null>(null);
@@ -992,8 +1054,21 @@ watch(() => route.query.session, (session) => {
               </optgroup>
             </select>
             <button id="refresh-logs" class="icon-button" title="Look for new logs" aria-label="Look for new logs" @click.prevent="loadLogs">↻</button>
+            <button v-if="selectedFile" id="delete-log" class="icon-button" title="Delete this log" aria-label="Delete this log"
+              @click.prevent="askToDelete">🗑</button>
           </span>
         </label>
+        <div v-if="logs && logs.length" class="log-filter" role="group" aria-label="Which logs to list">
+          <select id="log-event" v-model="logFilter.event" aria-label="Event">
+            <option :value="null">All events</option>
+            <option v-for="event in logEvents" :key="event" :value="event">{{ event }}</option>
+          </select>
+          <label class="check" title="Practice, qualification and playoff matches: logs FMS named. Driver Station logs on their own don't say, so they're left out.">
+            <input id="log-real-matches" v-model="logFilter.realMatches" type="checkbox" />
+            Real matches only
+          </label>
+        </div>
+        <p v-if="filterHidesAll" class="hint small">No logs match the filter.</p>
         <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're pulled from the robot on the Offload page, or imported on the Storage page.</p>
         <p v-else-if="logs && !isLive" class="hint small">
           Logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand: data logs, Hoot logs, and
@@ -1293,6 +1368,24 @@ watch(() => route.query.session, (session) => {
         :selected="selectedEvent" :pending="review ? review.pending : 'Looking through the log…'" :can-note="canNote" :note-time="noteTime"
         :dark="viewMode.isDarkMode" :caption="selectedLabel" @select="selectEvent" @step="stepProblem" @save-note="saveNote" @delete-note="deleteNote" />
     </section>
+    <AppDialog :open="deleteOpen" title="Delete this log?" @close="deleteOpen = false">
+      <p v-if="selectedFile">{{ selectedLabel }}</p>
+      <ul class="delete-files">
+        <li v-for="path in toDelete.remove" :key="path">{{ fileName(path) }}</li>
+      </ul>
+      <p v-if="toDelete.kept.length" class="hint small">
+        Kept: {{ toDelete.kept.map(fileName).join(', ') }}, which another log also has.
+      </p>
+      <p class="hint small">
+        The files go to the Recycle Bin, and the log's notes are deleted. If the log is still on the robot, the next download
+        brings it back.
+      </p>
+      <p v-if="deleteError" class="error-text">{{ deleteError }}</p>
+      <template #actions>
+        <md-outlined-button @click="deleteOpen = false">Cancel</md-outlined-button>
+        <md-filled-button id="confirm-delete-log" :disabled="deleting" @click="deleteSelected">{{ deleting ? 'Deleting…' : 'Delete' }}</md-filled-button>
+      </template>
+    </AppDialog>
   </div>
 </template>
 
@@ -1399,6 +1492,31 @@ watch(() => route.query.session, (session) => {
 .log-row select {
   flex: 1;
   min-width: 0;
+}
+
+.log-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.log-filter select {
+  flex: 1;
+  min-width: 0;
+}
+
+.log-filter .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.delete-files {
+  margin: 0;
+  padding-left: 1.2em;
+  overflow-wrap: anywhere;
 }
 
 .icon-button {

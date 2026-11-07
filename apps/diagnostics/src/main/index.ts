@@ -18,6 +18,7 @@ import { deleteReport, generateReport, listReports, loadReport, pipelineStatus, 
 import { loadSettings, storeSettings } from './settings-store';
 import {
   acceptCtreLicense,
+  deleteLog,
   downloadOwlet,
   hootStatus,
   openSignalLog,
@@ -187,6 +188,9 @@ const handlers: DiagnosticsApi = {
   },
   async getSignalLogs() {
     return signalLogs(await loadSettings());
+  },
+  async deleteLog(id) {
+    return deleteLog(await loadSettings(), String(id));
   },
   async openSignalLog(id) {
     return openSignalLog(await loadSettings(), id);

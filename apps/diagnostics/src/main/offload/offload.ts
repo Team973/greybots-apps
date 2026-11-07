@@ -233,6 +233,9 @@ export async function offloadLogs(
     if (written !== file.size) throw new Error(`got ${written ?? 0} of ${file.size} bytes`);
 
     await fs.rename(part, target);
+    // The robot's time for the file, not when it was pulled: logs with no time
+    // in their name are ordered by it.
+    await fs.utimes(target, file.modified, file.modified).catch(() => undefined);
     delete index.partials[key];
     record(download);
     result.copied += 1;
