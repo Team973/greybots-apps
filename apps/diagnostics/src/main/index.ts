@@ -1,10 +1,10 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, shell } from 'electron';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { DiagnosticsApi } from '@shared/ipc';
 import { libraryKinds, type LibraryKind } from '@shared/library';
-import { outdatedStarter, starterLibrary } from '@shared/starters';
+import { newStarters, outdatedStarter, starterLibrary } from '@shared/starters';
 import { normalizeSettings, settingsErrors, type Settings } from '@shared/settings';
 import { accountName, accountStatus, deleteItem, signIn, signOut, startCloudSync, syncLibrary, syncSoon } from './cloud-sync';
 import { checkConnection } from './connection-check';
@@ -136,17 +136,32 @@ function libraryKind(kind: unknown): LibraryKind {
 // Starters in the library that nobody has changed, brought up to date when
 // a starter changes (Power Analysis now covers only the time the robot is
 // enabled). One someone has changed is left as it is.
+//
+// Starters added since (newStarters) are put in a library that has the
+// starters, once: which have been is kept in library/offered-starters.json,
+// so one someone deletes stays deleted.
 async function upgradeStarters() {
   const settings = await loadSettings();
-  let upgraded = 0;
-  for (const starter of starterLibrary()) {
-    const kept = await getLibraryItem(settings, starter.kind, starter.id);
-    if (kept && outdatedStarter(kept, starter)) {
-      await storeLibraryItem(settings, { ...starter, cloud: kept.cloud });
-      upgraded += 1;
+  const offeredPath = join(dataDirectory(settings), 'library', 'offered-starters.json');
+  const offered = new Set<string>(await fs.readFile(offeredPath, 'utf-8').then((text) => JSON.parse(text) as string[]).catch(() => []));
+  const starters = starterLibrary();
+  const kept = await Promise.all(starters.map((starter) => getLibraryItem(settings, starter.kind, starter.id)));
+  const hasStarters = kept.some((item, i) => item && !newStarters.includes(starters[i].id));
+  let changed = 0;
+  for (const [i, starter] of starters.entries()) {
+    const item = kept[i];
+    if (item && outdatedStarter(item, starter)) {
+      await storeLibraryItem(settings, { ...starter, cloud: item.cloud });
+      changed += 1;
+    } else if (!item && hasStarters && newStarters.includes(starter.id) && !offered.has(starter.id)) {
+      await storeLibraryItem(settings, starter);
+      changed += 1;
     }
+    if (newStarters.includes(starter.id) && (item || hasStarters)) offered.add(starter.id);
   }
-  if (upgraded) syncSoon();
+  await fs.mkdir(dirname(offeredPath), { recursive: true });
+  await fs.writeFile(offeredPath, JSON.stringify([...offered]), 'utf-8');
+  if (changed) syncSoon();
 }
 
 const handlers: DiagnosticsApi = {

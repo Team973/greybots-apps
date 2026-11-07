@@ -25,7 +25,9 @@ import {
   type ViewSpan
 } from '@shared/library';
 import { describeMatch } from '@shared/offload';
+import type { Series } from '@shared/monitors';
 import { duplicateReports } from '@shared/report-cards';
+import { visionSummary } from '@shared/vision';
 import { isReport, reportFileNames, type ReportExport, type ReportImport } from '@shared/report-files';
 import { cancelledMessage, type PipelineRun, type PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
@@ -406,6 +408,31 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
           (section.kinds.length === 0 || section.kinds.includes(e.kind)) &&
           (section.problemsOnly ? isProblem(e) : !isRoutine(e)));
         sections.push({ type: 'events', title: section.title, events: chosen });
+        break;
+      }
+      case 'monitors': {
+        const results = (review.monitors ?? [])
+          .filter((result) => section.ids.length === 0 || section.ids.includes(result.id))
+          .map((result) => ({ ...result, alarms: result.alarms.filter(inSpans) }));
+        sections.push({ type: 'monitors', title: section.title, results });
+        break;
+      }
+      case 'vision': {
+        // Every camera counter and measurement, and the fused pose, read
+        // whole first: the summary looks them up as it goes.
+        const keys = context.available.filter((key) => /\/providers\/ll[^/]+\/(perf\/|mt[12]\/)/i.test(key) || /\/estimators\/fused\/pose\//i.test(key));
+        const read = new Map<string, Series>();
+        for (const key of keys) {
+          const series = await readSignal(settings, logId, key, {}).catch(() => null);
+          if (series && series.values instanceof Float64Array) read.set(key, { times: series.times, values: series.values });
+        }
+        const lookup = (wanted: string) => {
+          const key = matchKey(wanted, keys).key;
+          const series = key ? read.get(key) : undefined;
+          return key && series ? { key, series } : null;
+        };
+        const alarms = (review.monitors ?? []).filter((r) => r.id === 'vision-disagreement').flatMap((r) => r.alarms).filter(inSpans);
+        sections.push({ type: 'vision', title: section.title, summary: visionSummary(lookup, keys, spans), alarms });
         break;
       }
     }

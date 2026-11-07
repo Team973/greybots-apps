@@ -1,0 +1,132 @@
+// The Vision System report: for each camera the robot reads, how often it
+// had good data and used it, against how often it was thrown out; when, as
+// a heatmap over time; and how far its measurements were from the fused
+// pose. From the counters the robot logs for each camera (`perf/data
+// received`, `perf/rejected …`), which only ever go up.
+//
+// Nothing here may touch Node or the DOM.
+
+import { measurementGap, monitorSettings, valueAt, visionCameras, type Lookup, type Series } from './monitors';
+
+export type VisionState = 'valid' | 'thrown' | 'noTargets' | 'noData';
+
+export const visionStates: { state: VisionState; label: string }[] = [
+  { state: 'valid', label: 'Valid targets (used)' },
+  { state: 'thrown', label: 'Thrown out' },
+  { state: 'noTargets', label: 'No targets in view' },
+  { state: 'noData', label: 'No sample data' }
+];
+
+// Which state each counter counts.
+export function counterState(name: string): VisionState | null {
+  const n = name.toLowerCase();
+  if (n === 'data received') return 'valid';
+  if (n === 'rejected no tags') return 'noTargets';
+  if (n === 'rejected stale heartbeat' || n === 'rejected no data') return 'noData';
+  if (n.startsWith('rejected ')) return 'thrown';
+  return null;
+}
+
+export type VisionCounts = Record<VisionState, number>;
+const zero = (): VisionCounts => ({ valid: 0, thrown: 0, noTargets: 0, noData: 0 });
+
+export interface VisionCamera {
+  name: string;
+  totals: VisionCounts;
+  // Thrown out, by why ("gyro not level"), most first.
+  thrownBy: { reason: string; count: number }[];
+  // Of the frames it had targets in (used or thrown out), the share used.
+  usedShare: number | null;
+  // Each bin's counts, for the heatmap.
+  bins: VisionCounts[];
+  // Its measurements against the fused pose: how far, on average and at
+  // most, and how many of its measurements there were.
+  pose: { measurements: number; meanMeters: number | null; maxMeters: number | null; maxDegrees: number | null };
+}
+
+export interface VisionSummary {
+  // The heatmap's bins, in seconds on the log's timeline.
+  bins: [number, number][];
+  cameras: VisionCamera[];
+}
+
+// How much a counter went up between a and b. Before its first value it's
+// taken to have been at that value (logging started part way through); if
+// it went down (the robot code restarted), what it reached since counts.
+export function counterIncrease(series: Series, a: number, b: number): number {
+  if (series.times.length === 0) return 0;
+  const first = series.values[0];
+  const at = (t: number) => valueAt(series, t) ?? first;
+  const from = at(a);
+  const to = at(b);
+  return to >= from ? to - from : to;
+}
+
+// The bins: the spans' extent cut into `count` (at least a second each).
+export function visionBins(spans: [number, number][], count = 60): [number, number][] {
+  if (spans.length === 0) return [];
+  const start = Math.min(...spans.map((s) => s[0]));
+  const end = Math.max(...spans.map((s) => s[1]));
+  const n = Math.max(1, Math.min(count, Math.floor(end - start)));
+  const width = (end - start) / n;
+  return Array.from({ length: n }, (_, i): [number, number] => [start + i * width, start + (i + 1) * width]);
+}
+
+export function visionSummary(lookup: Lookup, available: readonly string[], spans: [number, number][], binCount = 60): VisionSummary {
+  const bins = visionBins(spans, binCount);
+  const fused = monitorSettings.vision.fused;
+  const fx = lookup(`${fused}/translation/x`)?.series;
+  const fy = lookup(`${fused}/translation/y`)?.series;
+  const fr = lookup(`${fused}/rotation/value`)?.series;
+  const cameras = visionCameras(available).map((camera): VisionCamera => {
+    const prefix = `${camera.provider}/perf/`;
+    const counters = available
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => ({ name: key.slice(prefix.length), state: counterState(key.slice(prefix.length)), series: lookup(key)?.series ?? null }))
+      .filter((c): c is { name: string; state: VisionState; series: Series } => c.state !== null && c.series !== null);
+
+    const totals = zero();
+    const thrown = new Map<string, number>();
+    for (const counter of counters) {
+      const count = spans.reduce((total, [a, b]) => total + counterIncrease(counter.series, a, b), 0);
+      totals[counter.state] += count;
+      if (counter.state === 'thrown') thrown.set(counter.name.replace(/^rejected /i, ''), count);
+    }
+    const binCounts = bins.map(([a, b]) => {
+      const counts = zero();
+      for (const counter of counters) counts[counter.state] += counterIncrease(counter.series, a, b);
+      return counts;
+    });
+
+    // Its measurements against the fused pose, at each fresh measurement.
+    let measurements = 0;
+    let sum = 0;
+    let maxMeters: number | null = null;
+    let maxDegrees: number | null = null;
+    const mx = lookup(`${camera.provider}/mt2/translation/x`)?.series;
+    const my = lookup(`${camera.provider}/mt2/translation/y`)?.series;
+    const heading = lookup(`${camera.provider}/mt1/rotation/value`)?.series ?? null;
+    if (mx && my && fx && fy && fr) {
+      for (let i = 0; i < mx.times.length; i++) {
+        const t = mx.times[i];
+        if (!spans.some(([a, b]) => t >= a && t <= b)) continue;
+        const gap = measurementGap({ x: fx, y: fy, r: fr }, { x: mx, y: my, r: heading }, t, monitorSettings.vision.freshSeconds);
+        if (!gap) continue;
+        measurements += 1;
+        sum += gap.meters;
+        maxMeters = Math.max(maxMeters ?? 0, gap.meters);
+        if (gap.degrees !== null) maxDegrees = Math.max(maxDegrees ?? 0, gap.degrees);
+      }
+    }
+    const withTargets = totals.valid + totals.thrown;
+    return {
+      name: camera.name,
+      totals,
+      thrownBy: [...thrown.entries()].map(([reason, count]) => ({ reason, count })).filter((r) => r.count > 0).sort((a, b) => b.count - a.count),
+      usedShare: withTargets > 0 ? totals.valid / withTargets : null,
+      bins: binCounts,
+      pose: { measurements, meanMeters: measurements ? sum / measurements : null, maxMeters, maxDegrees }
+    };
+  });
+  return { bins, cameras };
+}

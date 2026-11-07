@@ -110,6 +110,10 @@ function cleanSection(raw: Raw): ReportSection | null {
       };
     case 'events':
       return { type: 'events', title: text(raw.title), kinds: eventKindList(raw.kinds), problemsOnly: raw.problemsOnly !== false };
+    case 'monitors':
+      return { type: 'monitors', title: text(raw.title), ids: strings(raw.ids, 40) };
+    case 'vision':
+      return { type: 'vision', title: text(raw.title) };
     default:
       return null;
   }

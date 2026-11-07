@@ -7,7 +7,9 @@
 // Nothing here may touch Node or the DOM.
 
 import type { EventKind, LogEvent, MatchPhase } from './events';
+import type { MonitorAlarm, MonitorResult } from './monitors';
 import type { MatchInfo, MatchType } from './offload';
+import type { VisionSummary } from './vision';
 import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
 
@@ -107,7 +109,12 @@ export type ReportSection =
   // Each slice's share of the total over the span: a signal (a motor's
   // current), or a group of them added up (a subsystem's motors).
   | { type: 'pie'; title: string; measure: PieMeasure; voltage: string; slices: PieSliceSpec[] }
-  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean };
+  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean }
+  // The post-match monitors (monitors.ts): these, or every one with none.
+  | { type: 'monitors'; title: string; ids: string[] }
+  // Each camera: good data used against thrown out, when (a heatmap), and
+  // how far its measurements were from the fused pose (vision.ts).
+  | { type: 'vision'; title: string };
 
 // What a pie adds up, as a pie plot's (plots.ts): `voltage` is the signal
 // every current is multiplied by for energy, or '' for each current's own.
@@ -193,7 +200,9 @@ export const sectionLabels: Record<ReportSectionType, string> = {
   chart: 'Chart',
   stats: 'Stats table',
   pie: 'Pie chart',
-  events: 'Events'
+  events: 'Events',
+  monitors: 'Monitors (automatic checks)',
+  vision: 'Vision system'
 };
 
 export const maxNameLength = 120;
@@ -244,7 +253,9 @@ export type RenderedSection =
   | { type: 'stats'; title: string; rows: ReportStatsRow[]; missing: string[] }
   // `measure` is missing from reports made before energy (charge).
   | { type: 'pie'; title: string; measure?: PieMeasure; unit: string; seconds: number; slices: ReportPieSlice[] }
-  | { type: 'events'; title: string; events: LogEvent[] };
+  | { type: 'events'; title: string; events: LogEvent[] }
+  | { type: 'monitors'; title: string; results: MonitorResult[] }
+  | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[] };
 
 export interface Report {
   id: string;

@@ -9,7 +9,8 @@ import PieChart, { sharePercent, type DonutSlice } from '@/components/PieChart.v
 import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChart.vue';
 import { formatTime } from '@/format';
 import { colorFor, palette } from '@/palette';
-import { eventColor } from '@/review';
+import { eventColor, severityColor } from '@/review';
+import { visionStates, type VisionCamera, type VisionState } from '@shared/vision';
 
 // A report as it was made: its charts from the data kept with it, so it
 // reads the same whether or not the log is still here. On paper (a PDF),
@@ -114,6 +115,19 @@ const number = (value: number | null, unit: string) => {
   const text = Math.abs(value) >= 1000 || value === Math.trunc(value) ? value.toFixed(0) : value.toPrecision(4);
   return unit ? `${text} ${unit}` : text;
 };
+// --- Monitors and vision ---
+const alarmColor = (severity: 'warning' | 'info' | undefined) => (severity === 'info' ? (dark.value ? '#9aa0a8' : '#8a8f98') : severityColor('warning', dark.value));
+const stateColors: Record<VisionState, string> = { valid: '#2e9e5b', thrown: '#d03b3a', noTargets: '#8a8f98', noData: '#c98500' };
+// A heatmap cell: its state's share of the bin's frames, as how solid it is.
+function cellStyle(camera: VisionCamera, bin: number, state: VisionState) {
+  const counts = camera.bins[bin];
+  const total = counts.valid + counts.thrown + counts.noTargets + counts.noData;
+  const share = total ? counts[state] / total : 0;
+  return { background: stateColors[state], opacity: share ? Math.max(0.08, share) : 0 };
+}
+const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
+const meters = (value: number | null) => (value === null ? '—' : `${value.toFixed(2)} m`);
+
 const at = (t: number) => {
   const clock = phaseClock(props.report.phases, t);
   return clock ? `${t.toFixed(1)} s · ${clock}` : `${t.toFixed(1)} s`;
@@ -254,6 +268,73 @@ const at = (t: number) => {
           </li>
         </ul>
       </section>
+      <section v-else-if="section.type === 'monitors'" class="monitors-section">
+        <h4>{{ section.title }}</h4>
+        <table class="plain monitors">
+          <tbody>
+            <template v-for="result in section.results" :key="result.id">
+              <tr>
+                <td>{{ result.name }}</td>
+                <td v-if="!result.checked" class="hint small">Not checked: this log hasn't {{ result.missing.slice(0, 2).join(', ') }}{{ result.missing.length > 2 ? ', …' : '' }}</td>
+                <td v-else-if="result.alarms.length === 0" class="small">No alarms</td>
+                <td v-else class="small"><strong>{{ result.alarms.length }} alarm{{ result.alarms.length === 1 ? '' : 's' }}</strong></td>
+              </tr>
+              <tr v-for="(alarm, i) in result.alarms" :key="`${result.id}-${i}`" class="alarm">
+                <td colspan="2">
+                  <span class="mark" :style="{ background: alarmColor(alarm.severity) }"></span>
+                  <span class="time small">{{ at(alarm.start) }}</span>
+                  {{ alarm.title }} <span class="hint small">{{ alarm.detail }}</span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </section>
+
+      <section v-else-if="section.type === 'vision'" class="vision-section">
+        <h4>{{ section.title }}</h4>
+        <p v-if="section.summary.cameras.length === 0" class="hint small">This log has no cameras' counters.</p>
+        <template v-else>
+          <table class="plain">
+            <thead>
+              <tr><th>Camera</th><th>Used</th><th>Thrown out</th><th>Used, of frames with targets</th><th>No targets</th><th>No data</th><th>From the fused pose</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="camera in section.summary.cameras" :key="camera.name">
+                <td>{{ camera.name }}</td>
+                <td>{{ camera.totals.valid }}</td>
+                <td :title="camera.thrownBy.map((r) => `${r.reason}: ${r.count}`).join('\n')">
+                  {{ camera.totals.thrown }}<span v-if="camera.thrownBy.length" class="hint small"> ({{ camera.thrownBy[0].reason }}{{ camera.thrownBy.length > 1 ? ', …' : '' }})</span>
+                </td>
+                <td><strong>{{ percent(camera.usedShare) }}</strong></td>
+                <td>{{ camera.totals.noTargets }}</td>
+                <td>{{ camera.totals.noData }}</td>
+                <td class="small">{{ meters(camera.pose.meanMeters) }} average, {{ meters(camera.pose.maxMeters) }} at most</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="heatmap" role="img" :aria-label="`When each camera had each state, over ${section.summary.bins.length} stretches of time`">
+            <template v-for="camera in section.summary.cameras" :key="camera.name">
+              <div class="heat-camera">{{ camera.name }}</div>
+              <template v-for="state in visionStates" :key="state.state">
+                <div class="heat-label small">{{ state.label }}</div>
+                <div class="heat-row" :style="{ gridTemplateColumns: `repeat(${section.summary.bins.length}, 1fr)` }">
+                  <span v-for="(_, bin) in section.summary.bins" :key="bin" class="heat-cell" :style="cellStyle(camera, bin, state.state)"
+                    :title="`${state.label}: ${camera.bins[bin][state.state]} (${at(section.summary.bins[bin][0])})`"></span>
+                </div>
+              </template>
+            </template>
+            <div class="heat-axis small hint">
+              <span>{{ at(section.summary.bins[0][0]) }}</span><span>{{ at(section.summary.bins[section.summary.bins.length - 1][1]) }}</span>
+            </div>
+          </div>
+          <p v-if="section.alarms.length" class="small">
+            Disagreeing with the fused pose:
+            <span v-for="(alarm, i) in section.alarms" :key="i" class="disagree">{{ at(alarm.start) }} {{ alarm.title }} ({{ alarm.detail }}){{ i < section.alarms.length - 1 ? '; ' : '' }}</span>
+          </p>
+          <p v-else class="hint small">No camera disagreed with the fused pose for long.</p>
+        </template>
+      </section>
     </template>
   </article>
 </template>
@@ -347,6 +428,57 @@ h4 {
 .chart-section,
 .stats-section,
 .pie-section,
+.monitors td {
+  vertical-align: top;
+}
+
+.monitors .alarm td {
+  padding-left: 16px;
+}
+
+.monitors .mark {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.vision-section table {
+  margin-bottom: 10px;
+}
+
+.heatmap {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 8px;
+  align-items: center;
+}
+
+.heat-camera {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.heat-row {
+  display: grid;
+  gap: 1px;
+  height: 14px;
+}
+
+.heat-cell {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.heat-axis {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+}
+
 .events-section {
   break-inside: avoid;
 }
