@@ -6,7 +6,9 @@ import { matchKey, searchMatches, sharedTail } from '@shared/signal-match';
 import { cleanLibraryItem } from '@shared/library-check';
 import { planSync } from '@shared/library-sync';
 import { outdatedStarter, starterLibrary, starterStamp } from '@shared/starters';
-import { templateKeys, theAutoReport, type LibraryItem, type Pipeline } from '@shared/library';
+import { reportProblems, templateKeys, theAutoReport, type LibraryItem, type Pipeline, type ReportTemplate } from '@shared/library';
+import type { LogEvent } from '@shared/events';
+import type { MonitorResult } from '@shared/monitors';
 import { integrateProduct } from '@shared/signals';
 
 // --- Matching ---
@@ -49,7 +51,8 @@ const viewIds = new Set(starters.filter((s) => s.kind === 'view').map((s) => s.i
 for (const t of starters) {
   if (t.kind !== 'template') continue;
   for (const s of t.sections) if (s.type === 'chart') assert.ok(s.viewId && viewIds.has(s.viewId), `${t.name}: ${s.title}`);
-  assert.ok(templateKeys(t.sections, t.scope).length > 0, t.name);
+  // Monitors and vision sections find their own signals.
+  assert.ok(templateKeys(t.sections, t.scope).length > 0 || t.sections.some((s) => s.type === 'monitors' || s.type === 'vision'), t.name);
 }
 const pipeline = starters.find((s) => s.kind === 'pipeline')!;
 assert.equal(pipeline.kind === 'pipeline' && pipeline.enabled, false, 'the starter pipeline starts off');
@@ -123,4 +126,38 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
   assert.equal(outdatedStarter(power, power), false);
   // The scope is kept as read.
   assert.deepEqual((cleanLibraryItem({ ...power, scope: { type: 'enabled' } }) as { scope: unknown }).scope, { type: 'enabled' });
+}
+
+// A report's problems are only what its own sections check.
+{
+  const event = (id: string, kind: LogEvent['kind'], severity: LogEvent['severity']): LogEvent =>
+    ({ id, kind, severity, start: 1, end: null, title: id, detail: '', count: 1, key: null });
+  const fault = event('hoot:fault', 'fault', 'error');
+  const brownout = event('brownout', 'brownout', 'warning');
+  const enable = event('mode', 'mode', 'info');
+  const alarm = (id: string, severity?: 'info'): MonitorResult =>
+    ({ id, name: id, checked: true, missing: [], alarms: [{ start: 2, end: 3, title: id, detail: '', key: null, severity }] });
+  const monitors = [alarm('pair-shooter'), alarm('vision-disagreement'), alarm('surf-near-miss', 'info')];
+  // Monitor alarms are events too (the Signals timeline's).
+  const events = [fault, brownout, enable];
+  const ids = (sections: ReportTemplate['sections']) => reportProblems(sections, events, monitors).map((e) => e.id);
+  const templates = new Map(starterLibrary().filter((i): i is ReportTemplate => i.kind === 'template').map((t) => [t.name, t]));
+  // The Vision System report: only the cameras' disagreement, not the
+  // Hoot logs' faults or the motors' monitors.
+  assert.deepEqual(ids(templates.get('Vision System')!.sections), ['monitor:vision-disagreement:vision-disagreement:2.00']);
+  // Power Analysis: only power problems (the brownout), not the other
+  // fault or any monitor's (wheel slip, surfing).
+  assert.deepEqual(ids(templates.get('Power Analysis')!.sections), ['brownout']);
+  const power = (title: string, kind: LogEvent['kind'] = 'fault') =>
+    reportProblems([{ type: 'events', title: '', kinds: [], problemsOnly: true, topic: 'power' }], [{ ...fault, id: title, kind, title }], monitors).length;
+  assert.equal(power('TalonFX-60: bridge brownout'), 1);
+  assert.equal(power('TalonFX-2: undervoltage'), 1);
+  assert.equal(power('TalonFX-58: supply current limit'), 1);
+  assert.equal(power('TalonFX-58: device temperature'), 0);
+  assert.equal(power('Wheel slip', 'monitor'), 0);
+  // The Match Report: the log's faults and every monitor's warnings, once each.
+  assert.deepEqual(ids(templates.get('Match Report')!.sections).sort(),
+    ['brownout', 'hoot:fault', 'monitor:pair-shooter:pair-shooter:2.00', 'monitor:vision-disagreement:vision-disagreement:2.00']);
+  // An events section of only some kinds: those.
+  assert.deepEqual(ids([{ type: 'events', title: '', kinds: ['brownout'], problemsOnly: true }]), ['brownout']);
 }

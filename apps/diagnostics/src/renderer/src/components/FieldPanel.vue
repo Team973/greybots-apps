@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 
 import {
   isPoseType,
@@ -17,9 +17,11 @@ import {
 } from '@shared/plots';
 import type { SignalInfo } from '@shared/signals';
 import ColorPicker from '@/components/ColorPicker.vue';
-import { fieldFor, fieldImages } from '@/fields';
+import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
+import { fieldHeat, heatMeasureLabels, heatTotal, type HeatMeasure } from '@shared/field-heat';
+import { fieldImages } from '@/fields';
 import { palette } from '@/palette';
-import { useRecords } from '@/panel-data';
+import { useRecords, useSeries } from '@/panel-data';
 
 // Poses on the field (#144): robots as squares the size of one, with their
 // heading, where they've been behind them; trajectories as paths. At the
@@ -86,8 +88,11 @@ function rotate() {
 // moment shown (with its trail behind), so it's read around that moment:
 // a read over a long span keeps only its latest values (see poseWindow).
 const session = computed(() => props.session);
-const pathKeys = computed(() => props.panel.items.filter((item) => item.style === 'path').map((item) => item.key));
-const momentKeys = computed(() => props.panel.items.filter((item) => item.style !== 'path').map((item) => item.key));
+// Heatmaps are over the span shown too, with the signal each measures.
+const overSpan = (item: FieldItem) => item.style === 'path' || item.style === 'heat';
+const pathKeys = computed(() => props.panel.items.filter(overSpan).map((item) => item.key));
+const momentKeys = computed(() => props.panel.items.filter((item) => !overSpan(item)).map((item) => item.key));
+const valueKeys = computed(() => props.panel.items.filter((item) => item.style === 'heat' && item.measure !== 'time' && item.value).map((item) => item.value!));
 const pathSpan = computed<[number, number]>(() => [props.span[0], props.span[1]]);
 const momentSpan = computed<[number, number]>(() => {
   const [from, to] = poseWindow(props.time);
@@ -96,7 +101,8 @@ const momentSpan = computed<[number, number]>(() => {
 const paths = useRecords(session, pathKeys, pathSpan);
 // Read again when the span shown moves too: following live, that is new data.
 const moments = useRecords(session, momentKeys, momentSpan, undefined, () => props.span[1]);
-const error = computed(() => [...new Set([paths.error.value, moments.error.value].filter(Boolean))].join(' '));
+const values = useSeries(session, valueKeys, pathSpan);
+const error = computed(() => [...new Set([paths.error.value, moments.error.value, values.error.value].filter(Boolean))].join(' '));
 
 interface Drawn {
   item: FieldItem;
@@ -108,7 +114,7 @@ interface Drawn {
 }
 
 const drawn = computed<Drawn[]>(() => props.panel.items.map((item) => {
-  const found = (item.style === 'path' ? paths : moments).records.value.get(item.key);
+  const found = (overSpan(item) ? paths : moments).records.value.get(item.key);
   if (!found) return { item, type: '', poses: [], history: [] };
   const poses = posesFrom(recordAt(found, props.time), found.type);
   let history: Pose[] = [];
@@ -127,155 +133,55 @@ const drawn = computed<Drawn[]>(() => props.panel.items.map((item) => {
 
 // --- Drawing ---
 
-const box = ref<HTMLElement | null>(null);
-const canvas = ref<HTMLCanvasElement | null>(null);
-const width = ref(600);
-const field = computed(() => fieldFor(props.panel.season));
-// A little of what's around the field shows too.
-const margin = 0.4;
-const turned = computed(() => props.panel.rotation === 90 || props.panel.rotation === 270);
-const viewLength = computed(() => field.value.length + 2 * margin);
-const viewWidth = computed(() => field.value.width + 2 * margin);
-// As big as fits the width, and the height it's given.
-const across = computed(() => (turned.value ? viewWidth.value : viewLength.value));
-const down = computed(() => (turned.value ? viewLength.value : viewWidth.value));
-const scale = computed(() => Math.min(width.value / across.value, (props.maxHeight ?? Infinity) / down.value));
-const drawWidth = computed(() => scale.value * across.value);
-const height = computed(() => scale.value * down.value);
-
-const image = new Image();
-const imageReady = ref(false);
-watch(field, (f) => {
-  imageReady.value = false;
-  image.onload = () => { imageReady.value = true; };
-  image.src = f.image;
-}, { immediate: true });
-
-let toField: DOMMatrix | null = null;
-
-function draw() {
-  const element = canvas.value;
-  if (!element) return;
-  const ratio = window.devicePixelRatio || 1;
-  element.width = Math.round(drawWidth.value * ratio);
-  element.height = Math.round(height.value * ratio);
-  const ctx = element.getContext('2d');
-  if (!ctx) return;
-  const f = field.value;
-  const s = scale.value;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, drawWidth.value, height.value);
-  // The field's middle at the canvas's, turned, metres to pixels with y up.
-  ctx.translate(drawWidth.value / 2, height.value / 2);
-  ctx.rotate((props.panel.rotation * Math.PI) / 180);
-  const X = (x: number) => (x - f.length / 2) * s;
-  const Y = (y: number) => -(y - f.width / 2) * s;
-  toField = ctx.getTransform().inverse();
-
-  if (imageReady.value) {
-    const pxPerMetreX = (f.right - f.left) / f.length;
-    const pxPerMetreY = (f.bottom - f.top) / f.width;
-    // Turned about the field's middle (fields.ts).
-    ctx.save();
-    ctx.rotate(Math.PI);
-    ctx.drawImage(image, X(-f.left / pxPerMetreX), Y(f.bottom / pxPerMetreY), (image.width / pxPerMetreX) * s, (image.height / pxPerMetreY) * s);
-    ctx.restore();
+const fieldCanvas = ref<InstanceType<typeof FieldCanvas> | null>(null);
+// Each heatmap: where its pose was over the span shown, and what it
+// measures there (field-heat.ts).
+const heats = computed(() => new Map(props.panel.items.filter((item) => item.style === 'heat').map((item) => {
+  const found = paths.records.value.get(item.key);
+  const measure: HeatMeasure = item.measure ?? 'time';
+  if (!found) return [item.key, null] as const;
+  const track = { times: [] as number[], x: [] as number[], y: [] as number[] };
+  for (let i = 0; i < found.times.length; i++) {
+    const pose = posesFrom(found.values[i], found.type)[0];
+    if (!pose) continue;
+    track.times.push(found.times[i]);
+    track.x.push(pose.x);
+    track.y.push(pose.y);
   }
+  const series = measure !== 'time' && item.value ? values.series.value.get(item.value) : null;
+  const signal = series && series.values instanceof Float64Array ? { times: series.times, values: series.values } : null;
+  // Measuring a signal that isn't read (yet): nothing, rather than time.
+  if (measure !== 'time' && !signal) return [item.key, null] as const;
+  return [item.key, fieldHeat(track, signal, measure, [props.span])] as const;
+})));
+const heatLayers = computed<HeatLayer[]>(() => props.panel.items.flatMap((item) => {
+  const heat = heats.value.get(item.key);
+  return item.style === 'heat' && heat ? [{ key: item.key, color: colorOf(item.color), heat }] : [];
+}));
 
-  const robot = props.panel.robotSize * s;
-  for (const { item, poses, history } of drawn.value) {
-    const color = colorOf(item.color);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
-    // Where it's been (or, for a path, where it went over the span).
-    if (history.length > 1 && item.style !== 'points') {
-      ctx.globalAlpha = item.style === 'path' ? 0.9 : 0.6;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      history.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.x), Y(p.y)) : ctx.lineTo(X(p.x), Y(p.y))));
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-
-    if (item.style === 'path' && poses.length > 1) {
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      poses.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.x), Y(p.y)) : ctx.lineTo(X(p.x), Y(p.y))));
-      ctx.stroke();
-    }
-    if (item.style === 'points') {
-      for (const p of [...history, ...poses]) {
-        ctx.beginPath();
-        ctx.arc(X(p.x), Y(p.y), 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      continue;
-    }
-    if (item.style === 'path') {
-      // Where it is now, on its path.
-      const now = poses.length === 1 ? poses[0] : null;
-      if (now) {
-        ctx.beginPath();
-        ctx.arc(X(now.x), Y(now.y), 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      continue;
-    }
-    for (const pose of poses) {
-      ctx.save();
-      ctx.translate(X(pose.x), Y(pose.y));
-      ctx.rotate(-yawOf(pose));
-      // A black body in bumpers of its colour, the whole of it as see-through
-      // as it's set, so the arrow shows however solid it is.
-      ctx.globalAlpha = item.opacity;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(-robot / 2, -robot / 2, robot, robot);
-      ctx.lineWidth = 3;
-      ctx.strokeRect(-robot / 2, -robot / 2, robot, robot);
-      if (pose.heading) {
-        // Which way is the front: a white line from the middle to it, and a notch.
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(robot / 2, 0);
-        ctx.moveTo(robot / 2 - robot * 0.18, -robot * 0.18);
-        ctx.lineTo(robot / 2, 0);
-        ctx.lineTo(robot / 2 - robot * 0.18, robot * 0.18);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-  }
-}
-
-watch([drawn, drawWidth, height, imageReady, () => props.panel.rotation, () => props.panel.robotSize, () => props.dark], () => requestAnimationFrame(draw));
-
-let observer: ResizeObserver | undefined;
-onMounted(() => {
-  observer = new ResizeObserver(() => {
-    if (box.value) width.value = Math.max(200, box.value.clientWidth);
-  });
-  if (box.value) observer.observe(box.value);
-  draw();
-});
-onUnmounted(() => observer?.disconnect());
-
+const canvasItems = computed<CanvasItem[]>(() => drawn.value.filter(({ item }) => item.style !== 'heat').map(({ item, poses, history }) => ({
+  key: item.key,
+  color: colorOf(item.color),
+  style: item.style,
+  opacity: item.opacity,
+  poses,
+  history
+})));
 // Where the pointer is, in field metres.
 const pointer = ref<{ x: number; y: number } | null>(null);
-function onMove(event: MouseEvent) {
-  if (!toField || !canvas.value) return;
-  const rect = canvas.value.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  const at = toField.transformPoint(new DOMPoint((event.clientX - rect.left) * ratio, (event.clientY - rect.top) * ratio));
-  const f = field.value;
-  pointer.value = { x: at.x / scale.value + f.length / 2, y: -at.y / scale.value + f.width / 2 };
-}
 
+const amount = (value: number) => (Math.abs(value) >= 100 ? value.toFixed(0) : value.toPrecision(3));
 const legend = computed(() => drawn.value.map(({ item, poses }) => {
+  if (item.style === 'heat') {
+    const heat = heats.value.get(item.key);
+    const sum = heat ? heatTotal(heat) : null;
+    const where = !heat || !sum ? (item.measure && item.measure !== 'time' && !item.value ? 'Pick a signal' : '—')
+      : sum.points === 0 ? 'Nowhere in the span'
+        : heat.measure === 'time' ? `${sum.total.toFixed(1)} s, ${sum.points} points`
+          : heat.measure === 'mean' ? `${amount(sum.low!)} to ${amount(sum.high!)}, ${sum.points} points`
+            : `${amount(sum.total)} in all, ${sum.points} points`;
+    return { key: item.key, color: colorOf(item.color), label: labelOf(item.key), where };
+  }
   const pose = poses.length === 1 ? poses[0] : null;
   const where = pose
     ? `${pose.x.toFixed(2)}, ${pose.y.toFixed(2)} m${pose.heading ? `, ${((yawOf(pose) * 180) / Math.PI).toFixed(0)}°` : ''}`
@@ -286,12 +192,16 @@ const legend = computed(() => drawn.value.map(({ item, poses }) => {
 const styles: { id: FieldStyle; label: string }[] = [
   { id: 'robot', label: 'Robot' },
   { id: 'path', label: 'Path' },
-  { id: 'points', label: 'Dots' }
+  { id: 'points', label: 'Dots' },
+  { id: 'heat', label: 'Heatmap' }
 ];
+const measures = Object.entries(heatMeasureLabels) as [HeatMeasure, string][];
+// What a heatmap can measure: any number.
+const numbers = computed(() => props.signals.filter((s) => s.kind === 'number' && s.count !== 0));
 const trails = [0, 1, 2, 5, 10, 30];
 
 // The field as a picture, for copying.
-defineExpose({ image: () => canvas.value });
+defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
 </script>
 
 <template>
@@ -329,9 +239,8 @@ defineExpose({ image: () => canvas.value });
       <span v-if="pointer" class="hint small">{{ pointer.x.toFixed(2) }}, {{ pointer.y.toFixed(2) }} m</span>
     </div>
 
-    <div ref="box" class="field-box">
-      <canvas ref="canvas" :style="{ width: `${drawWidth}px`, height: `${height}px` }" @mousemove="onMove" @mouseleave="pointer = null"></canvas>
-    </div>
+    <FieldCanvas ref="fieldCanvas" :items="canvasItems" :heat="heatLayers" :season="panel.season" :rotation="panel.rotation" :robot-size="panel.robotSize"
+      :max-height="maxHeight" @pointer="pointer = $event" />
     <p v-if="error" class="error-text small">{{ error }}</p>
 
     <table v-if="panel.items.length" class="plain items">
@@ -351,6 +260,17 @@ defineExpose({ image: () => canvas.value });
             <input type="range" min="0" max="1" step="0.05" :value="panel.items[i].opacity" :aria-label="`Opacity of ${row.key}`"
               title="How solid the robot is" @input="updateItem(i, { opacity: Number(($event.target as HTMLInputElement).value) })" />
           </td>
+          <td v-else-if="panel.items[i].style === 'heat'" class="heat-settings">
+            <select :value="panel.items[i].measure ?? 'time'" :aria-label="`What the heatmap of ${row.key} measures`"
+              @change="updateItem(i, { measure: ($event.target as HTMLSelectElement).value as HeatMeasure })">
+              <option v-for="[id, label] in measures" :key="id" :value="id">{{ label }}</option>
+            </select>
+            <select v-if="(panel.items[i].measure ?? 'time') !== 'time'" :value="panel.items[i].value ?? ''" :aria-label="`The signal the heatmap of ${row.key} measures`"
+              @change="updateItem(i, { value: ($event.target as HTMLSelectElement).value || undefined })">
+              <option value="">Pick a signal (or click one in the list)…</option>
+              <option v-for="s in numbers" :key="s.key" :value="s.key">{{ labelOf(s.key) }}</option>
+            </select>
+          </td>
           <td v-else></td>
           <td class="number small">{{ row.where }}</td>
           <td><button class="remove" :aria-label="`Remove ${row.key}`" @click="removeItem(i)">✕</button></td>
@@ -358,6 +278,10 @@ defineExpose({ image: () => canvas.value });
       </tbody>
     </table>
     <p v-else class="hint small">Add a pose: a robot's pose estimate, a vision measurement, a trajectory.</p>
+    <p v-if="panel.items.some((i) => i.style === 'heat')" class="hint small">
+      A heatmap is a point for each sample over the span shown, where the pose was then; where they pile up it's hot. It shows where
+      the pose spent its time, a signal's average while it was there, or how much a counter (a camera's frames used, say) went up there.
+    </p>
   </div>
 </template>
 
@@ -379,17 +303,6 @@ defineExpose({ image: () => canvas.value });
   max-width: 60%;
 }
 
-.field-box {
-  width: 100%;
-}
-
-canvas {
-  display: block;
-  margin: 0 auto;
-  border-radius: 6px;
-  cursor: crosshair;
-}
-
 .items td {
   padding: 3px 6px;
   vertical-align: middle;
@@ -402,6 +315,16 @@ canvas {
 
 .items input[type='range'] {
   width: 70px;
+}
+
+.heat-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.heat-settings select {
+  max-width: 220px;
 }
 
 .swatch-cell {

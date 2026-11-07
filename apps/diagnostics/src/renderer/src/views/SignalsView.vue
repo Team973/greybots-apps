@@ -26,6 +26,7 @@ import EventList from '@/components/EventList.vue';
 import PlotChart, { type ChartAxis, type ChartLine, type ChartMarker, type ZoomGesture } from '@/components/PlotChart.vue';
 import PanelView from '@/components/PanelView.vue';
 import PlotTabs from '@/components/PlotTabs.vue';
+import TimeTape from '@/components/TimeTape.vue';
 import ViewsMenu from '@/components/ViewsMenu.vue';
 import { formatBytes, formatTime, logCompanions } from '@/format';
 import { palette } from '@/palette';
@@ -955,10 +956,15 @@ function seek(time: number) {
   showTime(time);
 }
 
-function scrub(event: Event) {
-  pin.value = Number((event.target as HTMLInputElement).value);
-  showTime(pin.value);
+// The tape: one moment for every tab. Moving it pins it, and the line
+// chart's span follows to keep it in sight.
+function scrub(time: number) {
+  pin.value = time;
+  showTime(time);
 }
+// What the tape marks: the pin; or, on another tab with nothing pinned, the
+// moment that tab is showing (the right edge of the span).
+const tapeTime = computed(() => pin.value ?? (onLine.value ? null : valueTime.value));
 
 // Space plays and pauses; [ and ] step through errors and warnings.
 function onReviewKey(event: KeyboardEvent) {
@@ -1004,6 +1010,14 @@ onUnmounted(() => clearInterval(runsTimer));
 // works again.
 const route = useRoute();
 const router = useRouter();
+// Opened from the Reports page (?from=reports): a way back to it, to the
+// log or report it was opened from.
+const fromReports = computed(() => route.query.from === 'reports');
+function backToReports() {
+  if (window.history.state?.back) router.back();
+  else router.push({ path: '/reports', query: plotStore.logId ? { tab: 'reports', log: plotStore.logId } : {} });
+}
+
 watch(() => route.query.session, (session) => {
   if (typeof session !== 'string' || !liveSessions.some((live) => live.id === session)) return;
   selectedLog.value = session;
@@ -1157,6 +1171,9 @@ watch(() => route.query.session, (session) => {
     </aside>
 
     <section class="card chart-area">
+      <nav v-if="fromReports" class="back-row" aria-label="Back">
+        <md-outlined-button id="back-to-reports" @click="backToReports">← Back to reports</md-outlined-button>
+      </nav>
       <PlotTabs v-if="summary" :panels="plotStore.panels" :active="shownPanel?.id ?? 'line'" @select="plotStore.showTab($event)"
         @add="addPlot" @close="plotStore.removePanel($event)" />
       <div class="toolbar">
@@ -1200,7 +1217,7 @@ watch(() => route.query.session, (session) => {
       </div>
       <p v-if="copyState !== 'idle' && copyState !== 'copied'" class="error-text">{{ copyState }}</p>
       <p v-if="!onLine" class="hint small">
-        The span shown is the chart's: zoom here, or on the line chart's tab. The moment shown is the pin, the playhead, or now when following live.
+        The span shown is the line chart's: zoom it on the tape below (scroll on it, or drag the window above it) or on the line chart's tab. The moment shown is the pin, the playhead, or now when following live.
       </p>
       <p v-else-if="isLive" class="hint small">
         Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
@@ -1284,12 +1301,12 @@ watch(() => route.query.session, (session) => {
         <select id="speed" v-model.number="speed" aria-label="Playback speed">
           <option v-for="choice in speeds" :key="choice" :value="choice">{{ choice }}×</option>
         </select>
-        <input id="scrub" type="range" :min="full[0]" :max="full[1]" step="0.01" :value="pin ?? view[0]" aria-label="Time"
-          @input="scrub" />
+        <TimeTape id="scrub" :full="full" :view="view" :time="tapeTime" :phases="review?.phases ?? []" :enabled="review?.enabled ?? []"
+          @seek="scrub" @zoom="zoomTo" />
         <span id="playhead" class="hint small playhead">
           <template v-if="pin !== null">{{ pin.toFixed(2) }} s<template v-if="phaseClock(review?.phases ?? [], pin)">
             · {{ phaseClock(review?.phases ?? [], pin) }}</template></template>
-          <template v-else>Click the chart to pin a moment</template>
+          <template v-else>Click the tape or the chart to pin a moment</template>
         </span>
       </div>
 
@@ -1777,14 +1794,16 @@ select {
   fill: currentColor;
 }
 
-.playback input[type='range'] {
-  flex: 1;
-  accent-color: #2a78d6;
-}
 
 .playhead {
   min-width: 170px;
   font-variant-numeric: tabular-nums;
+}
+
+.back-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .chart-body {

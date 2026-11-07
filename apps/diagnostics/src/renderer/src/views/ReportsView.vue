@@ -19,7 +19,7 @@ import {
   type SavedView,
 } from '@shared/library';
 import { describeMatch, type MatchType } from '@shared/offload';
-import { defaultCardFilter, filterCards, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
+import { defaultCardFilter, filterCards, groupProblems, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
 import { cancelledMessage, type PipelineStatus } from '@shared/reports';
 import ReportFlags from '@/components/ReportFlags.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
@@ -169,8 +169,8 @@ const focusedCard = computed(() => (typeof route.query.log === 'string' ? cards.
 const reportCard = computed(() => (openReport.value ? cards.value.find((c) => c.id === openReport.value!.logId) ?? null : null));
 const crumbCard = computed(() => reportCard.value ?? focusedCard.value);
 // Which of the log's reports found each problem.
-const foundBy = (card: LogCard, id: string) =>
-  card.reports.filter((r) => r.problems.some((p) => p.id === id)).map((r) => r.templateName).join(', ');
+const foundBy = (card: LogCard, ids: string[]) =>
+  card.reports.filter((r) => r.problems.some((p) => ids.includes(p.id))).map((r) => r.templateName).join(', ');
 const reportErrors = (r: ReportSummary) => r.problems.filter((p) => p.severity === 'error');
 const reportWarnings = (r: ReportSummary) => r.problems.filter((p) => p.severity === 'warning');
 
@@ -186,7 +186,8 @@ const plotStore = usePlotStore();
 function openInSignals(card: LogCard) {
   plotStore.logId = card.id;
   plotStore.setView(null);
-  router.push('/signals');
+  // Signals offers a way back here (?from=reports).
+  router.push({ path: '/signals', query: { from: 'reports' } });
 }
 const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log no longer in the data folder');
 
@@ -196,9 +197,12 @@ const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log
 // logs open, so they don't take turns loading). Each card fills in as its
 // reports come.
 const missingFor = (card: LogCard) => missingTemplates(card, templates.value);
+// Every template that applies to the log's robot: re-running them all
+// replaces the reports it has (only the newest of each is kept).
+const allFor = (card: LogCard) => templates.value.filter((t) => !t.robot || t.robot === card.robot);
 const running = ref(new Map<string, { done: number; total: number }>());
-async function makeMissing(card: LogCard) {
-  const wanted = missingFor(card);
+async function makeMissing(card: LogCard, again = false) {
+  const wanted = again ? allFor(card) : missingFor(card);
   if (running.value.has(card.id) || wanted.length === 0) return;
   const setRun = (run: { done: number; total: number } | null) => {
     const next = new Map(running.value);
@@ -520,6 +524,10 @@ onUnmounted(() => clearInterval(statusTimer));
       <md-filled-button v-if="missingFor(focusedCard).length" class="make-missing" :disabled="running.has(focusedCard.id)"
         :title="`Runs: ${missingFor(focusedCard).map((t) => t.name).join(', ')}`"
         @click="makeMissing(focusedCard)">{{ makeLabel(focusedCard) }}</md-filled-button>
+      <md-outlined-button v-if="focusedCard.log && focusedCard.reports.length && allFor(focusedCard).length" id="rerun-all"
+        :disabled="running.has(focusedCard.id)"
+        :title="`Runs again, replacing what this log has: ${allFor(focusedCard).map((t) => t.name).join(', ')}`"
+        @click="makeMissing(focusedCard, true)">{{ running.has(focusedCard.id) ? makeLabel(focusedCard) : allFor(focusedCard).length === 1 ? 'Re-run the report' : `Re-run all ${allFor(focusedCard).length} reports` }}</md-outlined-button>
     </header>
     <ReportFlags v-if="focusedCard.reports.length" :errors="focusedCard.errors" :warnings="focusedCard.warnings" :missing="focusedCard.missing" />
 
@@ -535,10 +543,13 @@ onUnmounted(() => clearInterval(statusTimer));
     <template v-if="focusedCard.errors.length || focusedCard.warnings.length">
       <h3>Errors and warnings</h3>
       <ul class="problems">
-        <li v-for="p in [...focusedCard.errors, ...focusedCard.warnings]" :key="p.id">
-          <span class="dot" :style="{ background: flagColor(p.severity) }" aria-hidden="true"></span>
-          <span>{{ p.title }}</span>
-          <span class="hint small">{{ p.severity }} · {{ foundBy(focusedCard, p.id) }}</span>
+        <!-- Each once, however many times it was found: the reports list each, with its time. -->
+        <li v-for="group in groupProblems([...focusedCard.errors, ...focusedCard.warnings])" :key="group.ids[0]">
+          <span class="dot" :style="{ background: flagColor(group.severity) }" aria-hidden="true"></span>
+          <span>{{ group.title }}</span>
+          <span v-if="group.count > 1" class="count-chip" :style="{ '--chip': flagColor(group.severity) }"
+            :title="`Found ${group.count} times: open a report for when`">×{{ group.count }}</span>
+          <span class="hint small">{{ group.severity }} · {{ foundBy(focusedCard, group.ids) }}</span>
         </li>
       </ul>
     </template>
@@ -1022,6 +1033,16 @@ fieldset {
   gap: 8px;
   padding: 8px 6px;
   border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.count-chip {
+  padding: 0 7px;
+  border: 1px solid var(--chip);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chip) 15%, transparent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .problems li {

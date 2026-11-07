@@ -2,6 +2,7 @@
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { ReportProblem } from '@shared/library';
+import { groupProblems } from '@shared/report-cards';
 import { severityColor } from '@/review';
 
 // Flags for what reports found: errors (red) and warnings (amber), with their
@@ -17,7 +18,8 @@ withDefaults(defineProps<{
 
 const viewMode = useViewModeStore();
 const color = (severity: 'error' | 'warning') => severityColor(severity, viewMode.isDarkMode);
-const titles = (problems: ReportProblem[]) => problems.map((p) => p.title).join('\n');
+// Each once, with how many times when more than one.
+const titles = (problems: ReportProblem[]) => groupProblems(problems).map((g) => (g.count > 1 ? `${g.title} (×${g.count})` : g.title)).join('\n');
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 </script>
 

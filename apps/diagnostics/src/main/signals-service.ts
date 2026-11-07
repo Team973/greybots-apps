@@ -8,6 +8,8 @@ import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogS
 import type { DsAlignment, DsLogStatus, HootSessionStatus, SessionDsLog, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
 import { filesToDelete } from '@shared/log-filter';
+import { monitorEvents, runMonitors, type Gates, type MonitorResult } from '@shared/monitors';
+import { matchKey } from '@shared/signal-match';
 import { notesPathSegments } from '@shared/storage-layout';
 import type { SignalRecords } from '@shared/plots';
 import { parseLogName, trustedTime, type MatchInfo } from '@shared/offload';
@@ -424,6 +426,8 @@ interface Session {
   end: number;
   // Found once, when first asked for.
   events?: FoundEvents;
+  // Run once its gates are known (they can change while Hoot logs are read).
+  monitors?: { gates: string; results: MonitorResult[] };
 }
 
 // The sessions open for reading, most recently used last. A few at once, so
@@ -909,8 +913,32 @@ function findEvents(session: Session): FoundEvents {
   return found;
 }
 
+// The post-match monitors over a session's data log, run again only when
+// its gates (when it was enabled, and auto) change.
+function sessionMonitors(session: Session, enabled: [number, number][], phases: MatchPhase[]): MonitorResult[] {
+  const dataLog = session.dataLog;
+  if (!dataLog) return [];
+  const gates: Gates = {
+    whole: [session.start, session.end],
+    enabled,
+    auto: phases.filter((p) => p.name === 'auto').map((p): [number, number] => [p.start, p.end])
+  };
+  const version = JSON.stringify([gates.enabled, gates.auto]);
+  if (session.monitors?.gates === version) return session.monitors.results;
+  const available = dataLog.catalog().filter((s) => s.kind === 'number').map((s) => s.key);
+  const lookup = (wanted: string) => {
+    const key = matchKey(wanted, available).key;
+    const series = key ? dataLog.read(key) : null;
+    return key && series && series.values instanceof Float64Array ? { key, series: { times: series.times, values: series.values } } : null;
+  };
+  const results = runMonitors(lookup, gates, available);
+  session.monitors = { gates: version, results };
+  return results;
+}
+
+// Each alarm as an event, for the timeline and reports' warnings.
 export async function sessionEvents(settings: Settings, id: string): Promise<SessionEvents> {
-  if (isLiveId(id)) return { events: [], phases: [], enabled: [], notes: [], pending: '' };
+  if (isLiveId(id)) return { events: [], phases: [], enabled: [], monitors: [], notes: [], pending: '' };
   const session = await openSession(settings, id);
   const found = (session.events ??= findEvents(session));
   // While the Hoot logs are read, robot code's own flags stand in.
@@ -919,7 +947,9 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
   const inSpan = (event: LogEvent) => event.start <= session.end && (event.end ?? event.start) >= session.start;
   const phases: MatchPhase[] = modes ? matchPhases(modes.changes, session.end, inMatch) : [];
   const enabled = modes ? enabledSpans(modes.changes, session.end) : [];
+  const monitors = sessionMonitors(session, enabled, phases);
   const events = [
+    ...monitorEvents(monitors),
     ...(modes ? modeEvents(modes.changes, modes.key) : []).filter(inSpan),
     ...found.dataLog,
     ...found.hoot,
@@ -930,6 +960,7 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
     events,
     phases,
     enabled,
+    monitors,
     notes: await loadNotes(settings, id),
     pending: found.scanning ? 'Looking for device faults in the Hoot logs…' : ''
   };

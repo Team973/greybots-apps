@@ -6,8 +6,10 @@
 //
 // Nothing here may touch Node or the DOM.
 
-import type { EventKind, LogEvent, MatchPhase } from './events';
+import { isPowerEvent, type EventKind, type LogEvent, type MatchPhase } from './events';
+import { monitorEvents, type MonitorAlarm, type MonitorResult } from './monitors';
 import type { MatchInfo, MatchType } from './offload';
+import type { VisionSummary } from './vision';
 import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
 
@@ -107,7 +109,13 @@ export type ReportSection =
   // Each slice's share of the total over the span: a signal (a motor's
   // current), or a group of them added up (a subsystem's motors).
   | { type: 'pie'; title: string; measure: PieMeasure; voltage: string; slices: PieSliceSpec[] }
-  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean };
+  // `topic` 'power': only power problems (isPowerEvent), whatever the kinds.
+  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean; topic?: 'power' }
+  // The post-match monitors (monitors.ts): these, or every one with none.
+  | { type: 'monitors'; title: string; ids: string[] }
+  // Each camera: good data used against thrown out, when (a heatmap), and
+  // how far its measurements were from the fused pose (vision.ts).
+  | { type: 'vision'; title: string };
 
 // What a pie adds up, as a pie plot's (plots.ts): `voltage` is the signal
 // every current is multiplied by for energy, or '' for each current's own.
@@ -193,7 +201,9 @@ export const sectionLabels: Record<ReportSectionType, string> = {
   chart: 'Chart',
   stats: 'Stats table',
   pie: 'Pie chart',
-  events: 'Events'
+  events: 'Events',
+  monitors: 'Monitors (automatic checks)',
+  vision: 'Vision system'
 };
 
 export const maxNameLength = 120;
@@ -244,7 +254,10 @@ export type RenderedSection =
   | { type: 'stats'; title: string; rows: ReportStatsRow[]; missing: string[] }
   // `measure` is missing from reports made before energy (charge).
   | { type: 'pie'; title: string; measure?: PieMeasure; unit: string; seconds: number; slices: ReportPieSlice[] }
-  | { type: 'events'; title: string; events: LogEvent[] };
+  | { type: 'events'; title: string; events: LogEvent[] }
+  | { type: 'monitors'; title: string; results: MonitorResult[] }
+  // `recorded`: when the log was, for which season's field to draw.
+  | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[]; recorded?: string };
 
 export interface Report {
   id: string;
@@ -330,4 +343,35 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
   }
   if (scope?.type === 'conditions') for (const condition of scope.conditions) keys.add(condition.key);
   return [...keys];
+}
+
+// --- A report's problems ---
+
+// Whether an events section lists an event: of its kinds, and its topic.
+export function sectionLists(section: Extract<ReportSection, { type: 'events' }>, event: LogEvent): boolean {
+  return (section.kinds.length === 0 || section.kinds.includes(event.kind)) && (section.topic !== 'power' || isPowerEvent(event));
+}
+
+// The monitor the vision section shows.
+export const visionMonitor = 'vision-disagreement';
+
+export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
+
+// A report's errors and warnings are only what its own sections check: the
+// events its events sections list, and the alarms of the monitors its
+// monitors and vision sections show. So the Vision System report flags only
+// the cameras, and the log's device faults (the Hoot logs', the robot
+// code's) go to the reports that list them, the Match Report and the
+// match-phase ones such as Autonomous.
+export function reportProblems(sections: ReportSection[], events: LogEvent[], monitors: MonitorResult[]): LogEvent[] {
+  const found = new Map<string, LogEvent>();
+  const add = (list: LogEvent[]) => {
+    for (const event of list) if (isProblem(event)) found.set(event.id, event);
+  };
+  for (const section of sections) {
+    if (section.type === 'events') add(events.filter((e) => sectionLists(section, e)));
+    if (section.type === 'monitors') add(monitorEvents(monitors.filter((r) => section.ids.length === 0 || section.ids.includes(r.id))));
+    if (section.type === 'vision') add(monitorEvents(monitors.filter((r) => r.id === visionMonitor)));
+  }
+  return [...found.values()].sort((a, b) => a.start - b.start);
 }
