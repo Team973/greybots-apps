@@ -95,7 +95,6 @@ interface Context {
   logId: string;
   signals: Map<string, SignalInfo>;
   available: string[];
-  mapping: Record<string, string | null> | undefined;
   matches: Map<string, KeyMatch>;
   missing: Set<string>;
   whole: [number, number];
@@ -105,7 +104,7 @@ interface Context {
 function resolve(context: Context, wanted: string): string | null {
   let match = context.matches.get(wanted);
   if (!match) {
-    match = matchKey(wanted, context.available, context.mapping);
+    match = matchKey(wanted, context.available);
     context.matches.set(wanted, match);
   }
   if (!match.key) context.missing.add(wanted);
@@ -232,13 +231,11 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
   const summary = await openSignalLog(settings, logId);
   const status = await hootStatus(settings, logId);
   const signals = new Map(summary.signals.map((s) => [s.key, s]));
-  const mapping = (await listLibrary(settings, 'mapping')).find((m) => m.robot === file.robot)?.fields;
   const context: Context = {
     settings,
     logId,
     signals,
     available: summary.signals.filter((s) => s.kind !== 'other' && s.count !== 0).map((s) => s.key),
-    mapping,
     matches: new Map(),
     missing: new Set(),
     whole: [status.start, status.end],

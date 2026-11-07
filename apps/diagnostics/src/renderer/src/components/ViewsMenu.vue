@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
-import { viewKeys, type SavedView, type SignalMapping, type ViewBody, type ViewSpan } from '@shared/library';
+import { viewKeys, type SavedView, type ViewBody, type ViewSpan } from '@shared/library';
 import { matchKey, searchMatches } from '@shared/signal-match';
 
 // Saved views (#148): the chart as it is, kept by name to bring back on any
-// log or live, its signals found by name, path end, or the robot's mapping.
+// log or live, its signals found by name or the end of their path.
 
 const props = defineProps<{
   // The signals in what's open, to say how many of each view's are here.
@@ -19,27 +19,24 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  // A view to put on the chart, and the robot's mapping to find its signals with.
-  apply: [view: SavedView, mapping: Record<string, string | null> | undefined];
+  // A view to put on the chart.
+  apply: [view: SavedView];
 }>();
 
 const open = ref(false);
 const views = ref<SavedView[]>([]);
-const mappings = ref<SignalMapping[]>([]);
 const query = ref('');
 const problem = ref('');
 const naming = ref<{ id?: string; name: string; span: ViewSpan['type'] | 'auto' | 'teleop' | 'endgame' | 'match' } | null>(null);
 
 async function load() {
   try {
-    [views.value, mappings.value] = await Promise.all([window.diagnostics.getLibrary('view'), window.diagnostics.getLibrary('mapping')]);
+    views.value = await window.diagnostics.getLibrary('view');
   } catch (error) {
     problem.value = (error as Error).message;
   }
 }
 watch(open, (isOpen) => { if (isOpen) load(); });
-
-const mapping = computed(() => mappings.value.find((m) => m.robot === props.robot)?.fields);
 
 // Each view with how many of its signals are here; the best fits first,
 // then those saved for this robot.
@@ -47,7 +44,7 @@ const listed = computed(() => views.value
   .filter((view) => searchMatches(query.value, view.name, viewKeys(view)))
   .map((view) => {
     const keys = viewKeys(view);
-    const found = keys.filter((key) => matchKey(key, props.available, mapping.value).key !== null).length;
+    const found = keys.filter((key) => matchKey(key, props.available).key !== null).length;
     return { view, found, total: keys.length };
   })
   .sort((a, b) => (b.found / Math.max(1, b.total)) - (a.found / Math.max(1, a.total)) ||
@@ -96,7 +93,7 @@ async function remove(view: SavedView) {
 }
 
 function apply(view: SavedView) {
-  emit('apply', view, mapping.value);
+  emit('apply', view);
   open.value = false;
 }
 

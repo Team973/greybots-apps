@@ -13,12 +13,10 @@ import {
   type ReportSummary,
   type ReportTemplate,
   type SavedView,
-  type SignalMapping
 } from '@shared/library';
 import { describeMatch, type MatchType } from '@shared/offload';
 import { defaultCardFilter, filterCards, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
 import type { PipelineStatus } from '@shared/reports';
-import MappingEditor from '@/components/MappingEditor.vue';
 import ReportFlags from '@/components/ReportFlags.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
 import TemplateEditor from '@/components/TemplateEditor.vue';
@@ -27,15 +25,14 @@ import { severityColor } from '@/review';
 import { usePlotStore } from '@/stores/plot-store';
 
 // Reports (#148): made from templates, by hand or by pipelines as logs
-// arrive; the templates and pipelines themselves; and robot mappings, for
+// arrive; and the templates and pipelines themselves.
 // data whose signals are named differently.
 
-type Tab = 'reports' | 'templates' | 'pipelines' | 'robots';
+type Tab = 'reports' | 'templates' | 'pipelines';
 const tabs: { id: Tab; label: string }[] = [
   { id: 'reports', label: 'Reports' },
   { id: 'templates', label: 'Templates' },
-  { id: 'pipelines', label: 'Auto reports' },
-  { id: 'robots', label: 'Robot mappings' }
+  { id: 'pipelines', label: 'Auto reports' }
 ];
 
 const route = useRoute();
@@ -52,7 +49,6 @@ const reports = ref<ReportSummary[]>([]);
 const templates = ref<ReportTemplate[]>([]);
 const views = ref<SavedView[]>([]);
 const pipelines = ref<Pipeline[]>([]);
-const mappings = ref<SignalMapping[]>([]);
 const logs = ref<SignalLogFile[]>([]);
 const problem = ref('');
 
@@ -61,8 +57,8 @@ const cleanError = (error: unknown) => (error as Error).message.replace(/^Error 
 async function load() {
   try {
     const api = window.diagnostics;
-    [reports.value, templates.value, views.value, pipelines.value, mappings.value, logs.value] = await Promise.all([
-      api.getReports(), api.getLibrary('template'), api.getLibrary('view'), api.getLibrary('pipeline'), api.getLibrary('mapping'), api.getSignalLogs()
+    [reports.value, templates.value, views.value, pipelines.value, logs.value] = await Promise.all([
+      api.getReports(), api.getLibrary('template'), api.getLibrary('view'), api.getLibrary('pipeline'), api.getSignalLogs()
     ]);
   } catch (error) {
     problem.value = cleanError(error);
@@ -308,41 +304,10 @@ async function pollStatus() {
 
 const templateName = (id: string) => templates.value.find((t) => t.id === id)?.name ?? '(gone)';
 
-// --- Robot mappings ---
-
-const robots = computed(() => [...new Set([...logs.value.map((l) => l.robot), ...mappings.value.map((m) => m.robot!)].filter(Boolean))].sort());
-const mappingRobot = ref('');
-const newRobot = ref('');
-const mappingFor = computed(() => mappings.value.find((m) => m.robot === mappingRobot.value) ?? null);
-
-async function saveMapping(fields: Record<string, string | null>) {
-  const existing = mappingFor.value;
-  try {
-    await window.diagnostics.saveLibraryItem(JSON.parse(JSON.stringify({
-      ...(existing ?? { id: '', description: '', created: '', changed: '', createdBy: null, cloud: null }),
-      kind: 'mapping',
-      name: `${mappingRobot.value}'s signals`,
-      robot: mappingRobot.value,
-      fields
-    })) as SignalMapping);
-    await load();
-  } catch (error) {
-    problem.value = cleanError(error);
-  }
-}
-
-function addRobot() {
-  const name = newRobot.value.trim();
-  if (!name) return;
-  mappingRobot.value = name;
-  newRobot.value = '';
-}
-
 onMounted(async () => {
   await load();
   generateTemplate.value = templates.value[0]?.id ?? '';
   generateLog.value = reportLogs.value[0]?.id ?? '';
-  mappingRobot.value = robots.value[0] ?? '';
   await pollStatus();
   statusTimer = setInterval(pollStatus, 2000);
 });
@@ -501,7 +466,7 @@ onUnmounted(() => clearInterval(statusTimer));
       <h2>Report templates</h2>
       <p class="hint">
         What a report shows, and of which part of a log. Charts come from views saved on the Signals page; signals are found in each log by
-        name, by the end of their path, or by a robot mapping.
+        name, or by the end of their path.
       </p>
       <div class="card-actions">
         <md-filled-button id="new-template" @click="editing = blankTemplate()">New template</md-filled-button>
@@ -612,29 +577,6 @@ onUnmounted(() => clearInterval(statusTimer));
     </section>
   </template>
 
-  <!-- Robot mappings -->
-  <section v-else class="card wide">
-    <h2>Robot mappings</h2>
-    <p class="hint">
-      When a robot names its signals differently (another team's, or code that changed), say which of its signals each template and view
-      asks for, or that it hasn't one. Reports of that robot's logs use it, and say what's missing.
-    </p>
-    <div class="field-row">
-      <label class="pick">
-        <span class="hint small">Robot</span>
-        <select id="mapping-robot" v-model="mappingRobot">
-          <option v-for="robot in robots" :key="robot" :value="robot">{{ robot }}{{ mappings.some((m) => m.robot === robot) ? ' (mapped)' : '' }}</option>
-          <option v-if="mappingRobot && !robots.includes(mappingRobot)" :value="mappingRobot">{{ mappingRobot }}</option>
-        </select>
-      </label>
-      <form class="add-robot" @submit.prevent="addRobot">
-        <input v-model="newRobot" placeholder="Another robot, e.g. frc254" aria-label="Another robot" maxlength="40" />
-        <button class="link" type="submit">Add</button>
-      </form>
-    </div>
-    <MappingEditor v-if="mappingRobot" :robot="mappingRobot" :mapping="mappingFor" :logs="logs" :views="views" :templates="templates"
-      @save="saveMapping" />
-  </section>
 </template>
 
 <style scoped>

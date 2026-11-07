@@ -7,7 +7,7 @@ import type { AccountStatus } from '@shared/account';
 import { formatTime } from '@/format';
 
 // Signing in to a greybots-apps account shares the library (views,
-// templates, pipelines, robot mappings) with the team (#148).
+// templates, auto reports) with the team (#148).
 
 const account = ref<AccountStatus | null>(null);
 const email = ref('');
@@ -57,7 +57,7 @@ onUnmounted(() => clearInterval(timer));
   <section id="account-section" class="card">
     <h2>Team account</h2>
     <p class="hint">
-      Signed in with a greybots-apps account, saved views, report templates, auto reports and robot mappings are shared with the team, and
+      Signed in with a greybots-apps account, saved views, report templates and auto reports are shared with the team, and
       theirs come here. Members and above share; only leads and admins delete what's shared. Reports and notes stay on this computer.
     </p>
     <template v-if="account?.signedIn">

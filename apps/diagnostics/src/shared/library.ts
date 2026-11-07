@@ -1,6 +1,6 @@
 // What people make and keep to look at logs again and again (#148): saved
 // views of the chart, report templates, the pipelines that turn new logs
-// into reports, and mappings from one robot's signal names to another's.
+// into reports.
 // Kept in the data folder's library/, and synced with the team's cloud
 // copy when signed in. Reports made from them are kept in reports/.
 //
@@ -11,9 +11,11 @@ import type { MatchInfo, MatchType } from './offload';
 import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
 
-export type LibraryKind = 'view' | 'template' | 'pipeline' | 'mapping';
+export type LibraryKind = 'view' | 'template' | 'pipeline';
 
-export const libraryKinds: LibraryKind[] = ['view', 'template', 'pipeline', 'mapping'];
+// Robot mappings (a kind 'mapping') were dropped: ones still in a data
+// folder or the team's library are left there, and not read.
+export const libraryKinds: LibraryKind[] = ['view', 'template', 'pipeline'];
 
 // Where an item stands with the team's cloud copy.
 export interface CloudState {
@@ -141,32 +143,18 @@ export interface Pipeline extends LibraryItemBase {
   templateIds: string[];
 }
 
-// --- Mappings ---
-
-// A robot's own names for the signals views and templates ask for: for
-// another team's robot, or a robot whose code names things differently.
-export interface SignalMapping extends LibraryItemBase {
-  kind: 'mapping';
-  // Which robot's data ("frc254"); also in `robot`.
-  // The signal asked for -> the robot's signal, or null when it has none
-  // (flagged: a report says it's missing rather than guessing).
-  fields: Record<string, string | null>;
-}
-
-export type LibraryItem = SavedView | ReportTemplate | Pipeline | SignalMapping;
+export type LibraryItem = SavedView | ReportTemplate | Pipeline;
 
 export interface LibraryItemOf {
   view: SavedView;
   template: ReportTemplate;
   pipeline: Pipeline;
-  mapping: SignalMapping;
 }
 
 export const kindLabels: Record<LibraryKind, { one: string; many: string }> = {
   view: { one: 'view', many: 'views' },
   template: { one: 'report template', many: 'report templates' },
-  pipeline: { one: 'auto report', many: 'auto reports' },
-  mapping: { one: 'robot mapping', many: 'robot mappings' }
+  pipeline: { one: 'auto report', many: 'auto reports' }
 };
 
 export const scopeLabels: Record<ReportScope['type'], string> = {

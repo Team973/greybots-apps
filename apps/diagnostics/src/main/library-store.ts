@@ -72,7 +72,7 @@ export function saveLibraryItem(settings: Settings, raw: unknown, who: string | 
       createdBy: existing?.createdBy ?? who,
       cloud: existing?.cloud ?? null
     }, now);
-    if (!item) throw new Error("That can't be saved: it isn't a view, template, auto report or mapping.");
+    if (!item) throw new Error("That can't be saved: it isn't a view, template or auto report.");
     await writeItem(settings, item);
     return item;
   });

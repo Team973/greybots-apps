@@ -457,7 +457,7 @@ export function cleanPanels(raw: unknown): PlotPanel[] {
 }
 
 // A panel with each of its signals found another way (in another log, by
-// a robot's mapping): a signal not found is left as it was.
+// the end of its path): a signal not found is left as it was.
 export function mapPanelKeys(panel: PlotPanel, find: (key: string) => string | null): PlotPanel {
   const map = (key: string) => (key ? find(key) ?? key : key);
   switch (panel.type) {

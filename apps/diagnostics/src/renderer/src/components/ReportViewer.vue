@@ -128,7 +128,7 @@ const at = (t: number) => {
         Made {{ formatTime(report.generated) }} · {{ report.by }} · from the template “{{ report.template.name }}”
       </p>
       <p v-if="report.missing.length" class="warning-text small">
-        Not in this log: {{ report.missing.join(', ') }}. A robot mapping for {{ report.robot || 'this robot' }} can say which signals they are.
+        Not in this log: {{ report.missing.join(', ') }}.
       </p>
     </header>
 

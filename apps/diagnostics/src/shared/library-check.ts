@@ -160,15 +160,5 @@ export function cleanLibraryItem(raw: unknown, now = new Date().toISOString()): 
         matchTypes: strings(raw.matchTypes).filter((t): t is MatchType | 'none' => matchTypes.has(t)),
         templateIds: strings(raw.templateIds, 50)
       };
-    case 'mapping': {
-      const fields: Record<string, string | null> = {};
-      if (isObject(raw.fields)) {
-        for (const [wanted, mapped] of Object.entries(raw.fields).slice(0, 2000)) {
-          if (typeof mapped === 'string' || mapped === null) fields[wanted.slice(0, 500)] = mapped === null ? null : mapped.slice(0, 500);
-        }
-      }
-      // A mapping is always for a robot.
-      return base.robot ? { ...base, kind: 'mapping', fields } : null;
-    }
   }
 }

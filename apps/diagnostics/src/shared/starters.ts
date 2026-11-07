@@ -5,7 +5,7 @@
 // templates are Match Report (Pit Health, Battery Health and the
 // mechanisms together), Match Review, Autonomous and Power Analysis. Named as Team
 // 973's robot code logs things (DogLog under /Robot); other robots' signals
-// are found by the end of their path, or by a robot mapping. They have fixed
+// are found by the end of their path. They have fixed
 // ids, so adding them again changes nothing.
 //
 // Nothing here may touch Node or the DOM.
