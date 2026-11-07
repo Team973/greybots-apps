@@ -352,7 +352,7 @@ onUnmounted(() => clearInterval(statusTimer));
           </header>
           <ul v-if="card.reports.length" class="card-reports">
             <li v-for="r in card.reports" :key="r.id">
-              <a href="#" @click.prevent="go({ tab: 'reports', report: r.id })">{{ r.name }}</a>
+              <a href="#" :title="r.name" @click.prevent="go({ tab: 'reports', report: r.id })">{{ r.templateName }}</a>
             </li>
           </ul>
           <p v-else class="hint small">

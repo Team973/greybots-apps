@@ -273,7 +273,10 @@ export interface ReportProblem {
 // The list of reports, without their data.
 export interface ReportSummary {
   id: string;
+  // "Autonomous · mttd P5, Nov 6, 7:09 PM": its template's name and its log.
   name: string;
+  // Just its template's name ("Autonomous"), for where the log is shown already.
+  templateName: string;
   generated: string;
   by: string;
   templateId: string;
@@ -290,6 +293,7 @@ export interface ReportSummary {
 export const reportSummary = (report: Report): ReportSummary => ({
   id: report.id,
   name: report.name,
+  templateName: report.template?.name || report.name,
   generated: report.generated,
   by: report.by,
   templateId: report.templateId,

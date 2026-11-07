@@ -12,7 +12,7 @@ function log(id: string, match: MatchInfo | null, recorded: string): SignalLogFi
 }
 
 function report(id: string, logId: string, generated: string, problems: ReportSummary['problems'], missing = 0, name = 'Match Review'): ReportSummary {
-  return { id, name, generated, by: 'Jo', templateId: 't', logId, logLabel: `${logId} label`, robot: 'frc973', match: null, missing, problems };
+  return { id, name: `${name} · ${logId} label`, templateName: name, generated, by: 'Jo', templateId: 't', logId, logLabel: `${logId} label`, robot: 'frc973', match: null, missing, problems };
 }
 
 const q12 = log('q12.wpilog', { event: 'mttd', type: 'qualification', number: 12 }, '2026-11-07T20:00:00Z');
@@ -72,8 +72,10 @@ const full = {
     { id: 'i', kind: 'mode', severity: 'info', start: 2, end: null, title: 'Enabled', detail: '', count: 1, key: null }
   ]
 } as unknown as Report;
-const summary = reportSummary(full);
+const summary = reportSummary({ ...full, name: 'Autonomous · mttd P5, Nov 6, 7:09 PM', template: { name: 'Autonomous' } as Report['template'] });
 assert.equal(summary.missing, 2);
+// The card shows just the template's name: the card says which log.
+assert.equal(summary.templateName, 'Autonomous');
 assert.deepEqual(summary.problems, [{ id: 'e', severity: 'error', title: 'Fault' }]);
 // Reports made before problems were kept have none.
 assert.deepEqual(reportSummary({ ...full, problems: undefined }).problems, []);
