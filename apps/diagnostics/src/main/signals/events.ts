@@ -490,19 +490,24 @@ export function matchPhases(changes: ModeChange[], end: number, inMatch: boolean
 
 // --- Device faults, from Hoot logs ---
 
-// A device's fault: a current limit holding is the motor doing as it was
-// told, so information (hidden as routine). Otherwise by the device:
-// - a motor controller's are warnings: a motor faults often (a current limit
-//   holding) and the robot carries on;
+// A device's fault. A sticky fault stays set until cleared, so says only
+// that it happened at some point, maybe before this log. Information
+// (hidden as routine):
+// - a current limit holding: the motor doing as it was told;
+// - a motor controller's or CANcoder's sticky fault: the fault itself, while
+//   it happened, is listed too.
+// Otherwise by the device:
+// - a motor controller's are warnings: a motor faults often and the robot
+//   carries on;
 // - the Pigeon's are errors, sticky or not: the robot's heading is
 //   everything it drives and aims by;
-// - anything else's (a CANcoder) is an error while it's happening, and a
-//   warning once only its sticky twin is set (that stays set until cleared,
-//   so says only that it happened at some point, maybe before this log).
+// - anything else's (a CANcoder) is an error while it's happening; any
+//   other device's sticky fault a warning.
 const stickyFault = /(^|\/)StickyFault_/;
 const currentLimit = /(Sticky)?Fault_(Stator|Supply)CurrLimit$/;
 const motorDevice = /^(TalonFXS?|TalonSRX|VictorSPX)-/;
 const pigeonDevice = /^Pigeon2-/;
+const cancoderDevice = /^CANcoder-/;
 
 export const isStickyFault = (name: string) => stickyFault.test(name);
 
@@ -520,6 +525,7 @@ const faultWords: Record<string, string> = {
 
 export function faultSeverity(fault: string): EventSeverity {
   if (currentLimit.test(fault)) return 'info';
+  if (isStickyFault(fault) && (motorDevice.test(fault) || cancoderDevice.test(fault))) return 'info';
   if (pigeonDevice.test(fault)) return 'error';
   if (motorDevice.test(fault)) return 'warning';
   return isStickyFault(fault) ? 'warning' : 'error';

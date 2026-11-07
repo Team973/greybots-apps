@@ -37,12 +37,13 @@ assert.equal(faultSeverity('TalonFX-1/Fault_StatorCurrLimit'), 'info');
 assert.equal(faultSeverity('TalonFX-1/StickyFault_SupplyCurrLimit'), 'info');
 assert.equal(faultSeverity('TalonFX-1/Fault_ForwardSoftLimit'), 'warning');
 assert.equal(faultSeverity('TalonFX-1/Fault_BridgeBrownout'), 'warning');
-assert.equal(faultSeverity('TalonFX-1/StickyFault_BridgeBrownout'), 'warning');
+assert.equal(faultSeverity('TalonFX-1/StickyFault_BridgeBrownout'), 'info');
 assert.equal(faultSeverity('TalonFXS-7/Fault_DeviceTemp'), 'warning');
 assert.equal(faultSeverity('Pigeon2-1/Fault_Hardware'), 'error');
 assert.equal(faultSeverity('Pigeon2-1/StickyFault_BootDuringEnable'), 'error');
 assert.equal(faultSeverity('CANcoder-4/Fault_BadMagnet'), 'error');
-assert.equal(faultSeverity('CANcoder-4/StickyFault_BadMagnet'), 'warning');
+assert.equal(faultSeverity('CANcoder-4/StickyFault_BadMagnet'), 'info');
+assert.equal(faultSeverity('CANrange-3/StickyFault_Hardware'), 'warning');
 // Notes' files can't step out of notes/.
 assert.deepEqual(notesPathSegments('logs/frc973/2026-10-18/roborio/a.wpilog'), ['notes', 'frc973~2026-10-18~roborio~a.wpilog.json']);
 assert.equal(notesPathSegments('../../x')[1].includes('/'), false);
