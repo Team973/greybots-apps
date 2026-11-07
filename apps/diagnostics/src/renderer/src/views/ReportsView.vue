@@ -294,7 +294,7 @@ onUnmounted(() => clearInterval(statusTimer));
     <section class="card">
       <h2>Reports</h2>
       <input v-if="reports.length > 5" v-model="reportQuery" class="search" type="search" placeholder="Find a report" aria-label="Find a report" />
-      <p v-if="reports.length === 0" class="hint">None yet. They're made here, or by a pipeline when logs are offloaded.</p>
+      <p v-if="reports.length === 0" class="hint">None yet. They're made here, or by a pipeline when logs are downloaded.</p>
       <table v-else id="report-list" class="plain">
         <thead><tr><th>Report</th><th>Made</th><th>By</th></tr></thead>
         <tbody>
@@ -359,7 +359,7 @@ onUnmounted(() => clearInterval(statusTimer));
         <label class="check"><input v-model="editingPipeline.enabled" type="checkbox" /> On</label>
         <fieldset>
           <legend class="hint small">Runs on logs that are</legend>
-          <label class="check"><input v-model="editingPipeline.onOffload" type="checkbox" /> Offloaded from the robot</label>
+          <label class="check"><input v-model="editingPipeline.onOffload" type="checkbox" /> Downloaded from the robot</label>
           <label class="check"><input v-model="editingPipeline.onImport" type="checkbox" /> Imported</label>
         </fieldset>
         <fieldset>
@@ -400,7 +400,7 @@ onUnmounted(() => clearInterval(statusTimer));
           <div class="what">
             <strong>{{ p.name }}</strong>
             <span class="hint small">
-              {{ p.enabled ? 'On' : 'Off' }} · on {{ [p.onOffload ? 'offload' : '', p.onImport ? 'import' : ''].filter(Boolean).join(' and ') || 'nothing' }}
+              {{ p.enabled ? 'On' : 'Off' }} · on {{ [p.onOffload ? 'download' : '', p.onImport ? 'import' : ''].filter(Boolean).join(' and ') || 'nothing' }}
               · {{ p.templateIds.map(templateName).join(', ') || 'no templates' }}
             </span>
             <span class="run small">

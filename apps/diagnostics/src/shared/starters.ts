@@ -224,7 +224,7 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
 
 const pipeline: Pipeline = {
   ...base('5f0c2a10-0003-4000-8000-000000000001', 'pipeline', 'After each qualification match',
-    'Match Review and Match Report for every qualification match offloaded. Off until someone turns it on.'),
+    'Match Review and Match Report for every qualification match downloaded. Off until someone turns it on.'),
   kind: 'pipeline',
   enabled: false,
   onOffload: true,

@@ -12,7 +12,7 @@ import TeamAccount from '@/components/TeamAccount.vue';
 import { useSettingsDraft } from '@/settings-draft';
 import { useSettingsStore } from '@/stores/settings-store';
 
-// The robot connection is set on the Offload page; the rest here.
+// The robot connection is set on the Download page; the rest here.
 const store = useSettingsStore();
 const { draft, errors, saveState, edit, typed } = useSettingsDraft();
 const defaultDirectory = ref('');
@@ -76,13 +76,13 @@ onMounted(async () => {
   <SaveStatus id="settings-saved" :state="saveState" />
 
   <section class="card">
-    <h2>Offload</h2>
-    <p class="hint">How to reach the robot is set on the <RouterLink to="/offload">Offload</RouterLink> page.</p>
+    <h2>Download</h2>
+    <p class="hint">How to reach the robot is set on the <RouterLink to="/download">Download</RouterLink> page.</p>
 
     <div class="field-row">
       <div>
-        Offload logs automatically
-        <p class="hint">Pulls the robot's logs as soon as it connects. They can always be pulled from the Offload page.</p>
+        Download logs automatically
+        <p class="hint">Downloads the robot's logs as soon as it connects. They can always be downloaded from the Download page.</p>
       </div>
       <Switch id="auto-offload-switch" :model-value="draft.autoOffload"
         @update:model-value="edit({ autoOffload: $event })"></Switch>

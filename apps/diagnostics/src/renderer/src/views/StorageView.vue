@@ -177,7 +177,7 @@ onUnmounted(() => clearInterval(importTimer));
       <strong>Drop logs here</strong>
       <span class="hint">
         Data logs (.wpilog), Hoot logs (.hoot), Driver Station logs (.dslog, .dsevents), folders of them, or zip files.
-        Each is filed by team, day and kind, like an offload; ones already here are skipped.
+        Each is filed by team, day and kind, like a download; ones already here are skipped.
       </span>
       <div class="card-actions">
         <md-outlined-button id="import-files" :disabled="importStatus?.running" @click="choose(false)">Choose files…</md-outlined-button>

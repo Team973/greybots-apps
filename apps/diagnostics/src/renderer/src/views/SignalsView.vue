@@ -976,7 +976,7 @@ function onReviewKey(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onReviewKey));
 onUnmounted(() => window.removeEventListener('keydown', onReviewKey));
 
-// Lists the data logs again (new ones copied in, offloads since), keeping
+// Lists the data logs again (new ones copied in, downloads since), keeping
 // the open one if it's still there. On coming to the page, that's the one
 // last open, here or before the app was closed.
 async function loadLogs() {
@@ -1069,9 +1069,9 @@ watch(() => route.query.session, (session) => {
           </label>
         </div>
         <p v-if="filterHidesAll" class="hint small">No logs match the filter.</p>
-        <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're pulled from the robot on the Offload page, or imported on the Storage page.</p>
+        <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're downloaded from the robot on the Download page, or imported on the Storage page.</p>
         <p v-else-if="logs && !isLive" class="hint small">
-          Logs in the data folder's <span class="path">logs</span>, offloaded or put there by hand: data logs, Hoot logs, and
+          Logs in the data folder's <span class="path">logs</span>, downloaded or put there by hand: data logs, Hoot logs, and
           Driver Station logs with a robot connected.
         </p>
         <p v-if="isLive" id="log-summary" class="hint">

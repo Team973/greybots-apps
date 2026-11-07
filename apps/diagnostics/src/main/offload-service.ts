@@ -10,11 +10,11 @@ import {
   type OffloadStatus,
   type RobotLogLocation
 } from '@shared/offload';
-import { robotAddresses, usbAddress } from '@shared/robot-address';
+import { robotAddresses } from '@shared/robot-address';
 import type { Settings } from '@shared/settings';
-import { checkPort } from './connection-check';
+import { findRobot } from './offload/find-robot';
 import { loadIndex } from './offload/offload-index';
-import { offloadLogs, type OffloadResult } from './offload/offload';
+import { offloadLogs, openIndexStore, type OffloadResult } from './offload/offload';
 import { LocalReader, SftpReader } from './offload/readers';
 import { afterNewLogs, logIdsNow } from './reports';
 import { loadSettings } from './settings-store';
@@ -40,23 +40,19 @@ const status: OffloadStatus = {
   running: false,
   autoOffload: true,
   robotHost: null,
-  current: null,
+  stage: 'idle',
+  looking: [],
+  jobs: [],
   lastRun: null
 };
 
+// Where the robot last answered when the watcher looked, and when: a
+// download asked for right after goes straight there.
+let lastFound: { host: string; at: number } | null = null;
+const lastFoundMs = 10_000;
+
 export function offloadStatus(): OffloadStatus {
   return structuredClone(status);
-}
-
-// Where the robot answers on the SSH port, or null. USB if it answers
-// there: a cable is faster and steadier than the radio. Otherwise the first
-// address, in the order they're listed.
-async function findRobot(settings: Settings): Promise<string | null> {
-  const hosts = await Promise.all(
-    robotAddresses(settings).map(async ({ host }) => ((await checkPort(host, 22, 'SSH')).open ? host : null))
-  );
-  if (hosts.includes(usbAddress)) return usbAddress;
-  return hosts.find((host) => host !== null) ?? null;
 }
 
 function addResult(summary: OffloadRunSummary, result: OffloadResult) {
@@ -71,8 +67,11 @@ function addResult(summary: OffloadRunSummary, result: OffloadResult) {
 // folder, if this computer has one. Resolves to why it didn't start, or ''.
 // `host` skips looking for the robot when the caller just found it.
 export async function runOffload(automatic: boolean, host?: string | null): Promise<string> {
-  if (status.running) return 'An offload is already running.';
+  if (status.running) return 'A download is already running.';
   status.running = true;
+  status.stage = 'connecting';
+  status.looking = [];
+  status.jobs = [];
 
   const summary: OffloadRunSummary = {
     startedAt: new Date().toISOString(),
@@ -85,49 +84,72 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     bytes: 0,
     errors: []
   };
-  const onProgress = (progress: OffloadStatus['current']) => { status.current = progress; };
-  // The logs there before, so the pipelines run on the new ones after.
-  let before: Set<string> | null = null;
+  // Each job's progress has its own row, in the order the jobs started.
+  const onProgress = (progress: OffloadStatus['jobs'][number]) => {
+    const at = status.jobs.findIndex((job) => job.label === progress.label);
+    if (at === -1) status.jobs.push(progress);
+    else status.jobs[at] = progress;
+  };
+  // The logs there before, so the pipelines run on the new ones after. A
+  // scan of the whole data folder, so it goes on while the robot is found.
+  let before: Promise<Set<string> | null> = Promise.resolve(null);
 
   try {
     const settings = await loadSettings();
-    before = await logIdsNow(settings);
+    before = logIdsNow(settings).catch(() => null);
     const directory = dataDirectory(settings);
     await ensureStorageLayout(directory);
     const robot = robotFolderName(settings);
     const since = settings.offloadDays > 0 ? new Date(Date.now() - settings.offloadDays * 24 * 60 * 60 * 1000) : null;
+    // One index for both jobs, so neither writes over the other's entries.
+    const store = await openIndexStore(directory);
 
-    const robotHost = host === undefined ? await findRobot(settings) : host;
-    status.robotHost = robotHost;
-    if (robotHost) {
+    // Driver Station logs are on this computer: they don't wait for the robot.
+    const local = process.platform === 'win32'
+      ? offloadLogs(directory, { label: 'Driver Station logs', reader: new LocalReader(), origin: 'local', robot, locations: driverStationLocations, since }, onProgress, new Date(), store)
+        .then((result) => addResult(summary, result), (error: Error) => { summary.errors.push(`Driver Station logs: ${error.message}`); })
+      : Promise.resolve();
+
+    const fromRobot = (async () => {
+      const recent = lastFound && Date.now() - lastFound.at < lastFoundMs ? lastFound.host : undefined;
+      status.looking = robotAddresses(settings).map((address) => address.host);
+      const robotHost = host !== undefined ? host : recent ?? (await findRobot(settings));
+      status.looking = [];
+      status.robotHost = robotHost;
+      if (!robotHost) {
+        status.stage = 'pulling';
+        if (!automatic) summary.errors.push('No robot found. Check connection on the Download page shows where it was looked for.');
+        return;
+      }
       summary.host = robotHost;
       let reader: SftpReader | null = null;
       try {
         reader = await SftpReader.connect(robotHost);
+        status.stage = 'pulling';
         const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since };
-        addResult(summary, await offloadLogs(directory, job, onProgress));
+        addResult(summary, await offloadLogs(directory, job, onProgress, new Date(), store));
       } catch (error) {
-        summary.errors.push(`${reader ? 'Offload from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
+        status.stage = 'pulling';
+        summary.errors.push(`${reader ? 'Download from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
       } finally {
         reader?.close();
       }
-    } else if (!automatic) {
-      summary.errors.push('No robot found. Check connection on the Offload page shows where it was looked for.');
-    }
+    })();
 
-    if (process.platform === 'win32') {
-      const reader = new LocalReader();
-      const job = { label: 'Driver Station logs', reader, origin: 'local' as const, robot, locations: driverStationLocations, since };
-      addResult(summary, await offloadLogs(directory, job, onProgress));
-    }
+    await Promise.all([fromRobot, local]);
+    await store.writer.flush();
   } catch (error) {
     summary.errors.push((error as Error).message);
   } finally {
     summary.finishedAt = new Date().toISOString();
     status.lastRun = summary;
-    status.current = null;
+    status.stage = 'idle';
+    status.looking = [];
+    status.jobs = [];
     status.running = false;
-    if (before && summary.copied > 0) afterNewLogs(before, 'offload').catch(() => {});
+    if (summary.copied > 0) {
+      before.then((ids) => (ids ? afterNewLogs(ids, 'offload') : undefined)).catch(() => {});
+    }
   }
   return '';
 }
@@ -145,6 +167,7 @@ export function watchForRobot() {
     const host = await findRobot(settings);
     const appeared = host !== null && status.robotHost === null;
     status.robotHost = host;
+    lastFound = host ? { host, at: Date.now() } : null;
     if (appeared && settings.autoOffload) await runOffload(true, host);
   };
 

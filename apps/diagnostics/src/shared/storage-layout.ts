@@ -46,7 +46,7 @@ export const storageFolders: StorageFolder[] = [
   },
   {
     name: 'index',
-    purpose: 'What has been offloaded, and which match or test each file belongs to.'
+    purpose: 'What has been downloaded, and which match or test each file belongs to.'
   }
 ];
 
@@ -129,7 +129,7 @@ models/<model>/
     AdvantageScope keeps them.
 
 index/
-    What has been offloaded, and which match or test each file belongs to.
+    What has been downloaded, and which match or test each file belongs to.
 
 It is safe to copy this whole folder to back it up or move it to another
 computer. Don't rename or edit the files inside it.
