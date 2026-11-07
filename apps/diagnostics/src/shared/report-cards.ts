@@ -78,3 +78,11 @@ export function filterCards(cards: LogCard[], filter: CardFilter): LogCard[] {
     return searchMatches(filter.query, text, []);
   });
 }
+
+// The templates a log has no report from yet: those for any robot or for
+// its robot. None for a log that isn't in the data folder any more.
+export function missingTemplates<T extends { id: string; robot: string | null }>(card: LogCard, templates: T[]): T[] {
+  if (!card.log) return [];
+  const made = new Set(card.reports.map((report) => report.templateId));
+  return templates.filter((template) => !made.has(template.id) && (!template.robot || template.robot === card.robot));
+}

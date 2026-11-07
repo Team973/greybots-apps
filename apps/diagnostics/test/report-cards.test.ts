@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import type { SignalLogFile } from '@shared/ipc';
 import { reportSummary, type Report, type ReportSummary } from '@shared/library';
 import type { MatchInfo } from '@shared/offload';
-import { defaultCardFilter, filterCards, logCards } from '@shared/report-cards';
+import { defaultCardFilter, filterCards, logCards, missingTemplates } from '@shared/report-cards';
 
 function log(id: string, match: MatchInfo | null, recorded: string): SignalLogFile {
   return { id, localPath: id, name: id, robot: 'frc973', size: 1, recorded, match, hoots: [], dsLogs: [] };
@@ -62,6 +62,20 @@ assert.deepEqual(ids({ event: 'caven1' }), []);
 // Search: the log's title, and its reports' names.
 assert.deepEqual(ids({ query: 'power' }), ['q12.wpilog']);
 assert.deepEqual(ids({ analyzedOnly: false, query: 'e3' }), ['e3.wpilog']);
+
+// --- What a log is missing ---
+const templates = [
+  { id: 't', name: 'Match Review', robot: null },
+  { id: 'auto', name: 'Autonomous', robot: null },
+  { id: 'b-only', name: 'B robot', robot: 'frc973B' },
+  { id: 'ours', name: 'Ours', robot: 'frc973' }
+];
+// Q12 has reports from template t: the rest that apply to its robot.
+assert.deepEqual(missingTemplates(q12Card, templates).map((t) => t.id), ['auto', 'ours']);
+// No reports: every one that applies.
+assert.deepEqual(missingTemplates(cards[1], templates).map((t) => t.id), ['t', 'auto', 'ours']);
+// A log that's gone can't have reports made.
+assert.deepEqual(missingTemplates(gone, templates), []);
 
 // --- A report's summary keeps its errors and warnings, not information ---
 const full = {

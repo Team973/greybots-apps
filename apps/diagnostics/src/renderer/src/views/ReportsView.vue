@@ -16,7 +16,7 @@ import {
   type SignalMapping
 } from '@shared/library';
 import { describeMatch, type MatchType } from '@shared/offload';
-import { defaultCardFilter, filterCards, logCards, type CardFilter, type LogCard } from '@shared/report-cards';
+import { defaultCardFilter, filterCards, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
 import type { PipelineStatus } from '@shared/reports';
 import MappingEditor from '@/components/MappingEditor.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
@@ -111,11 +111,33 @@ watch(cardFilter, () => (cardLimit.value = cardPage), { deep: true });
 const problemList = (problems: { title: string }[]) => problems.map((p) => p.title).join('\n');
 const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log no longer in the data folder');
 
-// "Make a report" for this log: picks it in the form above.
-function reportOn(card: LogCard) {
-  generateLog.value = card.id;
-  document.getElementById('make-report')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+// The reports a log doesn't have yet, made from its card: one from each
+// template that applies to its robot and hasn't made one for it. One log at
+// a time; the cards update as each report is made.
+const missingFor = (card: LogCard) => missingTemplates(card, templates.value);
+const making = ref<{ logId: string; done: number; total: number } | null>(null);
+async function makeMissing(card: LogCard) {
+  const wanted = missingFor(card);
+  if (making.value || wanted.length === 0) return;
+  making.value = { logId: card.id, done: 0, total: wanted.length };
+  problem.value = '';
+  try {
+    for (const template of wanted) {
+      await window.diagnostics.generateReport(template.id, card.id);
+      making.value = { ...making.value, done: making.value.done + 1 };
+      reports.value = await window.diagnostics.getReports();
+    }
+  } catch (error) {
+    problem.value = `${card.title}: ${cleanError(error)}`;
+  } finally {
+    making.value = null;
+  }
 }
+const makeLabel = (card: LogCard) => {
+  if (making.value?.logId === card.id) return `Making ${making.value.done + 1} of ${making.value.total}…`;
+  const count = missingFor(card).length;
+  return card.reports.length ? `Make ${count} more` : `Make ${count} report${count === 1 ? '' : 's'}`;
+};
 
 async function generate() {
   if (!generateTemplate.value || !generateLog.value) return;
@@ -347,8 +369,15 @@ onUnmounted(() => clearInterval(statusTimer));
       <div v-else id="report-cards" class="log-cards">
         <article v-for="card in shownCards.slice(0, cardLimit)" :key="card.id" class="log-card" :class="{ gone: !card.log }">
           <header>
-            <strong>{{ card.title }}</strong>
-            <span class="hint small">{{ cardWhen(card) }}{{ card.robot ? ` · ${card.robot}` : '' }}</span>
+            <div class="card-title">
+              <strong>{{ card.title }}</strong>
+              <span class="hint small">{{ cardWhen(card) }}{{ card.robot ? ` · ${card.robot}` : '' }}</span>
+            </div>
+            <!-- Always at the top right: the reports this log doesn't have yet. -->
+            <md-outlined-button v-if="missingFor(card).length" class="make-missing"
+              :disabled="!!making"
+              :title="`Makes: ${missingFor(card).map((t) => t.name).join(', ')}`"
+              @click="makeMissing(card)">{{ makeLabel(card) }}</md-outlined-button>
           </header>
           <ul v-if="card.reports.length" class="card-reports">
             <li v-for="r in card.reports" :key="r.id">
@@ -357,7 +386,6 @@ onUnmounted(() => clearInterval(statusTimer));
           </ul>
           <p v-else class="hint small">
             No reports yet.
-            <button v-if="templates.length" class="link" @click="reportOn(card)">Make one</button>
           </p>
           <footer v-if="card.reports.length" class="flags">
             <span v-if="card.errors.length" class="flag" :style="{ '--flag': flagColor('error') }" :title="problemList(card.errors)">
@@ -619,8 +647,23 @@ select option {
 
 .log-card header {
   display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.card-title {
+  display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+}
+
+.make-missing {
+  flex: none;
+  --md-outlined-button-container-height: 32px;
+  --md-outlined-button-leading-space: 12px;
+  --md-outlined-button-trailing-space: 12px;
 }
 
 .card-reports {
