@@ -2,7 +2,7 @@
 // roboRIO console's framing, and whole records from a log and live.
 
 import assert from 'node:assert/strict';
-import { cleanModelConfig, cleanPanel, cleanPanels, foldSlices, mapPanelKeys, posesFrom, recordAt, timeInStates, yawOf, newPanel } from '@shared/plots';
+import { cleanModelConfig, cleanPanel, cleanPanels, foldSlices, mapPanelKeys, posesFrom, poseWindow, recordAt, timeInStates, yawOf, newPanel } from '@shared/plots';
 import { cleanLibraryItem } from '@shared/library-check';
 import { viewKeys } from '@shared/library';
 import { FrameReader, parseFrame } from '@main/live/net-console';
@@ -133,6 +133,32 @@ assert.equal(log.records('/nope'), null);
 // The pose's fields are signals too, beside it.
 assert.ok(log.catalog().some((s) => s.key === `${key}/translation/x` && s.parent === key));
 assert.deepEqual([...log.read('console')!.values].slice(0, 2), ['line 0', 'line 1']);
+
+// --- Poses while playing a long log ---
+// The window read for poses moves in whole chunks and always holds t.
+assert.deepEqual(poseWindow(0), [-30, 60]);
+assert.deepEqual(poseWindow(29.9), [-30, 60]);
+assert.deepEqual(poseWindow(30), [0, 90]);
+assert.deepEqual(poseWindow(-1), [-60, 30]);
+for (const at of [0, 12.5, 59.99, 60, 400]) {
+  const [from, to] = poseWindow(at);
+  assert.ok(from < at && at < to, `${at} in [${from}, ${to}]`);
+}
+// A pose every 20 ms for 500 s: more than a read keeps (20000).
+const longLog = new LogSignalSource(poseLog(key, Array.from({ length: 25000 }, (_, i) => ({ time: 1 + i * 0.02, x: i * 0.001, y: 1, heading: 0 }))).bytes());
+const early = 10;
+// The whole log read at once has lost its start: no pose early on.
+const whole = longLog.records(key, {}, 20000)!;
+assert.equal(whole.truncated, true);
+assert.equal(recordAt(whole, early), undefined);
+// Read around the moment shown, the pose is there.
+const [from, to] = poseWindow(early);
+const around = longLog.records(key, { start: from, end: to }, 20000)!;
+assert.equal(around.truncated, false);
+const shown = posesFrom(recordAt(around, early), around.type)[0];
+assert.ok(shown, "a pose at 10 s");
+// One of the first poses (x grows 1 mm a pose), not one of the last (about 25 m).
+assert.ok(shown.x > 0.3 && shown.x < 0.6, `x ${shown.x}`);
 
 // --- Live: console text joins the session ---
 const live = new LiveSignalSource(1_000_000);

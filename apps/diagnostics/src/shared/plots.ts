@@ -177,6 +177,18 @@ export function recordAt(records: SignalRecords, t: number): RecordValue | undef
   return low === 0 ? undefined : records.values[low - 1];
 }
 
+// What to read to show poses at time t: a window around it, not the whole
+// span shown. A read keeps only the latest values (at most 20000, under 7
+// minutes of a pose logged every loop), so over a long span the early part
+// had no poses at all (seen playing a log from the start). The window moves
+// in whole chunks, so playing back reads again every `chunk` seconds rather
+// than every frame, and each window overlaps the last, so the pose shown
+// holds until the next read comes back.
+export function poseWindow(t: number, chunk = 30): [number, number] {
+  const at = Math.floor(t / chunk) * chunk;
+  return [at - chunk, at + 2 * chunk];
+}
+
 // --- Poses ---
 
 // A pose in metres on the field (WPILib's: x along the field from the blue
