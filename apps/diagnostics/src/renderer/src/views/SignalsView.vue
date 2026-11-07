@@ -1217,7 +1217,7 @@ watch(() => route.query.session, (session) => {
       </div>
       <p v-if="copyState !== 'idle' && copyState !== 'copied'" class="error-text">{{ copyState }}</p>
       <p v-if="!onLine" class="hint small">
-        The span shown is the chart's: zoom here, or on the line chart's tab. The moment shown is the pin, the playhead, or now when following live.
+        The span shown is the line chart's: zoom it on the tape below (scroll on it, or drag the window above it) or on the line chart's tab. The moment shown is the pin, the playhead, or now when following live.
       </p>
       <p v-else-if="isLive" class="hint small">
         Scroll to show more or less of the latest; Shift+scroll back, or drag across the chart, to hold it still. Double-click to follow everything kept.
@@ -1302,7 +1302,7 @@ watch(() => route.query.session, (session) => {
           <option v-for="choice in speeds" :key="choice" :value="choice">{{ choice }}×</option>
         </select>
         <TimeTape id="scrub" :full="full" :view="view" :time="tapeTime" :phases="review?.phases ?? []" :enabled="review?.enabled ?? []"
-          @seek="scrub" />
+          @seek="scrub" @zoom="zoomTo" />
         <span id="playhead" class="hint small playhead">
           <template v-if="pin !== null">{{ pin.toFixed(2) }} s<template v-if="phaseClock(review?.phases ?? [], pin)">
             · {{ phaseClock(review?.phases ?? [], pin) }}</template></template>

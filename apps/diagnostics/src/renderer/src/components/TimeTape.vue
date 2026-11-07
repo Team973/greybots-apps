@@ -3,11 +3,16 @@ import { computed, ref } from 'vue';
 
 import { phaseClock, tapeLabels, tapeSegments, type MatchPhase, type TapeKind } from '@shared/events';
 
-// The playback tape: the whole log as a strip of film, coloured by what the
-// robot was doing (disabled, auto, teleop, endgame), with the span the line
-// chart shows bracketed and the moment shown (the pin, or the playhead) as
-// a line across it. Click or drag anywhere to move the moment: every tab
-// (the line chart, the field, the 3D robot, the console) shows the same one.
+// The playback tape, in two parts, both coloured by what the robot was
+// doing (disabled, auto, teleop, endgame):
+// - the overview, a thin strip of the whole log with the span shown as a
+//   window: drag the window to move it, its edges to widen or narrow it,
+//   or click elsewhere on the strip to move it there;
+// - the tape, a strip of film of the span shown, zoomed as it is: click or
+//   drag to move the moment shown; scroll to zoom, Shift+scroll to pan,
+//   double-click for everything.
+// The span is the line chart's: zooming either zooms both, and every tab
+// (the line chart, the field, the 3D robot, the console) shows the moment.
 
 const props = defineProps<{
   full: [number, number];
@@ -18,8 +23,10 @@ const props = defineProps<{
   enabled: [number, number][];
 }>();
 
+export type TapeGesture = 'wheel' | 'pan' | 'select' | 'all';
 const emit = defineEmits<{
   seek: [time: number];
+  zoom: [view: [number, number], gesture: TapeGesture];
 }>();
 
 const tapeColors: Record<TapeKind, string> = {
@@ -29,48 +36,96 @@ const tapeColors: Record<TapeKind, string> = {
   teleop: '#2e9e5b',
   endgame: '#1d6e43'
 };
+// The narrowest span shown, seconds (or the whole log, if shorter).
+const minSpan = 0.5;
 
-const length = computed(() => Math.max(1e-9, props.full[1] - props.full[0]));
-const share = (t: number) => Math.min(1, Math.max(0, (t - props.full[0]) / length.value));
-const percent = (t: number) => `${share(t) * 100}%`;
+const fullLength = computed(() => Math.max(1e-9, props.full[1] - props.full[0]));
+const viewLength = computed(() => Math.max(1e-9, props.view[1] - props.view[0]));
+// Where a time is, as a share of the whole log (overview) or of the span (tape).
+const ofFull = (t: number) => Math.min(1, Math.max(0, (t - props.full[0]) / fullLength.value));
+const ofView = (t: number) => (t - props.view[0]) / viewLength.value;
+const pct = (share: number) => `${share * 100}%`;
 
-const segments = computed(() => tapeSegments(props.full, props.phases, props.enabled).map((s) => ({
+const allSegments = computed(() => tapeSegments(props.full, props.phases, props.enabled));
+const overviewSegments = computed(() => allSegments.value.map((s) => ({
   ...s,
-  left: percent(s.start),
-  width: `${(share(s.end) - share(s.start)) * 100}%`,
-  // Named in it where there's room; always in its hover text.
-  label: tapeLabels[s.kind],
-  title: `${tapeLabels[s.kind]}: ${s.start.toFixed(1)}–${s.end.toFixed(1)} s (${(s.end - s.start).toFixed(1)} s)`
+  left: pct(ofFull(s.start)),
+  width: pct(ofFull(s.end) - ofFull(s.start))
 })));
+// The tape's: those in the span shown, cut to it.
+const tapeSegmentsShown = computed(() => allSegments.value
+  .filter((s) => s.end > props.view[0] && s.start < props.view[1])
+  .map((s) => {
+    const start = Math.max(s.start, props.view[0]);
+    const end = Math.min(s.end, props.view[1]);
+    return {
+      ...s,
+      left: pct(ofView(start)),
+      width: pct(ofView(end) - ofView(start)),
+      label: tapeLabels[s.kind],
+      title: `${tapeLabels[s.kind]}: ${s.start.toFixed(1)}–${s.end.toFixed(1)} s (${(s.end - s.start).toFixed(1)} s)`
+    };
+  }));
+
+const clamp = (view: [number, number]): [number, number] => {
+  const [lo, hi] = props.full;
+  const span = Math.min(hi - lo, Math.max(Math.min(minSpan, hi - lo), view[1] - view[0]));
+  const start = Math.min(hi - span, Math.max(lo, view[0]));
+  return [start, start + span];
+};
+const showsAll = computed(() => props.view[0] <= props.full[0] + 1e-6 && props.view[1] >= props.full[1] - 1e-6);
+
+// --- The tape: picking the moment, zooming ---
 
 const tape = ref<HTMLElement | null>(null);
-const timeAt = (clientX: number) => {
+const tapeTime = (clientX: number) => {
   const box = tape.value!.getBoundingClientRect();
-  return props.full[0] + Math.min(1, Math.max(0, (clientX - box.left) / box.width)) * length.value;
+  return props.view[0] + Math.min(1, Math.max(0, (clientX - box.left) / box.width)) * viewLength.value;
 };
-
-// Dragging moves the moment as it goes; hovering shows where a click lands.
 const dragging = ref(false);
 const hover = ref<{ t: number; left: string } | null>(null);
 function onDown(event: PointerEvent) {
   if (event.button !== 0) return;
   dragging.value = true;
   tape.value!.setPointerCapture(event.pointerId);
-  emit('seek', timeAt(event.clientX));
+  emit('seek', tapeTime(event.clientX));
 }
 function onMove(event: PointerEvent) {
-  const t = timeAt(event.clientX);
-  hover.value = { t, left: percent(t) };
+  const t = tapeTime(event.clientX);
+  hover.value = { t, left: pct(ofView(t)) };
   if (dragging.value) emit('seek', t);
 }
 function onUp(event: PointerEvent) {
   dragging.value = false;
   tape.value?.releasePointerCapture(event.pointerId);
 }
+// Scroll zooms about the pointer, as on the line chart; Shift+scroll (or a
+// sideways scroll) pans.
+function onWheel(event: WheelEvent) {
+  const sideways = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  const box = tape.value!.getBoundingClientRect();
+  if (sideways) {
+    const delta = event.shiftKey ? event.deltaY || event.deltaX : event.deltaX;
+    const move = (delta / box.width) * viewLength.value;
+    emit('zoom', clamp([props.view[0] + move, props.view[1] + move]), 'pan');
+    return;
+  }
+  const at = tapeTime(event.clientX);
+  const factor = event.deltaY > 0 ? 1.25 : 1 / 1.25;
+  emit('zoom', clamp([at - (at - props.view[0]) * factor, at + (props.view[1] - at) * factor]), 'wheel');
+}
+const showAll = () => emit('zoom', [props.full[0], props.full[1]], 'all');
 
-// The arrow keys step a tenth of a second (Shift: a second); Home and End.
+// The arrow keys step a tenth of a second (Shift: a second); Home and End;
+// + and - zoom about the moment.
 function onKey(event: KeyboardEvent) {
   const now = props.time ?? props.view[0];
+  if (event.key === '+' || event.key === '=' || event.key === '-') {
+    event.preventDefault();
+    const factor = event.key === '-' ? 1.5 : 1 / 1.5;
+    emit('zoom', clamp([now - (now - props.view[0]) * factor, now + (props.view[1] - now) * factor]), 'wheel');
+    return;
+  }
   const step = event.shiftKey ? 1 : 0.1;
   const to = event.key === 'ArrowLeft' ? now - step : event.key === 'ArrowRight' ? now + step
     : event.key === 'Home' ? props.full[0] : event.key === 'End' ? props.full[1] : null;
@@ -79,35 +134,166 @@ function onKey(event: KeyboardEvent) {
   emit('seek', Math.min(props.full[1], Math.max(props.full[0], to)));
 }
 
+// --- The overview: moving and sizing the window ---
+
+const overview = ref<HTMLElement | null>(null);
+const overviewTime = (clientX: number) => {
+  const box = overview.value!.getBoundingClientRect();
+  return props.full[0] + Math.min(1, Math.max(0, (clientX - box.left) / box.width)) * fullLength.value;
+};
+let windowDrag: { mode: 'move' | 'start' | 'end'; grab: number } | null = null;
+function onOverviewDown(event: PointerEvent, mode: 'move' | 'start' | 'end' | 'jump') {
+  if (event.button !== 0) return;
+  event.stopPropagation();
+  const t = overviewTime(event.clientX);
+  if (mode === 'jump') {
+    // Centred where clicked, then dragged from there.
+    const half = viewLength.value / 2;
+    emit('zoom', clamp([t - half, t + half]), 'pan');
+    windowDrag = { mode: 'move', grab: half };
+  } else windowDrag = { mode, grab: t - props.view[0] };
+  overview.value!.setPointerCapture(event.pointerId);
+}
+function onOverviewMove(event: PointerEvent) {
+  if (!windowDrag) return;
+  const t = overviewTime(event.clientX);
+  const [a, b] = props.view;
+  if (windowDrag.mode === 'move') emit('zoom', clamp([t - windowDrag.grab, t - windowDrag.grab + (b - a)]), 'pan');
+  else if (windowDrag.mode === 'start') emit('zoom', clamp([Math.min(t, b - minSpan), b]), 'select');
+  else emit('zoom', clamp([a, Math.max(t, a + minSpan)]), 'select');
+}
+function onOverviewUp(event: PointerEvent) {
+  windowDrag = null;
+  overview.value?.releasePointerCapture(event.pointerId);
+}
+
 const clock = (t: number) => {
   const phase = phaseClock(props.phases, t);
   return `${t.toFixed(2)} s${phase ? ` · ${phase}` : ''}`;
 };
+const spanText = (seconds: number) => (seconds >= 120 ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s` : `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`);
 </script>
 
 <template>
-  <div ref="tape" class="tape" role="slider" tabindex="0" aria-label="Time" :aria-valuemin="full[0]" :aria-valuemax="full[1]"
-    :aria-valuenow="time ?? undefined" :aria-valuetext="time === null ? 'Nothing pinned' : clock(time)"
-    @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp" @pointerleave="hover = null" @keydown="onKey">
-    <div class="film">
-      <div v-for="(segment, i) in segments" :key="i" class="segment" :class="segment.kind"
-        :style="{ left: segment.left, width: segment.width, background: tapeColors[segment.kind] }" :title="segment.title">
-        <span class="label">{{ segment.label }}</span>
+  <div class="time-tape">
+    <!-- The whole log, and the span shown as a window on it. -->
+    <div ref="overview" class="overview" title="The whole log: drag the window to move the span shown, its edges to widen or narrow it"
+      @pointerdown="onOverviewDown($event, 'jump')" @pointermove="onOverviewMove" @pointerup="onOverviewUp" @pointercancel="onOverviewUp">
+      <div v-for="(segment, i) in overviewSegments" :key="i" class="overview-segment"
+        :style="{ left: segment.left, width: segment.width, background: tapeColors[segment.kind] }"></div>
+      <div v-if="time !== null" class="overview-time" :style="{ left: pct(ofFull(time)) }"></div>
+      <div class="window" :class="{ all: showsAll }" :style="{ left: pct(ofFull(view[0])), width: pct(ofFull(view[1]) - ofFull(view[0])) }"
+        @pointerdown="onOverviewDown($event, 'move')">
+        <span class="handle start" title="Drag to move the start" @pointerdown="onOverviewDown($event, 'start')"></span>
+        <span class="handle end" title="Drag to move the end" @pointerdown="onOverviewDown($event, 'end')"></span>
       </div>
     </div>
-    <!-- The span the line chart shows. -->
-    <div class="window" :style="{ left: percent(view[0]), width: `${(share(view[1]) - share(view[0])) * 100}%` }"></div>
-    <div v-if="hover && !dragging" class="hover-line" :style="{ left: hover.left }"></div>
-    <div v-if="time !== null" class="playhead" :style="{ left: percent(time) }"></div>
-    <div v-if="hover" class="hover-time" :style="{ left: hover.left }">{{ clock(hover.t) }}</div>
+
+    <!-- The span shown, as film. -->
+    <div ref="tape" class="tape" role="slider" tabindex="0" aria-label="Time" :aria-valuemin="full[0]" :aria-valuemax="full[1]"
+      :aria-valuenow="time ?? undefined" :aria-valuetext="time === null ? 'Nothing pinned' : clock(time)"
+      @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp" @pointerleave="hover = null"
+      @wheel.prevent="onWheel" @dblclick="showAll" @keydown="onKey">
+      <div class="film">
+        <div v-for="(segment, i) in tapeSegmentsShown" :key="i" class="segment" :class="segment.kind"
+          :style="{ left: segment.left, width: segment.width, background: tapeColors[segment.kind] }" :title="segment.title">
+          <span class="label">{{ segment.label }}</span>
+        </div>
+      </div>
+      <div v-if="hover && !dragging" class="hover-line" :style="{ left: hover.left }"></div>
+      <div v-if="time !== null && time >= view[0] && time <= view[1]" class="playhead" :style="{ left: pct(ofView(time)) }"></div>
+      <div v-if="hover" class="hover-time" :style="{ left: hover.left }">{{ clock(hover.t) }}</div>
+    </div>
+
+    <div class="tape-axis">
+      <span>{{ clock(view[0]) }}</span>
+      <span class="middle">
+        <template v-if="showsAll">All {{ spanText(full[1] - full[0]) }} · scroll to zoom</template>
+        <template v-else>{{ spanText(view[1] - view[0]) }} of {{ spanText(full[1] - full[0]) }} ·
+          <button class="all-button" @click="showAll">Show all</button></template>
+      </span>
+      <span>{{ clock(view[1]) }}</span>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.time-tape {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* --- The overview --- */
+.overview {
+  position: relative;
+  height: 12px;
+  border-radius: 3px;
+  background: #1b1d21;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.overview-segment {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  opacity: 0.7;
+}
+
+.overview-segment:first-child {
+  border-radius: 2px 0 0 2px;
+}
+
+.overview-time {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  pointer-events: none;
+}
+
+.window {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  box-sizing: border-box;
+  min-width: 8px;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+
+.window.all {
+  background: transparent;
+}
+
+.handle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.handle.start {
+  left: -6px;
+}
+
+.handle.end {
+  right: -6px;
+}
+
+/* --- The tape --- */
 .tape {
   position: relative;
-  flex: 1;
-  min-width: 0;
   height: 34px;
   border-radius: 4px;
   cursor: ew-resize;
@@ -182,18 +368,6 @@ const clock = (t: number) => {
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
 }
 
-.window {
-  position: absolute;
-  top: 1px;
-  bottom: 1px;
-  box-sizing: border-box;
-  min-width: 2px;
-  border: 1.5px solid rgba(255, 255, 255, 0.85);
-  border-radius: 3px;
-  pointer-events: none;
-  background: rgba(255, 255, 255, 0.08);
-}
-
 .playhead,
 .hover-line {
   position: absolute;
@@ -226,5 +400,24 @@ const clock = (t: number) => {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.tape-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.all-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #2a78d6;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 </style>
