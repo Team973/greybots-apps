@@ -1,10 +1,15 @@
+import { promises as fs } from 'node:fs';
+import { extname, join } from 'node:path';
+
 import type { OffloadedFiles, OffloadedFilesQuery } from '@shared/ipc';
 import {
   driverStationExtensions,
   driverStationLogDirectory,
   parseLogName,
   robotFolderName,
+  robotLogDirectories,
   robotLogLocations,
+  type ClearSummary,
   type OffloadedFile,
   type OffloadRunSummary,
   type OffloadStatus,
@@ -12,6 +17,7 @@ import {
 } from '@shared/offload';
 import { robotAddresses } from '@shared/robot-address';
 import type { Settings } from '@shared/settings';
+import { clearableExtensions, clearLogs, type ClearCandidate } from './offload/clear';
 import { findRobot } from './offload/find-robot';
 import { loadIndex } from './offload/offload-index';
 import { offloadLogs, openIndexStore, type OffloadResult } from './offload/offload';
@@ -43,8 +49,16 @@ const status: OffloadStatus = {
   stage: 'idle',
   looking: [],
   jobs: [],
-  lastRun: null
+  lastRun: null,
+  clearable: null,
+  clearing: false,
+  lastClear: null
 };
+
+// What may be cleared off the robot: the last download's files from it, as
+// they were then (with where their copies are). Offered for this long.
+let clearCandidates: ClearCandidate[] = [];
+const clearableForMs = 2 * 60 * 60 * 1000;
 
 // Where the robot last answered when the watcher looked, and when: a
 // download asked for right after goes straight there.
@@ -52,7 +66,51 @@ let lastFound: { host: string; at: number } | null = null;
 const lastFoundMs = 10_000;
 
 export function offloadStatus(): OffloadStatus {
+  if (status.clearable && Date.now() - Date.parse(status.clearable.downloadedAt) > clearableForMs) {
+    status.clearable = null;
+    clearCandidates = [];
+  }
   return structuredClone(status);
+}
+
+// Deletes from the robot the logs the last download pulled, those it's safe
+// to (clear.ts), once someone has confirmed it twice on the Download page.
+export async function clearRobotLogs(downloadedAt: string, count: number): Promise<string> {
+  const clearable = offloadStatus().clearable;
+  if (status.running) return 'Wait for the download to finish.';
+  if (status.clearing) return 'Already clearing.';
+  if (!clearable || clearable.downloadedAt !== downloadedAt || clearable.files.length !== count) {
+    return 'Those logs are no longer the last ones downloaded. Nothing was deleted.';
+  }
+  status.clearing = true;
+  const summary: ClearSummary = { finishedAt: '', host: clearable.host, deleted: 0, foldersRemoved: 0, kept: [], errors: [] };
+  let reader: SftpReader | null = null;
+  try {
+    const directory = dataDirectory(await loadSettings());
+    reader = await SftpReader.connect(clearable.host);
+    const outcome = await clearLogs(clearCandidates, reader, async (localPath) => {
+      try {
+        return (await fs.stat(join(directory, ...localPath.split('/')))).size;
+      } catch {
+        return null;
+      }
+    }, robotLogDirectories);
+    summary.deleted = outcome.deleted.length;
+    summary.foldersRemoved = outcome.foldersRemoved.length;
+    summary.kept = outcome.kept;
+    summary.errors = outcome.errors;
+    // Offered once: what's left stays on the robot.
+    status.clearable = null;
+    clearCandidates = [];
+  } catch (error) {
+    summary.errors.push(`${reader ? 'Clearing logs on' : "Couldn't log in to"} the robot at ${clearable.host}: ${(error as Error).message}`);
+  } finally {
+    reader?.close();
+    summary.finishedAt = new Date().toISOString();
+    status.lastClear = summary;
+    status.clearing = false;
+  }
+  return '';
 }
 
 function addResult(summary: OffloadRunSummary, result: OffloadResult, changed: string[]) {
@@ -73,6 +131,9 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
   status.stage = 'connecting';
   status.looking = [];
   status.jobs = [];
+  // A new download: what the last one pulled is no longer what was just downloaded.
+  status.clearable = null;
+  clearCandidates = [];
 
   const summary: OffloadRunSummary = {
     startedAt: new Date().toISOString(),
@@ -130,7 +191,19 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
         reader = await SftpReader.connect(robotHost);
         status.stage = 'pulling';
         const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since };
-        addResult(summary, await offloadLogs(directory, job, onProgress, new Date(), store), changed);
+        const result = await offloadLogs(directory, job, onProgress, new Date(), store);
+        addResult(summary, result, changed);
+        // Logs only (not the robot program's own log): offered for clearing.
+        const logs = result.pulled.filter((file) => clearableExtensions.includes(extname(file.name).toLowerCase()));
+        if (logs.length) {
+          clearCandidates = logs;
+          status.clearable = {
+            downloadedAt: summary.startedAt,
+            host: robotHost,
+            files: logs.map(({ name, path, size }) => ({ name, path, size })),
+            bytes: logs.reduce((total, file) => total + file.size, 0)
+          };
+        }
       } catch (error) {
         status.stage = 'pulling';
         summary.errors.push(`${reader ? 'Download from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);

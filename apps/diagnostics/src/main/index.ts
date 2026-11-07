@@ -11,7 +11,7 @@ import { checkConnection } from './connection-check';
 import { chooseImport, importStatus, runImport } from './import-service';
 import { earlierRuns, liveStatus } from './live-service';
 import { getLibraryItem, listLibrary, saveLibraryItem, storeLibraryItem } from './library-store';
-import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
+import { clearRobotLogs, offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { deleteNote, saveNote } from './notes-store';
 import { addModel, listModels, readModelFile, removeModel } from './robot-models';
 import { cancelReports, deleteReport, exportReports, generateReport, importReports, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
@@ -213,6 +213,10 @@ const handlers: DiagnosticsApi = {
   },
   async startOffload() {
     return runOffload(false);
+  },
+  async clearRobotLogs(downloadedAt, count) {
+    if (typeof downloadedAt !== 'string' || typeof count !== 'number') throw new Error('Not a request to clear logs.');
+    return clearRobotLogs(downloadedAt, count);
   },
   async getOffloadedFiles(query) {
     return offloadedFiles(await loadSettings(), query);
