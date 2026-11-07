@@ -14,7 +14,7 @@ import { getLibraryItem, listLibrary, saveLibraryItem, storeLibraryItem } from '
 import { offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
 import { deleteNote, saveNote } from './notes-store';
 import { addModel, listModels, readModelFile, removeModel } from './robot-models';
-import { deleteReport, exportReports, generateReport, importReports, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
+import { cancelReports, deleteReport, exportReports, generateReport, importReports, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
 import { loadSettings, storeSettings } from './settings-store';
 import {
   acceptCtreLicense,
@@ -336,6 +336,9 @@ const handlers: DiagnosticsApi = {
     if (result.canceled || !result.filePath) return '';
     await fs.writeFile(result.filePath, await reportPdf(report.id, report.name));
     return result.filePath;
+  },
+  async cancelReports() {
+    cancelReports();
   },
   async exportReports() {
     if (!mainWindow) return null;

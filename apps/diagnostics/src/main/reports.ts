@@ -27,7 +27,7 @@ import {
 import { describeMatch } from '@shared/offload';
 import { duplicateReports } from '@shared/report-cards';
 import { isReport, reportFileNames, type ReportExport, type ReportImport } from '@shared/report-files';
-import type { PipelineRun, PipelineStatus } from '@shared/reports';
+import { cancelledMessage, type PipelineRun, type PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
 import { matchKey, type KeyMatch } from '@shared/signal-match';
 import { integrateProduct, pairedVoltage, type SignalInfo, type SignalSeries } from '@shared/signals';
@@ -217,16 +217,33 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
 export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
 const isRoutine = (event: LogEvent) => event.severity === 'info' && !['mode', 'note', 'state', 'command'].includes(event.kind);
 
-async function waitForSession(settings: Settings, logId: string): Promise<SessionEvents> {
+// Cancelling: every report being run, or waiting to be, stops. Each report
+// notes this count when it starts and stops at its next step if it has
+// changed since; nothing of it is saved.
+let cancels = 0;
+export function cancelReports() {
+  cancels += 1;
+}
+function cancelCheck(): () => void {
+  const at = cancels;
+  return () => {
+    if (cancels !== at) throw new Error(cancelledMessage);
+  };
+}
+const isCancelled = (error: unknown) => (error as Error)?.message === cancelledMessage;
+
+async function waitForSession(settings: Settings, logId: string, stopIfCancelled: () => void): Promise<SessionEvents> {
   const until = Date.now() + waitForHootMs;
   // Hoot logs lined up first: until then the timeline and catalog aren't whole.
   while (Date.now() < until) {
+    stopIfCancelled();
     const status = await hootStatus(settings, logId);
     if (!status.hoots.some((h) => h.state === 'opening') && status.progress === null) break;
     await sleep(500);
   }
   let review = await sessionEvents(settings, logId);
   while (review.pending && Date.now() < until) {
+    stopIfCancelled();
     await sleep(1000);
     review = await sessionEvents(settings, logId);
   }
@@ -234,9 +251,11 @@ async function waitForSession(settings: Settings, logId: string): Promise<Sessio
 }
 
 export async function makeReport(settings: Settings, template: ReportTemplate, logId: string, by: string): Promise<Report> {
+  const stopIfCancelled = cancelCheck();
   const file = (await signalLogs(settings)).find((log) => log.id === logId);
   if (!file) throw new Error('That log is not in the data folder.');
-  const review = await waitForSession(settings, logId);
+  const review = await waitForSession(settings, logId, stopIfCancelled);
+  stopIfCancelled();
   const summary = await openSignalLog(settings, logId);
   const status = await hootStatus(settings, logId);
   const signals = new Map(summary.signals.map((s) => [s.key, s]));
@@ -266,7 +285,9 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     }
   }
   // Hoot signals exported all at once, rather than one by one as read.
+  stopIfCancelled();
   await prepareSignals(settings, logId, [...wanted]);
+  stopIfCancelled();
 
   const spans = await scopeSpans(context, template.scope);
   const inSpans = (e: { start: number; end: number | null }) => spans.some(([s, end]) => e.start <= end && (e.end ?? e.start) >= s);
@@ -285,6 +306,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
 
   const sections: RenderedSection[] = [];
   for (const section of template.sections) {
+    stopIfCancelled();
     switch (section.type) {
       case 'heading':
       case 'text':
@@ -473,7 +495,7 @@ export async function generateReport(settings: Settings, templateId: string, log
 
 // --- Pipelines ---
 
-const status: PipelineStatus = { running: false, current: null, recent: [] };
+const status: PipelineStatus = { running: false, current: null, done: 0, total: 0, recent: [] };
 const recentRuns = 30;
 
 export function pipelineStatus(): PipelineStatus {
@@ -512,6 +534,7 @@ export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manu
       else if (applies.length > 1 && chosen.several === 'newest') files = [applies.reduce((a, b) => (b.recorded > a.recorded ? b : a))];
     }
     const runs: PipelineRun[] = [];
+    const stopIfCancelled = cancelCheck();
     const making = new Set<string>();
     const showMaking = () => { status.current = making.size ? [...making].join('; ') : null; };
     status.running = true;
@@ -531,6 +554,7 @@ export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manu
       making.add(what);
       showMaking();
       try {
+        stopIfCancelled();
         if (!template) throw new Error('The template is gone.');
         const report = await makeReport(settings, template, file.id, `Auto report: ${pipeline.name}`);
         await saveReport(settings, report);
@@ -540,7 +564,9 @@ export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manu
       } finally {
         making.delete(what);
         showMaking();
+        status.done += 1;
       }
+      if (isCancelled({ message: run.problem })) return;
       runs.push(run);
       status.recent = [run, ...status.recent].slice(0, recentRuns);
     };
@@ -548,21 +574,33 @@ export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manu
     // Every template runs (for any robot, or the log's): which ones isn't
     // chosen. A log's reports together: they share its open session.
     const templates = await listLibrary(settings, 'template');
-    const runLog = (file: SignalLogFile) => Promise.all(pipelines
+    const forLog = (file: SignalLogFile) => pipelines
       .filter((pipeline) => pipelineApplies(pipeline, file, how))
       .flatMap((pipeline) => templates
         .filter((template) => !template.robot || template.robot === file.robot)
-        .map((template) => runOne(file, pipeline, template.id))));
+        .map((template) => ({ pipeline, template })));
+    status.done = 0;
+    status.total = files.reduce((total, file) => total + forLog(file).length, 0);
+    const runLog = (file: SignalLogFile) => Promise.all(forLog(file).map(({ pipeline, template }) => runOne(file, pipeline, template.id)));
 
     try {
       let next = 0;
       const worker = async () => {
-        while (next < files.length) await runLog(files[next++]);
+        while (next < files.length) {
+          try {
+            stopIfCancelled();
+          } catch {
+            return;
+          }
+          await runLog(files[next++]);
+        }
       };
       await Promise.all(Array.from({ length: Math.min(logsAtOnce, files.length) }, worker));
     } finally {
       status.running = false;
       status.current = null;
+      status.done = 0;
+      status.total = 0;
     }
     return runs;
   });
@@ -605,7 +643,11 @@ export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
     const all = await listReports(settings);
     const files = new Map((await signalLogs(settings)).map((log) => [log.id, log]));
     const runs: PipelineRun[] = [];
+    const stopIfCancelled = cancelCheck();
     status.running = true;
+    const ids = logIds.filter((id) => files.has(id));
+    status.done = 0;
+    status.total = all.filter((r) => ids.includes(r.logId)).length;
     const runOne = async (summary: ReportSummary) => {
       const file = files.get(summary.logId);
       const run: PipelineRun = {
@@ -617,7 +659,9 @@ export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
         reportId: null,
         problem: ''
       };
+      status.current = `${run.template} for ${run.logLabel} (run again: the log grew)`;
       try {
+        stopIfCancelled();
         const old = await loadReport(settings, summary.id);
         if (!old) throw new Error('The report is gone.');
         const report = await makeReport(settings, old.template, summary.logId, old.by);
@@ -625,15 +669,22 @@ export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
         run.reportId = report.id;
       } catch (error) {
         run.problem = (error as Error).message;
+      } finally {
+        status.done += 1;
       }
+      if (isCancelled({ message: run.problem })) return;
       runs.push(run);
       status.recent = [run, ...status.recent].slice(0, recentRuns);
     };
     try {
-      const ids = logIds.filter((id) => files.has(id));
       let at = 0;
       const worker = async () => {
         while (at < ids.length) {
+          try {
+            stopIfCancelled();
+          } catch {
+            return;
+          }
           const id = ids[at++];
           await Promise.all(all.filter((r) => r.logId === id).map(runOne));
         }
@@ -643,6 +694,9 @@ export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
       await listReports(settings);
     } finally {
       status.running = false;
+      status.current = null;
+      status.done = 0;
+      status.total = 0;
     }
     return runs;
   });

@@ -20,7 +20,7 @@ import {
 } from '@shared/library';
 import { describeMatch, type MatchType } from '@shared/offload';
 import { defaultCardFilter, filterCards, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
-import type { PipelineStatus } from '@shared/reports';
+import { cancelledMessage, type PipelineStatus } from '@shared/reports';
 import ReportFlags from '@/components/ReportFlags.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
 import TemplateEditor from '@/components/TemplateEditor.vue';
@@ -122,6 +122,40 @@ const cardPage = 60;
 const cardLimit = ref(cardPage);
 watch(cardFilter, () => (cardLimit.value = cardPage), { deep: true });
 
+// --- Progress, and cancelling ---
+// Everything being run, added up: Run a report, the cards' run buttons, and
+// the main process's auto reports (or reports run again after a log grew).
+const cancelling = ref(false);
+const runProgress = computed(() => {
+  let done = 0;
+  let total = 0;
+  if (batch.value) {
+    done += batch.value.done;
+    total += batch.value.total;
+  }
+  for (const run of running.value.values()) {
+    done += run.done;
+    total += run.total;
+  }
+  const auto = pipelineStatus.value;
+  if (auto?.running) {
+    done += auto.done;
+    total += auto.total;
+  }
+  const busy = !!batch.value || running.value.size > 0 || !!auto?.running;
+  return busy ? { done, total } : null;
+});
+async function cancelAll() {
+  cancelling.value = true;
+  await window.diagnostics.cancelReports().catch((error) => { problem.value = cleanError(error); });
+  await pollStatus();
+}
+watch(runProgress, (now, before) => {
+  if (now) return;
+  if (before && cancelling.value) transferMessage.value = 'Cancelled: reports already finished were kept; the rest weren\'t run.';
+  cancelling.value = false;
+});
+
 // --- Exporting and importing every report ---
 // Each report as a PDF, and its JSON as the data folder keeps it, into a
 // new folder; and reports' JSON files read back in.
@@ -213,7 +247,7 @@ async function makeMissing(card: LogCard) {
       await window.diagnostics.generateReport(template.id, card.id);
       reports.value = await window.diagnostics.getReports();
     } catch (error) {
-      failed.push(`${template.name}: ${cleanError(error)}`);
+      if (cleanError(error) !== cancelledMessage) failed.push(`${template.name}: ${cleanError(error)}`);
     } finally {
       const run = running.value.get(card.id);
       if (run) setRun({ ...run, done: run.done + 1 });
@@ -280,13 +314,14 @@ async function runBatch() {
   // A log's reports at once (they share its open log), three logs at a time.
   const worker = async () => {
     while (next < jobs.length) {
+      if (cancelling.value) return;
       const { card, templates: chosen } = jobs[next++];
       await Promise.all(chosen.map(async (template) => {
         try {
           await window.diagnostics.generateReport(template.id, card.id);
           reports.value = await window.diagnostics.getReports();
         } catch (error) {
-          failed.push(`${card.title}, ${template.name}: ${cleanError(error)}`);
+          if (cleanError(error) !== cancelledMessage) failed.push(`${card.title}, ${template.name}: ${cleanError(error)}`);
         } finally {
           if (batch.value) batch.value = { ...batch.value, done: batch.value.done + 1 };
         }
@@ -413,7 +448,7 @@ const templateName = (id: string) => templates.value.find((t) => t.id === id)?.n
 onMounted(async () => {
   await load();
   await pollStatus();
-  statusTimer = setInterval(pollStatus, 2000);
+  statusTimer = setInterval(pollStatus, 1000);
 });
 onUnmounted(() => clearInterval(statusTimer));
 </script>
@@ -423,6 +458,17 @@ onUnmounted(() => clearInterval(statusTimer));
     <button v-for="t in tabs" :key="t.id" class="tab" :aria-current="tab === t.id ? 'page' : undefined" @click="go({ tab: t.id })">{{ t.label }}</button>
   </nav>
   <p v-if="problem" class="error-text no-print">{{ problem }}</p>
+
+  <!-- Reports being run, wherever from, with a way to stop them. -->
+  <section v-if="runProgress" id="run-progress" class="card full run-progress no-print" aria-live="polite">
+    <div class="progress-head">
+      <strong>{{ cancelling ? 'Cancelling…' : 'Running reports' }}</strong>
+      <span class="hint small">{{ runProgress.total ? `${runProgress.done} of ${runProgress.total} done` : 'Starting…' }}</span>
+      <md-outlined-button id="cancel-reports" :disabled="cancelling" @click="cancelAll">Cancel</md-outlined-button>
+    </div>
+    <progress :value="runProgress.total ? runProgress.done : undefined" :max="Math.max(runProgress.total, 1)"></progress>
+    <p v-if="pipelineStatus?.current" class="hint small">Now: {{ pipelineStatus.current }}</p>
+  </section>
 
   <!-- A report, open -->
   <nav v-if="tab === 'reports' && (openReport || focusedCard)" class="crumbs no-print" aria-label="Where you are">
@@ -878,6 +924,27 @@ fieldset {
 /* The list of logs and a log on its own use the page's whole width. */
 .card.full {
   max-width: none;
+}
+
+.run-progress {
+  gap: 8px;
+}
+
+.progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.progress-head md-outlined-button {
+  margin-left: auto;
+}
+
+.run-progress progress {
+  width: 100%;
+  height: 10px;
+  accent-color: var(--md-sys-color-primary);
 }
 
 .list-head {

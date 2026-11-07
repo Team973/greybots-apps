@@ -250,6 +250,9 @@ export interface DiagnosticsApi {
   // Every report, as PDFs and their JSON, into a new folder in one picked.
   // Null if no folder was picked.
   exportReports(): Promise<ReportExport | null>;
+  // Stops every report being run or waiting to be (auto reports too): each
+  // stops at its next step, and nothing of it is saved.
+  cancelReports(): Promise<void>;
   // Reports from .json files picked (an export's, or another data folder's).
   // Null if none were picked.
   importReports(): Promise<ReportImport | null>;
@@ -311,6 +314,7 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getPipelineStatus',
   'savePdf',
   'exportReports',
+  'cancelReports',
   'importReports',
   'getAccount',
   'signIn',
