@@ -255,7 +255,8 @@ export type RenderedSection =
   | { type: 'pie'; title: string; measure?: PieMeasure; unit: string; seconds: number; slices: ReportPieSlice[] }
   | { type: 'events'; title: string; events: LogEvent[] }
   | { type: 'monitors'; title: string; results: MonitorResult[] }
-  | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[] };
+  // `recorded`: when the log was, for which season's field to draw.
+  | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[]; recorded?: string };
 
 export interface Report {
   id: string;

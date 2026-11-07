@@ -10,7 +10,10 @@ import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChar
 import { formatTime } from '@/format';
 import { colorFor, palette } from '@/palette';
 import { eventColor, severityColor } from '@/review';
-import { visionStates, type VisionCamera, type VisionState } from '@shared/vision';
+import { visionStates, type VisionCamera, type VisionState, type VisionTrack } from '@shared/vision';
+import { defaultRobotSize, type Pose } from '@shared/plots';
+import FieldCanvas, { type CanvasItem } from '@/components/FieldCanvas.vue';
+import { seasonFor } from '@/fields';
 
 // A report as it was made: its charts from the data kept with it, so it
 // reads the same whether or not the log is still here. On paper (a PDF),
@@ -155,10 +158,125 @@ const binCount = (camera: VisionCamera, bin: number, state: VisionState) => {
   const total = binTotal(camera, bin);
   return total ? `${count} (${Math.round((count / total) * 100)}%)` : '—';
 };
+// How long a cell is (reports made before cells were a second have longer).
+const binLength = (bins: [number, number][]) => `${Number((bins[0][1] - bins[0][0]).toFixed(1))} s`;
 const binTime = (bin: [number, number]) => {
   const clock = phaseClock(props.report.phases, bin[0]);
   return `${bin[0].toFixed(0)}–${bin[1].toFixed(0)} s${clock ? ` · ${clock}` : ''}`;
 };
+
+// --- Disagreement with the fused pose: charts, and the field at a moment ---
+// Each camera's measurements, how far from the fused pose (metres) and
+// which way off (degrees), on two charts zoomed and pinned together. The
+// moment pinned (at first, the largest disagreement) is drawn on the field:
+// the fused pose, and each camera's latest measurement then, overlaid.
+type VisionSection = Extract<RenderedSection, { type: 'vision' }>;
+const fusedColor = computed(() => (dark.value ? '#f2f2f2' : '#1f1f1f'));
+const cameraColor = (index: number) => colorFor(index, dark.value);
+const gapSeries = (key: string, times: number[], values: (number | null)[], unit: string): SignalSeries => {
+  const kept = times.map((t, i) => [t, values[i]] as const).filter((p): p is readonly [number, number] => p[1] !== null);
+  return { key, kind: 'number', times: Float64Array.from(kept.map((p) => p[0])), values: Float64Array.from(kept.map((p) => p[1])), downsampled: false, stats: null, unit };
+};
+const visionCharts = computed(() => props.report.sections.map((section) => {
+  if (section.type !== 'vision' || !section.summary.cameras.some((c) => c.measured?.times.length)) return null;
+  const bins = section.summary.bins;
+  const full: [number, number] = [bins[0][0], bins[bins.length - 1][1]];
+  const cameras = section.summary.cameras.filter((c) => c.measured);
+  const lines = (measure: 'meters' | 'degrees', unit: string): ChartLine[] => cameras.map((camera) => ({
+    key: `${camera.name}:${measure}`,
+    label: camera.name,
+    unit,
+    color: cameraColor(section.summary.cameras.indexOf(camera)),
+    axis: 'axis1',
+    band: 'top',
+    series: gapSeries(`${camera.name}:${measure}`, camera.measured!.times, camera.measured![measure], unit)
+  }));
+  // The largest distance, to show on the field first.
+  let worst: number | null = null;
+  let most = -1;
+  for (const camera of cameras) {
+    camera.measured!.meters.forEach((m, i) => {
+      if (m > most) {
+        most = m;
+        worst = camera.measured!.times[i];
+      }
+    });
+  }
+  return { full, distance: lines('meters', 'm'), heading: lines('degrees', '°'), worst };
+}));
+const gapAxes: ChartAxis[] = [{ id: 'axis1', side: 'left', name: 'L1' }];
+const visionViews = reactive<Record<number, [number, number]>>({});
+const visionPins = reactive<Record<number, number | null>>({});
+const visionView = (i: number) => visionViews[i] ?? visionCharts.value[i]!.full;
+function visionZoom(i: number, next: [number, number], gesture: string) {
+  visionViews[i] = gesture === 'all' ? visionCharts.value[i]!.full : next;
+}
+// Picked by clicking either chart; until then (or once unpinned), the
+// largest disagreement, so the field always shows a moment.
+const picked = (i: number) => visionPins[i] !== undefined && visionPins[i] !== null;
+const visionPin = (i: number) => (picked(i) ? visionPins[i]! : visionCharts.value[i]?.worst ?? null);
+
+// The latest of a track at or before t, if no older than `fresh` seconds.
+function latestAt(times: number[], t: number, fresh = Infinity): number | null {
+  let lo = 0;
+  let hi = times.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= t) {
+      found = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return found >= 0 && t - times[found] <= fresh ? found : null;
+}
+const poseOf = (x: number, y: number, heading: number | null): Pose =>
+  ({ x, y, z: 0, qw: Math.cos((heading ?? 0) / 2), qx: 0, qy: 0, qz: Math.sin((heading ?? 0) / 2), heading: heading !== null });
+const trackPose = (track: VisionTrack, i: number) => poseOf(track.x[i], track.y[i], track.heading[i]);
+// How long a camera's measurement stays its latest (as the monitor takes it).
+const freshSeconds = 0.5;
+
+interface FieldRow {
+  name: string;
+  color: string;
+  where: string;
+  gap: string;
+}
+function visionField(section: VisionSection, t: number): { items: CanvasItem[]; rows: FieldRow[] } {
+  const items: CanvasItem[] = [];
+  const rows: FieldRow[] = [];
+  const where = (p: Pose) => `${p.x.toFixed(2)}, ${p.y.toFixed(2)} m${p.heading ? `, ${((2 * Math.atan2(p.qz, p.qw) * 180) / Math.PI).toFixed(0)}°` : ''}`;
+  const fused = section.summary.fused;
+  const at = fused ? latestAt(fused.times, t) : null;
+  if (fused && at !== null) {
+    const pose = trackPose(fused, at);
+    // Where it had been over the last two seconds.
+    const history: Pose[] = [];
+    for (let i = at; i >= 0 && fused.times[i] >= t - 2; i--) history.unshift(trackPose(fused, i));
+    items.push({ key: 'fused', color: fusedColor.value, style: 'robot', opacity: 0.85, poses: [pose], history });
+    rows.push({ name: 'Fused pose', color: fusedColor.value, where: where(pose), gap: '' });
+  }
+  section.summary.cameras.forEach((camera, index) => {
+    const m = camera.measured;
+    const color = cameraColor(index);
+    const i = m ? latestAt(m.times, t, freshSeconds) : null;
+    if (!m || i === null) {
+      rows.push({ name: camera.name, color, where: 'No measurement', gap: '' });
+      return;
+    }
+    const pose = trackPose(m, i);
+    items.push({ key: camera.name, color, style: 'robot', opacity: 1, poses: [pose], history: [], outline: true });
+    const degrees = m.degrees[i];
+    rows.push({ name: camera.name, color, where: `${where(pose)} (${(t - m.times[i]).toFixed(2)} s before)`,
+      gap: `${m.meters[i].toFixed(2)} m${degrees === null ? '' : `, ${degrees.toFixed(1)}°`} off` });
+  });
+  return { items, rows };
+}
+// Each vision section's field, at its moment.
+const visionFields = computed(() => props.report.sections.map((section, i) => {
+  const t = section.type === 'vision' && visionCharts.value[i] ? visionPin(i) : null;
+  return section.type === 'vision' && t !== null ? visionField(section, t) : null;
+}));
 
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
 const meters = (value: number | null) => (value === null ? '—' : `${value.toFixed(2)} m`);
@@ -360,7 +478,9 @@ const at = (t: number) => {
               </template>
             </template>
             <div class="heat-axis small hint">
-              <span>{{ at(section.summary.bins[0][0]) }}</span><span>{{ at(section.summary.bins[section.summary.bins.length - 1][1]) }}</span>
+              <span>{{ at(section.summary.bins[0][0]) }}</span>
+              <span>{{ binLength(section.summary.bins) }} a cell</span>
+              <span>{{ at(section.summary.bins[section.summary.bins.length - 1][1]) }}</span>
             </div>
             <template v-if="heat && heat.section === i">
               <div class="heat-column" :style="{ left: `${heat.left}px`, width: `${heat.width}px` }"></div>
@@ -377,6 +497,41 @@ const at = (t: number) => {
               </div>
             </template>
           </div>
+          <template v-if="visionCharts[i]">
+            <h4 class="sub">Distance from the fused pose</h4>
+            <PlotChart :lines="visionCharts[i]!.distance" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
+              :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
+              @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
+            <h4 class="sub">Heading from the fused pose</h4>
+            <PlotChart :lines="visionCharts[i]!.heading" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
+              :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
+              @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
+            <p class="legend small">
+              <span v-for="(camera, c) in section.summary.cameras" :key="camera.name" class="legend-item">
+                <span class="swatch" :style="{ background: cameraColor(c) }"></span>{{ camera.name }}
+              </span>
+              <span class="hint">Heading only where the camera gave one (MegaTag 1).</span>
+            </p>
+            <template v-if="visionFields[i]">
+              <h4 class="sub">
+                On the field at {{ at(visionPin(i)!) }}
+                <span class="hint small">{{ picked(i) ? '' : '(the largest disagreement)' }}{{ paper ? '' : ' · click either chart to pick another moment' }}</span>
+              </h4>
+              <div class="vision-field">
+                <FieldCanvas :items="visionFields[i]!.items" :season="seasonFor(section.recorded)" :rotation="0"
+                  :robot-size="defaultRobotSize" :max-height="paper ? 260 : 360" />
+                <table class="plain small">
+                  <tbody>
+                    <tr v-for="row in visionFields[i]!.rows" :key="row.name">
+                      <td><span class="swatch" :style="{ background: row.color }"></span>{{ row.name }}</td>
+                      <td>{{ row.where }}</td>
+                      <td><strong>{{ row.gap }}</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+          </template>
           <p v-if="section.alarms.length" class="small">
             Disagreeing with the fused pose:
             <span v-for="(alarm, i) in section.alarms" :key="i" class="disagree">{{ at(alarm.start) }} {{ alarm.title }} ({{ alarm.detail }}){{ i < section.alarms.length - 1 ? '; ' : '' }}</span>
@@ -580,6 +735,29 @@ h4 {
   flex: none;
   width: 10px;
   height: 10px;
+  border-radius: 2px;
+}
+
+.vision-section .sub {
+  margin: 14px 0 4px;
+}
+
+.vision-field {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(220px, 2fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.paper .vision-field {
+  grid-template-columns: 1fr;
+}
+
+.vision-field .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
   border-radius: 2px;
 }
 

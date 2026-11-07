@@ -437,7 +437,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
           return key && series ? { key, series } : null;
         };
         const alarms = monitors.filter((r) => r.id === visionMonitor).flatMap((r) => r.alarms);
-        sections.push({ type: 'vision', title: section.title, summary: visionSummary(lookup, keys, spans), alarms });
+        sections.push({ type: 'vision', title: section.title, summary: visionSummary(lookup, keys, spans), alarms, recorded: file.recorded });
         break;
       }
     }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 
 import {
   isPoseType,
@@ -17,7 +17,8 @@ import {
 } from '@shared/plots';
 import type { SignalInfo } from '@shared/signals';
 import ColorPicker from '@/components/ColorPicker.vue';
-import { fieldFor, fieldImages } from '@/fields';
+import FieldCanvas, { type CanvasItem } from '@/components/FieldCanvas.vue';
+import { fieldImages } from '@/fields';
 import { palette } from '@/palette';
 import { useRecords } from '@/panel-data';
 
@@ -127,153 +128,17 @@ const drawn = computed<Drawn[]>(() => props.panel.items.map((item) => {
 
 // --- Drawing ---
 
-const box = ref<HTMLElement | null>(null);
-const canvas = ref<HTMLCanvasElement | null>(null);
-const width = ref(600);
-const field = computed(() => fieldFor(props.panel.season));
-// A little of what's around the field shows too.
-const margin = 0.4;
-const turned = computed(() => props.panel.rotation === 90 || props.panel.rotation === 270);
-const viewLength = computed(() => field.value.length + 2 * margin);
-const viewWidth = computed(() => field.value.width + 2 * margin);
-// As big as fits the width, and the height it's given.
-const across = computed(() => (turned.value ? viewWidth.value : viewLength.value));
-const down = computed(() => (turned.value ? viewLength.value : viewWidth.value));
-const scale = computed(() => Math.min(width.value / across.value, (props.maxHeight ?? Infinity) / down.value));
-const drawWidth = computed(() => scale.value * across.value);
-const height = computed(() => scale.value * down.value);
-
-const image = new Image();
-const imageReady = ref(false);
-watch(field, (f) => {
-  imageReady.value = false;
-  image.onload = () => { imageReady.value = true; };
-  image.src = f.image;
-}, { immediate: true });
-
-let toField: DOMMatrix | null = null;
-
-function draw() {
-  const element = canvas.value;
-  if (!element) return;
-  const ratio = window.devicePixelRatio || 1;
-  element.width = Math.round(drawWidth.value * ratio);
-  element.height = Math.round(height.value * ratio);
-  const ctx = element.getContext('2d');
-  if (!ctx) return;
-  const f = field.value;
-  const s = scale.value;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, drawWidth.value, height.value);
-  // The field's middle at the canvas's, turned, metres to pixels with y up.
-  ctx.translate(drawWidth.value / 2, height.value / 2);
-  ctx.rotate((props.panel.rotation * Math.PI) / 180);
-  const X = (x: number) => (x - f.length / 2) * s;
-  const Y = (y: number) => -(y - f.width / 2) * s;
-  toField = ctx.getTransform().inverse();
-
-  if (imageReady.value) {
-    const pxPerMetreX = (f.right - f.left) / f.length;
-    const pxPerMetreY = (f.bottom - f.top) / f.width;
-    // Turned about the field's middle (fields.ts).
-    ctx.save();
-    ctx.rotate(Math.PI);
-    ctx.drawImage(image, X(-f.left / pxPerMetreX), Y(f.bottom / pxPerMetreY), (image.width / pxPerMetreX) * s, (image.height / pxPerMetreY) * s);
-    ctx.restore();
-  }
-
-  const robot = props.panel.robotSize * s;
-  for (const { item, poses, history } of drawn.value) {
-    const color = colorOf(item.color);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
-    // Where it's been (or, for a path, where it went over the span).
-    if (history.length > 1 && item.style !== 'points') {
-      ctx.globalAlpha = item.style === 'path' ? 0.9 : 0.6;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      history.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.x), Y(p.y)) : ctx.lineTo(X(p.x), Y(p.y))));
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-
-    if (item.style === 'path' && poses.length > 1) {
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      poses.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.x), Y(p.y)) : ctx.lineTo(X(p.x), Y(p.y))));
-      ctx.stroke();
-    }
-    if (item.style === 'points') {
-      for (const p of [...history, ...poses]) {
-        ctx.beginPath();
-        ctx.arc(X(p.x), Y(p.y), 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      continue;
-    }
-    if (item.style === 'path') {
-      // Where it is now, on its path.
-      const now = poses.length === 1 ? poses[0] : null;
-      if (now) {
-        ctx.beginPath();
-        ctx.arc(X(now.x), Y(now.y), 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      continue;
-    }
-    for (const pose of poses) {
-      ctx.save();
-      ctx.translate(X(pose.x), Y(pose.y));
-      ctx.rotate(-yawOf(pose));
-      // A black body in bumpers of its colour, the whole of it as see-through
-      // as it's set, so the arrow shows however solid it is.
-      ctx.globalAlpha = item.opacity;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(-robot / 2, -robot / 2, robot, robot);
-      ctx.lineWidth = 3;
-      ctx.strokeRect(-robot / 2, -robot / 2, robot, robot);
-      if (pose.heading) {
-        // Which way is the front: a white line from the middle to it, and a notch.
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(robot / 2, 0);
-        ctx.moveTo(robot / 2 - robot * 0.18, -robot * 0.18);
-        ctx.lineTo(robot / 2, 0);
-        ctx.lineTo(robot / 2 - robot * 0.18, robot * 0.18);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-  }
-}
-
-watch([drawn, drawWidth, height, imageReady, () => props.panel.rotation, () => props.panel.robotSize, () => props.dark], () => requestAnimationFrame(draw));
-
-let observer: ResizeObserver | undefined;
-onMounted(() => {
-  observer = new ResizeObserver(() => {
-    if (box.value) width.value = Math.max(200, box.value.clientWidth);
-  });
-  if (box.value) observer.observe(box.value);
-  draw();
-});
-onUnmounted(() => observer?.disconnect());
-
+const fieldCanvas = ref<InstanceType<typeof FieldCanvas> | null>(null);
+const canvasItems = computed<CanvasItem[]>(() => drawn.value.map(({ item, poses, history }) => ({
+  key: item.key,
+  color: colorOf(item.color),
+  style: item.style,
+  opacity: item.opacity,
+  poses,
+  history
+})));
 // Where the pointer is, in field metres.
 const pointer = ref<{ x: number; y: number } | null>(null);
-function onMove(event: MouseEvent) {
-  if (!toField || !canvas.value) return;
-  const rect = canvas.value.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  const at = toField.transformPoint(new DOMPoint((event.clientX - rect.left) * ratio, (event.clientY - rect.top) * ratio));
-  const f = field.value;
-  pointer.value = { x: at.x / scale.value + f.length / 2, y: -at.y / scale.value + f.width / 2 };
-}
 
 const legend = computed(() => drawn.value.map(({ item, poses }) => {
   const pose = poses.length === 1 ? poses[0] : null;
@@ -291,7 +156,7 @@ const styles: { id: FieldStyle; label: string }[] = [
 const trails = [0, 1, 2, 5, 10, 30];
 
 // The field as a picture, for copying.
-defineExpose({ image: () => canvas.value });
+defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
 </script>
 
 <template>
@@ -329,9 +194,8 @@ defineExpose({ image: () => canvas.value });
       <span v-if="pointer" class="hint small">{{ pointer.x.toFixed(2) }}, {{ pointer.y.toFixed(2) }} m</span>
     </div>
 
-    <div ref="box" class="field-box">
-      <canvas ref="canvas" :style="{ width: `${drawWidth}px`, height: `${height}px` }" @mousemove="onMove" @mouseleave="pointer = null"></canvas>
-    </div>
+    <FieldCanvas ref="fieldCanvas" :items="canvasItems" :season="panel.season" :rotation="panel.rotation" :robot-size="panel.robotSize"
+      :max-height="maxHeight" @pointer="pointer = $event" />
     <p v-if="error" class="error-text small">{{ error }}</p>
 
     <table v-if="panel.items.length" class="plain items">
@@ -377,17 +241,6 @@ defineExpose({ image: () => canvas.value });
 .add-pose {
   min-width: 0;
   max-width: 60%;
-}
-
-.field-box {
-  width: 100%;
-}
-
-canvas {
-  display: block;
-  margin: 0 auto;
-  border-radius: 6px;
-  cursor: crosshair;
 }
 
 .items td {

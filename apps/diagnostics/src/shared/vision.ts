@@ -42,13 +42,31 @@ export interface VisionCamera {
   // Its measurements against the fused pose: how far, on average and at
   // most, and how many of its measurements there were.
   pose: { measurements: number; meanMeters: number | null; maxMeters: number | null; maxDegrees: number | null };
+  // Each of those measurements, for the disagreement charts and the field:
+  // when, where it put the robot (MegaTag 2's x and y, MegaTag 1's heading
+  // where it gave one; radians), and how far that was from the fused pose.
+  // Not in reports made before these were kept.
+  measured?: VisionTrack & { meters: number[]; degrees: (number | null)[] };
+}
+
+// Poses over time, rounded to a millimetre and a thousandth of a radian.
+export interface VisionTrack {
+  times: number[];
+  x: number[];
+  y: number[];
+  heading: (number | null)[];
 }
 
 export interface VisionSummary {
   // The heatmap's bins, a second each, in seconds on the log's timeline.
   bins: [number, number][];
   cameras: VisionCamera[];
+  // The fused pose over the spans, to draw the cameras' measurements against.
+  fused?: VisionTrack;
 }
+
+const round = (value: number, places = 3) => Math.round(value * 10 ** places) / 10 ** places;
+const inAny = (spans: [number, number][], t: number) => spans.some(([a, b]) => t >= a && t <= b);
 
 // How much a counter went up between a and b. Before its first value it's
 // taken to have been at that value (logging started part way through); if
@@ -106,12 +124,20 @@ export function visionSummary(lookup: Lookup, available: readonly string[], span
     const mx = lookup(`${camera.provider}/mt2/translation/x`)?.series;
     const my = lookup(`${camera.provider}/mt2/translation/y`)?.series;
     const heading = lookup(`${camera.provider}/mt1/rotation/value`)?.series ?? null;
+    const measured: NonNullable<VisionCamera['measured']> = { times: [], x: [], y: [], heading: [], meters: [], degrees: [] };
     if (mx && my && fx && fy && fr) {
       for (let i = 0; i < mx.times.length; i++) {
         const t = mx.times[i];
-        if (!spans.some(([a, b]) => t >= a && t <= b)) continue;
+        if (!inAny(spans, t)) continue;
         const gap = measurementGap({ x: fx, y: fy, r: fr }, { x: mx, y: my, r: heading }, t, monitorSettings.vision.freshSeconds);
         if (!gap) continue;
+        const h = heading ? valueAt(heading, t, monitorSettings.vision.freshSeconds) : null;
+        measured.times.push(round(t));
+        measured.x.push(round(Number(mx.values[i])));
+        measured.y.push(round(valueAt(my, t) ?? 0));
+        measured.heading.push(h === null || h === 0 ? null : round(h));
+        measured.meters.push(round(gap.meters));
+        measured.degrees.push(gap.degrees === null ? null : round(gap.degrees, 2));
         measurements += 1;
         sum += gap.meters;
         maxMeters = Math.max(maxMeters ?? 0, gap.meters);
@@ -125,8 +151,22 @@ export function visionSummary(lookup: Lookup, available: readonly string[], span
       thrownBy: [...thrown.entries()].map(([reason, count]) => ({ reason, count })).filter((r) => r.count > 0).sort((a, b) => b.count - a.count),
       usedShare: withTargets > 0 ? totals.valid / withTargets : null,
       bins: binCounts,
-      pose: { measurements, meanMeters: measurements ? sum / measurements : null, maxMeters, maxDegrees }
+      pose: { measurements, meanMeters: measurements ? sum / measurements : null, maxMeters, maxDegrees },
+      measured
     };
   });
-  return { bins, cameras };
+  const track: VisionTrack = { times: [], x: [], y: [], heading: [] };
+  if (fx && fy && fr) {
+    for (let i = 0; i < fx.times.length; i++) {
+      const t = fx.times[i];
+      // And the one before each span, so the pose is there from its start.
+      const next = i + 1 < fx.times.length ? fx.times[i + 1] : Infinity;
+      if (!inAny(spans, t) && !spans.some(([a]) => t < a && next > a)) continue;
+      track.times.push(round(t));
+      track.x.push(round(Number(fx.values[i])));
+      track.y.push(round(valueAt(fy, t) ?? 0));
+      track.heading.push(round(valueAt(fr, t) ?? 0));
+    }
+  }
+  return { bins, cameras, fused: track };
 }

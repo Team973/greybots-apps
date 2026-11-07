@@ -177,4 +177,7 @@ assert.deepEqual(visionBins([[10, 12.5]]), [[10, 11], [11, 12], [12, 12.5]], 'th
   // One real measurement, 0.1 m off; the (0, 0) one is no measurement.
   assert.equal(left.pose.measurements, 1);
   assert.ok(Math.abs(left.pose.maxMeters! - 0.1) < 1e-9);
+  // Kept for the charts and the field: the measurement, and the fused pose.
+  assert.deepEqual(left.measured, { times: [1], x: [5.1], y: [3], heading: [null], meters: [0.1], degrees: [null] });
+  assert.deepEqual(summary.fused, { times: [0], x: [5], y: [3], heading: [0] });
 }
