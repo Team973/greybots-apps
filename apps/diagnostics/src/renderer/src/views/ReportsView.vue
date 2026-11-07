@@ -85,7 +85,9 @@ watch(() => route.query.report, async (id) => {
 // Running one template on the logs selected from the list: a few logs at a
 // time (the main process keeps three open). Logs that already have a report
 // from it are left out unless asked.
-const batchTemplate = ref('');
+// The template picker's choice for every template.
+const allTemplates = '*all*';
+const batchTemplate = ref(allTemplates);
 const batchAgain = ref(false);
 const selected = ref(new Set<string>());
 const batch = ref<{ done: number; total: number } | null>(null);
@@ -245,36 +247,53 @@ function selectAllShown(on: boolean) {
   }
   selected.value = next;
 }
-// The selected logs it would run on.
-const batchTargets = computed(() => cards.value.filter((card) => card.log && selected.value.has(card.id) &&
-  (batchAgain.value || !card.reports.some((r) => r.templateId === batchTemplate.value))));
+// What would run: for each selected log, the template chosen, or with All
+// templates every one that applies to its robot. Reports a log already has
+// are left out unless asked to run them again.
+const batchJobs = computed(() => cards.value
+  .filter((card) => card.log && selected.value.has(card.id))
+  .map((card) => {
+    const chosen = batchTemplate.value === allTemplates
+      ? templates.value.filter((t) => !t.robot || t.robot === card.robot)
+      : templates.value.filter((t) => t.id === batchTemplate.value);
+    return { card, templates: batchAgain.value ? chosen : chosen.filter((t) => !card.reports.some((r) => r.templateId === t.id)) };
+  })
+  .filter((job) => job.templates.length > 0));
+const batchReports = computed(() => batchJobs.value.reduce((total, job) => total + job.templates.length, 0));
+// Selected logs with nothing to run: they have it (or them) already.
+const batchDone = computed(() => cards.value.filter((card) => card.log && selected.value.has(card.id)).length - batchJobs.value.length);
 const batchLabel = computed(() => {
   if (batch.value) return `Running… ${batch.value.done} of ${batch.value.total} done`;
-  const count = batchTargets.value.length;
-  return `Run on ${count} log${count === 1 ? '' : 's'}`;
+  const logs = batchJobs.value.length;
+  const onLogs = `${logs} log${logs === 1 ? '' : 's'}`;
+  return batchTemplate.value === allTemplates
+    ? `Run ${batchReports.value} report${batchReports.value === 1 ? '' : 's'} on ${onLogs}`
+    : `Run on ${onLogs}`;
 });
 async function runBatch() {
-  const targets = batchTargets.value;
-  const templateId = batchTemplate.value;
-  if (batch.value || !templateId || targets.length === 0) return;
+  const jobs = batchJobs.value;
+  if (batch.value || jobs.length === 0) return;
   problem.value = '';
-  batch.value = { done: 0, total: targets.length };
+  batch.value = { done: 0, total: batchReports.value };
   const failed: string[] = [];
   let next = 0;
+  // A log's reports at once (they share its open log), three logs at a time.
   const worker = async () => {
-    while (next < targets.length) {
-      const card = targets[next++];
-      try {
-        await window.diagnostics.generateReport(templateId, card.id);
-        reports.value = await window.diagnostics.getReports();
-      } catch (error) {
-        failed.push(`${card.title}: ${cleanError(error)}`);
-      } finally {
-        if (batch.value) batch.value = { ...batch.value, done: batch.value.done + 1 };
-      }
+    while (next < jobs.length) {
+      const { card, templates: chosen } = jobs[next++];
+      await Promise.all(chosen.map(async (template) => {
+        try {
+          await window.diagnostics.generateReport(template.id, card.id);
+          reports.value = await window.diagnostics.getReports();
+        } catch (error) {
+          failed.push(`${card.title}, ${template.name}: ${cleanError(error)}`);
+        } finally {
+          if (batch.value) batch.value = { ...batch.value, done: batch.value.done + 1 };
+        }
+      }));
     }
   };
-  await Promise.all(Array.from({ length: Math.min(3, targets.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
   batch.value = null;
   selected.value = new Set();
   if (failed.length) problem.value = failed.join('; ');
@@ -393,7 +412,6 @@ const templateName = (id: string) => templates.value.find((t) => t.id === id)?.n
 
 onMounted(async () => {
   await load();
-  batchTemplate.value = templates.value[0]?.id ?? '';
   await pollStatus();
   statusTimer = setInterval(pollStatus, 2000);
 });
@@ -476,17 +494,18 @@ onUnmounted(() => clearInterval(statusTimer));
           <label class="pick">
             <span class="hint small">Template</span>
             <select id="batch-template" v-model="batchTemplate">
+              <option :value="allTemplates">All templates ({{ templates.length }})</option>
               <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
             </select>
           </label>
-          <md-filled-button id="run-batch" :disabled="!!batch || batchTargets.length === 0" @click="runBatch">{{ batchLabel }}</md-filled-button>
+          <md-filled-button id="run-batch" :disabled="!!batch || batchJobs.length === 0" @click="runBatch">{{ batchLabel }}</md-filled-button>
         </div>
         <div class="chips">
-          <label class="chip"><input v-model="batchAgain" type="checkbox" /><span>Run again on logs that already have it</span></label>
+          <label class="chip"><input v-model="batchAgain" type="checkbox" /><span>Run again where a log already has the report</span></label>
         </div>
         <p class="hint small">
           Select the logs below: tick them, or narrow the list with the filter and select all shown.
-          {{ selected.size }} selected<template v-if="selected.size && batchTargets.length < selected.size">, {{ selected.size - batchTargets.length }} already have it</template>.
+          {{ selected.size }} selected<template v-if="batchDone > 0">, {{ batchDone }} already {{ batchDone === 1 ? 'has' : 'have' }} {{ batchTemplate === allTemplates ? 'every report' : 'it' }}</template>.
         </p>
       </template>
     </section>
