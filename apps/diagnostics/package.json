@@ -1,7 +1,7 @@
 {
   "name": "diagnostics",
   "productName": "Greybots Diagnostics",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Team 973 robot diagnostics",
   "author": "Team 973 Greybots",
   "private": true,
