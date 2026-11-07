@@ -7,7 +7,7 @@ import type { CalendarOptions, DateSelectArg, EventApi, EventClickArg, EventInpu
 import { clockNow } from '@greybots/common/lib/now';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 import { addDays, toDateString } from '@/lib/schedule/dates';
-import { scheduleItemColor, taskColor, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
+import { isManualMatch, scheduleItemColor, taskColor, type ActiveEvent, type ScheduleItem } from '@/lib/schedule/types';
 import type { Task } from '@/lib/tasks/tasks';
 
 const props = defineProps<{
@@ -51,8 +51,9 @@ const events = computed<EventInput[]>(() => [
     title: item.title,
     start: item.start_at,
     end: item.end_at,
-    // TBA matches can't be dragged; their time comes from the import.
-    editable: props.canEdit && item.kind !== 'match',
+    // TBA matches can't be dragged; their time comes from the import. Matches
+    // added by hand can.
+    editable: props.canEdit && (item.kind !== 'match' || isManualMatch(item)),
     extendedProps: { item },
     backgroundColor: scheduleItemColor(item),
     classNames: item.kind === 'match' ? ['sched-match'] : []

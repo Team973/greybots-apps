@@ -8,7 +8,7 @@ import MilestoneTimeline from '@/components/schedule/MilestoneTimeline.vue';
 import ScheduleCalendar from '@/components/schedule/ScheduleCalendar.vue';
 import ScheduleItemDialog from '@/components/schedule/ScheduleItemDialog.vue';
 import { clockNow } from '@greybots/common/lib/now';
-import { tbaAutoImportMs } from '@/lib/constants';
+import { matchBlockMinutes, tbaAutoImportMs } from '@/lib/constants';
 import { useLiveQuery } from '@/lib/live-query';
 import { formatDateRange, isDifferentTimezone } from '@/lib/schedule/dates';
 import { getActiveEvent, listScheduleItems, rescheduleItem } from '@/lib/schedule/schedule-repo';
@@ -157,7 +157,7 @@ const timingNotice = computed(() => {
 const settingsOpen = ref(false);
 // The dialog gets the live copy of an existing item (looked up by id), so its
 // autosave never writes back stale fields.
-const itemDialog = ref<{ itemId: string | null; draft: { start: string; end: string } | null; kind?: 'custom' | 'milestone' } | null>(null);
+const itemDialog = ref<{ itemId: string | null; draft: { start: string; end: string } | null; kind?: 'custom' | 'milestone' | 'match' } | null>(null);
 const dialogItem = computed(() => (itemDialog.value?.itemId ? items.value.find((i) => i.id === itemDialog.value!.itemId) ?? null : null));
 // Close the dialog if its item is deleted (e.g. from another device).
 watch(dialogItem, (item) => {
@@ -172,10 +172,12 @@ function onSelect(range: { start: string; end: string }) {
   itemDialog.value = { itemId: null, draft: range };
 }
 
-function newItem(kind: 'custom' | 'milestone') {
+// New matches get a match-length block; everything else an hour.
+function newItem(kind: 'custom' | 'milestone' | 'match') {
   const start = new Date(clockNow());
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
-  itemDialog.value = { itemId: null, kind, draft: { start: start.toISOString(), end: new Date(start.getTime() + 3_600_000).toISOString() } };
+  const length = kind === 'match' ? matchBlockMinutes * 60_000 : 3_600_000;
+  itemDialog.value = { itemId: null, kind, draft: { start: start.toISOString(), end: new Date(start.getTime() + length).toISOString() } };
 }
 
 async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: () => void) {
@@ -222,7 +224,10 @@ async function onReschedule(item: ScheduleItem, start: Date, end: Date, revert: 
           </label>
         </div>
         <div class="actions">
-          <md-filled-button v-if="canEdit && mode === 'calendar'" @click="newItem('custom')">New event</md-filled-button>
+          <template v-if="canEdit && mode === 'calendar'">
+            <md-filled-button @click="newItem('custom')">New event</md-filled-button>
+            <md-outlined-button @click="newItem('match')">New match</md-outlined-button>
+          </template>
           <md-outlined-button @click="timingOpen = true">Match timing</md-outlined-button>
           <template v-if="canEdit">
             <md-outlined-button :disabled="!canImport || importing" @click="runImport()">

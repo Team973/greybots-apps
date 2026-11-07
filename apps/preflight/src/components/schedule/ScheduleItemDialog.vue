@@ -8,11 +8,12 @@ import AutosaveStatus from '@/components/AutosaveStatus.vue';
 import { clockNow } from '@greybots/common/lib/now';
 import { useAutosave } from '@/lib/autosave';
 import { formatTime, toLocalInput } from '@/lib/schedule/dates';
-import { deleteScheduleItem, saveCustomEvent, saveMatchNotes, validateCustomEvent } from '@/lib/schedule/schedule-repo';
+import { deleteScheduleItem, saveCustomEvent, saveManualMatch, saveMatchNotes, validateCustomEvent } from '@/lib/schedule/schedule-repo';
 import { estimateSourceLabels, setMatchOverride } from '@/lib/schedule/timing';
 import {
   categoryLabels,
   customCategories,
+  isManualMatch,
   milestonePhases,
   phaseLabels,
   scheduleCategories,
@@ -23,8 +24,10 @@ import {
 import { useSessionStore } from '@/stores/session-store';
 
 // Opened either for an existing item (pass the live copy, so autosave never
-// writes back stale fields) or for a new custom event or milestone (`kind`)
-// with a pre-selected time range (e.g. from drag-selecting on the calendar).
+// writes back stale fields) or for a new custom event, milestone, or match
+// (`kind`) with a pre-selected time range (e.g. from drag-selecting on the
+// calendar). A match imported from TBA only has editable notes; one added by
+// hand is edited like any other item.
 // Edits to an existing item save automatically; a new one is created with
 // the Create button.
 const props = defineProps<{
@@ -34,7 +37,7 @@ const props = defineProps<{
   draft: { start: string; end: string } | null;
   canEdit: boolean;
   // What a new item is; an existing item keeps its own kind.
-  kind?: 'custom' | 'milestone';
+  kind?: 'custom' | 'milestone' | 'match';
 }>();
 const emit = defineEmits<{ close: [] }>();
 const session = useSessionStore();
@@ -45,16 +48,25 @@ const phase = ref<MilestonePhase | ''>('');
 const start = ref('');
 const end = ref('');
 const notes = ref('');
+// Manual matches only.
+const alliance = ref<'red' | 'blue' | ''>('');
+const redTeams = ref('');
+const blueTeams = ref('');
 const error = ref<string | null>(null);
 const busy = ref(false);
 
-const isMatch = computed(() => props.item?.kind === 'match');
 const isNew = computed(() => !props.item);
+// A match imported from TBA: its times and teams come from the import.
+const isMatch = computed(() => !!props.item && props.item.kind === 'match' && !isManualMatch(props.item));
+// A match added by hand, new or existing.
+const isManual = computed(() => (props.item ? isManualMatch(props.item) : props.kind === 'match'));
 const isMilestone = computed(() => (props.item ? props.item.kind === 'milestone' : props.kind === 'milestone'));
 // Milestones can also be about matches (e.g. "Qualification matches").
 const categoryOptions = computed(() => (isMilestone.value ? scheduleCategories : customCategories));
 const readOnly = computed(() => !props.canEdit);
-const dialogTitle = computed(() => (isNew.value ? (isMilestone.value ? 'New milestone' : 'New event') : props.item?.title ?? ''));
+const dialogTitle = computed(() =>
+  isNew.value ? (isMilestone.value ? 'New milestone' : isManual.value ? 'New match' : 'New event') : props.item?.title ?? ''
+);
 const match = computed(() => props.item?.match_info ?? null);
 const times = computed(() => props.item?.times ?? null);
 // Leads/admins can set a match's estimated start by hand until it's played.
@@ -68,7 +80,10 @@ const form = () => ({
   phase: phase.value,
   start: start.value,
   end: end.value,
-  notes: notes.value
+  notes: notes.value,
+  alliance: alliance.value,
+  red: redTeams.value,
+  blue: blueTeams.value
 });
 const toInput = (f: ReturnType<typeof form>) => ({
   id: props.item?.id,
@@ -80,6 +95,20 @@ const toInput = (f: ReturnType<typeof form>) => ({
   kind: isMilestone.value ? ('milestone' as const) : ('custom' as const),
   phase: f.phase || null
 });
+// "973, 254 1678" -> ["973", "254", "1678"]
+const teamList = (text: string) => text.split(/[\s,]+/).filter(Boolean);
+const toMatchInput = (f: ReturnType<typeof form>) => ({
+  id: props.item?.id,
+  title: f.title,
+  notes: f.notes,
+  start_at: f.start,
+  end_at: f.end,
+  alliance: f.alliance || null,
+  red: teamList(f.red),
+  blue: teamList(f.blue)
+});
+const save = (f: ReturnType<typeof form>) =>
+  isManual.value ? saveManualMatch(props.eventKey, toMatchInput(f), editor()) : saveCustomEvent(props.eventKey, toInput(f), editor());
 
 const autosave = useAutosave(
   form,
@@ -87,7 +116,7 @@ const autosave = useAutosave(
     isMatch.value && props.item
       ? // Match times come from TBA; only the notes are editable.
         saveMatchNotes(props.item, f.notes, editor())
-      : saveCustomEvent(props.eventKey, toInput(f), editor()),
+      : save(f),
   {
     enabled: () => props.open && props.canEdit && !!props.item,
     validate: (f) => (isMatch.value ? null : validateCustomEvent(toInput(f)))
@@ -105,6 +134,9 @@ watch(
     start.value = toLocalInput(source?.start_at ?? props.draft?.start ?? new Date(clockNow()).toISOString());
     end.value = toLocalInput(source?.end_at ?? props.draft?.end ?? new Date(clockNow() + 3_600_000).toISOString());
     notes.value = source?.notes ?? '';
+    alliance.value = source?.match_info?.alliance ?? '';
+    redTeams.value = (source?.match_info?.red ?? []).join(', ');
+    blueTeams.value = (source?.match_info?.blue ?? []).join(', ');
     override.value = source?.times?.source === 'override' ? toLocalInput(source.times.estimated) : '';
     error.value = null;
     autosave.reset();
@@ -143,7 +175,7 @@ async function saveOverride(value: string | null) {
   }
 }
 
-const create = () => run(() => saveCustomEvent(props.eventKey, toInput(form()), editor()));
+const create = () => run(() => save(form()));
 const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id));
 </script>
 
@@ -180,7 +212,7 @@ const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id))
     <template v-else>
       <div class="form-row">
         <label class="field title-field"><span>Title</span><input v-model="title" :readonly="readOnly" /></label>
-        <label class="field">
+        <label v-if="!isManual" class="field">
           <span>Type</span>
           <select v-model="category" :disabled="readOnly">
             <option v-for="c in categoryOptions" :key="c" :value="c">{{ categoryLabels[c] }}</option>
@@ -193,6 +225,18 @@ const remove = () => props.item && run(() => deleteScheduleItem(props.item!.id))
             <option v-for="p in milestonePhases" :key="p" :value="p">{{ phaseLabels[p] }}</option>
           </select>
         </label>
+      </div>
+      <div v-if="isManual" class="form-row">
+        <label class="field">
+          <span>Our alliance</span>
+          <select v-model="alliance" :disabled="readOnly">
+            <option value="">Not known</option>
+            <option value="red">Red</option>
+            <option value="blue">Blue</option>
+          </select>
+        </label>
+        <label class="field"><span>Red teams</span><input v-model="redTeams" placeholder="e.g. 973, 254, 1678" :readonly="readOnly" /></label>
+        <label class="field"><span>Blue teams</span><input v-model="blueTeams" :readonly="readOnly" /></label>
       </div>
       <div class="form-row">
         <label class="field"><span>Start</span><input v-model="start" type="datetime-local" step="300" :readonly="readOnly" /></label>

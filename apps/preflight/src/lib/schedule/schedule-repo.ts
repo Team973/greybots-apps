@@ -3,7 +3,7 @@ import { getSetting, saveSetting } from '@/lib/settings';
 import { deleteRecord, patchRecord, saveRecord } from '@/lib/sync/local-repo';
 import { getScoutingCompletion } from './scouting';
 import { applyTiming, getMatchTiming } from './timing';
-import { normalizeTeam, type ActiveEvent, type MilestonePhase, type ScheduleCategory, type ScheduleItem } from './types';
+import { manualMatchPrefix, normalizeTeam, type ActiveEvent, type MilestonePhase, type ScheduleCategory, type ScheduleItem } from './types';
 
 export const scheduleTable = 'scheduleItems';
 const activeEventKey = 'active_event';
@@ -71,6 +71,52 @@ export async function saveCustomEvent(eventKey: string, input: CustomEventInput,
         match_key: null,
         match_info: null,
         phase: input.kind === 'milestone' ? input.phase ?? null : null,
+        updated_by_name: editorName
+    });
+}
+
+export interface ManualMatchInput {
+    id?: string;
+    title: string;
+    notes: string | null;
+    start_at: string;
+    end_at: string;
+    // Our alliance, if known.
+    alliance: 'red' | 'blue' | null;
+    red: string[];
+    blue: string[];
+}
+
+// Create or update a match added by hand (see isManualMatch). Its time is
+// the one entered here: there's no TBA time for the timing to start from.
+export async function saveManualMatch(eventKey: string, input: ManualMatchInput, editorName: string | null) {
+    const error = validateCustomEvent({ ...input, category: 'match' });
+    if (error) throw new Error(error);
+    const id = input.id ?? crypto.randomUUID();
+    const teams = (list: string[]) => list.map(normalizeTeam).filter(Boolean);
+    return saveRecord<ScheduleItem>(scheduleTable, {
+        id,
+        event_key: eventKey,
+        kind: 'match',
+        category: 'match',
+        title: input.title.trim(),
+        notes: input.notes?.trim() || null,
+        start_at: new Date(input.start_at).toISOString(),
+        end_at: new Date(input.end_at).toISOString(),
+        match_key: `${manualMatchPrefix}${id}`,
+        match_info: {
+            comp_level: 'manual',
+            set_number: 0,
+            match_number: 0,
+            alliance: input.alliance,
+            red: teams(input.red),
+            blue: teams(input.blue),
+            scheduled_time: null,
+            predicted_time: null,
+            actual_time: null,
+            result_time: null
+        },
+        phase: null,
         updated_by_name: editorName
     });
 }
