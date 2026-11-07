@@ -84,7 +84,7 @@ Everything the app pulls off the robot or works out is kept under one data folde
 - **`logs/`** holds files exactly as they came off the robot, under their original names, and they are never edited. `<source>` is where the file came from: `roborio`, `driver-station`, `ctre-hoot`, `coprocessor-<name>`, `custom-<name>`. The day is the local date the file was recorded.
 - **`results/`** holds what the app computes from the logs (match summaries, test runs), one JSON file each. Results can always be rebuilt from `logs/`.
 - **`notes/`** holds notes people add while reviewing a log, one file per log, named for its path under `logs/` (see Log review). Unlike `results/`, these can't be rebuilt.
-- **`library/`** holds saved views, report templates, pipelines and robot mappings (`<kind>` is `view`, `template`, `pipeline` or `mapping`), one file each, shared with the team when signed in (see Reports).
+- **`library/`** holds saved views, report templates and auto reports (`<kind>` is `view`, `template` or `pipeline`), one file each, shared with the team when signed in (see Reports).
 - **`reports/`** holds reports made from logs, each with the data it shows, so it reads the same later.
 - **`models/`** holds robot models for the 3D robot plot, one folder each, as AdvantageScope keeps them (see Other plots).
 - **`index/`** records what has been offloaded and what each file belongs to: `index/offloaded.json` (see Log offload).
@@ -96,7 +96,7 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 ## Pages
 
 - **Signals** (what the app opens on): logs and live signals, plotted, with a field, the console, pies and the robot in 3D in tabs beside the chart; saved views.
-- **Reports:** reports by log, report templates, auto reports (automatic report generation), and robot mappings.
+- **Reports:** reports by log, report templates, and auto reports (automatic report generation).
 - **Download** (`/download`; it was called Offload, and `/offload` still goes there): the robot's connection (how to reach it, where it's looked for, Check connection) and downloading its logs.
 - **Storage:** the data folder, importing logs, and every log here: downloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
 - **Settings:** automatic download and how far back, the data folder, keyboard shortcuts, CTRE's licence, and the team account.
@@ -325,11 +325,10 @@ Reports are made quickly from matches and tests (#148). Their parts are kept in 
 
 **Finding signals** (`src/shared/signal-match.ts`). A view or template names signals as the log it was made from did. In another log each is found, in order:
 
-1. by the robot's mapping, if it has one, which can also say the robot hasn't the signal (flagged, and reported as missing rather than guessed);
-2. by the same name;
-3. by the same end of the path: the most trailing parts in common, if no other signal has as many, and at least two (unless the name is one part). Simulation logs `/Robot/robot/drive/speedXMPS` for what the robot logs as `/Robot/drive/speedXMPS`; that's two parts in common, and found. `state` alone is everywhere, and isn't.
+1. by the same name;
+2. by the same end of the path: the most trailing parts in common, if no other signal has as many, and at least two (unless the name is one part). Simulation logs `/Robot/robot/drive/speedXMPS` for what the robot logs as `/Robot/drive/speedXMPS`; that's two parts in common, and found. `state` alone is everywhere, and isn't.
 
-**Robot mappings** (Reports → Robot mappings) are for robots that name things differently: another team's, or code that changed. For a robot, every signal the templates and views ask for is listed as it's found in one of its logs, and those not found have the likeliest of its signals to choose from: by the end of the path, then words in common (the last part's most), then the unit. Asking an LLM for suggestions is #149.
+**Robot mappings** were dropped (November 2026): they were slow to work through and not used. Signals are found by name and path end only. Mappings already saved in a data folder or the team's library stay there unread.
 
 **Report templates** say what a report is of and what it shows:
 
@@ -371,7 +370,7 @@ Nothing is code signed. Windows shows a SmartScreen warning on install ("More in
 - **Signals still to come (#92):** scaling (a value's multiplier or offset, set per signal).
 - **The rest of the live view** is [#146](https://github.com/Team973/greybots-apps/issues/146): the metric groups of §3.2 as a default "Pit Health" dashboard (with dashboards, #95), and signals that aren't in NetworkTables.
 - **The rest of log review (#94):** automated test steps as events come with the tests (#100); syncing notes to other computers with Preflight's data sharing (#103); picking which subsystems and buttons a team cares about with dashboards (#95); a DS log's power distribution currents, once their packing can be checked.
-- **Reports (#148):** the Diagnostics migration is applied to the team's database, but sign-in and sync haven't been tried against it yet. Suggesting mappings with an LLM is #149.
+- **Reports (#148):** the Diagnostics migration is applied to the team's database, but sign-in and sync haven't been tried against it yet.
 - **Other plots (#144):** the live console is only from a roboRIO (a simulator's goes to its terminal), and hasn't been tried against one. The 3D robot's moving parts haven't been tried with a log that has them. Plots aren't in reports yet.
 - **The index format.** Offload keeps one JSON file, and signals are read from the log each time it's opened. A store for computed results (match summaries, trends) comes with #97 and #98.
 - **How this app and Preflight share data** is [#103](https://github.com/Team973/greybots-apps/issues/103).
