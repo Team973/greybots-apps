@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
-import { eventKinds, phaseClock, type LogEvent } from '@shared/events';
+import { eventKinds, phaseAt, phaseClock, tapeLabels, type LogEvent, type TapeKind } from '@shared/events';
 import type { RenderedSection, Report, ReportLine, ReportPieSlice } from '@shared/library';
 import type { SignalSeries } from '@shared/signals';
 import PieChart, { sharePercent, type DonutSlice } from '@/components/PieChart.vue';
@@ -10,7 +10,7 @@ import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChar
 import { formatTime } from '@/format';
 import { colorFor, palette } from '@/palette';
 import { eventColor, severityColor } from '@/review';
-import { visionStates, type VisionCamera, type VisionState, type VisionTrack } from '@shared/vision';
+import { allianceFrom, visionStates, zoneAt, zoneLabels, type Alliance, type VisionCamera, type VisionState, type VisionTrack } from '@shared/vision';
 import { defaultRobotSize, type Pose } from '@shared/plots';
 import FieldCanvas, { type CanvasItem } from '@/components/FieldCanvas.vue';
 import { seasonFor } from '@/fields';
@@ -278,6 +278,87 @@ const visionFields = computed(() => props.report.sections.map((section, i) => {
   return section.type === 'vision' && t !== null ? visionField(section, t) : null;
 }));
 
+// --- The heatmap's bands, and picking a moment on it ---
+// Under the cameras: what the match was doing each second (auto, teleop,
+// endgame, disabled), and where on the field the robot was (its alliance's
+// zone, the neutral zone or the other's; left or right as its drivers see
+// it). Clicking the heatmap pins that moment for the charts and the field
+// below; the moment pinned is marked down the heatmap's columns too.
+const phaseColors: Record<TapeKind, string> = { disabled: '#6b7079', enabled: '#2a78d6', auto: '#c98500', teleop: '#2e9e5b', endgame: '#1d6e43' };
+const allianceColors: Record<Alliance, string> = { blue: '#2a78d6', red: '#d03b3a' };
+interface BandCell {
+  key: string;
+  label: string;
+  color: string;
+  // The right side of the field, drawn striped.
+  striped?: boolean;
+}
+interface BandRun extends BandCell {
+  from: number;
+  count: number;
+}
+// Neighbouring seconds alike as one stretch, named once.
+function runsOf(cells: (BandCell | null)[]): BandRun[] {
+  const runs: BandRun[] = [];
+  cells.forEach((cell, bin) => {
+    const last = runs[runs.length - 1];
+    if (!cell) return;
+    if (last && last.key === cell.key && last.from + last.count === bin) last.count += 1;
+    else runs.push({ ...cell, from: bin, count: 1 });
+  });
+  return runs;
+}
+const visionBands = computed(() => props.report.sections.map((section) => {
+  if (section.type !== 'vision' || section.summary.bins.length === 0) return null;
+  const bins = section.summary.bins;
+  const mid = (bin: number) => (bins[bin][0] + bins[bin][1]) / 2;
+  const phases = bins.map((_, bin): BandCell => {
+    const kind: TapeKind = phaseAt(props.report.phases, mid(bin))?.phase.name ?? 'disabled';
+    return { key: kind, label: tapeLabels[kind], color: phaseColors[kind] };
+  });
+  const fused = section.summary.fused;
+  const autoStart = props.report.phases.find((p) => p.name === 'auto')?.start ?? null;
+  const alliance = allianceFrom(fused, autoStart);
+  const zones = bins.map((_, bin): BandCell | null => {
+    if (!fused || !alliance) return null;
+    const i = latestAt(fused.times, mid(bin), 1);
+    if (i === null) return null;
+    const { zone, side } = zoneAt(fused.x[i], fused.y[i], alliance);
+    const color = zone === 'neutral' ? '#7b6fb0' : allianceColors[(zone === 'ours') === (alliance === 'blue') ? 'blue' : 'red'];
+    return { key: `${zone}:${side}`, label: `${zoneLabels[zone]} · ${side}`, color, striped: side === 'right' };
+  });
+  return { phases, zones, alliance, phaseRuns: runsOf(phases), zoneRuns: alliance ? runsOf(zones) : [] };
+}));
+const heatGrid = (bins: number) => ({ gridTemplateColumns: `repeat(${bins}, minmax(0, 1fr))`, columnGap: bins > 300 ? '0' : '1px' });
+const runStyle = (run: BandRun) => ({
+  gridColumn: `${run.from + 1} / span ${run.count}`,
+  background: run.striped ? `repeating-linear-gradient(135deg, ${run.color} 0 6px, color-mix(in srgb, ${run.color} 62%, #000) 6px 9px)` : run.color
+});
+
+// The time under the pointer on the heatmap, if over its cells.
+function heatTime(section: VisionSection, event: MouseEvent): number | null {
+  const row = (event.currentTarget as HTMLElement).querySelector('.heat-row');
+  if (!row) return null;
+  const box = row.getBoundingClientRect();
+  const share = (event.clientX - box.left) / box.width;
+  if (share < 0 || share > 1) return null;
+  const bins = section.summary.bins;
+  return bins[0][0] + share * (bins[bins.length - 1][1] - bins[0][0]);
+}
+function heatPick(i: number, section: VisionSection, event: MouseEvent) {
+  if (props.paper) return;
+  const t = heatTime(section, event);
+  if (t !== null) visionPins[i] = t;
+}
+// The second the moment pinned is in, as a column down every row.
+function pinnedBin(i: number, section: VisionSection): number | null {
+  const t = visionPin(i);
+  if (t === null) return null;
+  const at = section.summary.bins.findIndex(([a, b]) => t >= a && t < b);
+  return at >= 0 ? at : t >= section.summary.bins[section.summary.bins.length - 1][1] ? section.summary.bins.length - 1 : null;
+}
+const pinStyle = (bin: number, bins: number) => ({ left: `${(bin / bins) * 100}%`, width: `${100 / bins}%` });
+
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
 const meters = (value: number | null) => (value === null ? '—' : `${value.toFixed(2)} m`);
 
@@ -467,25 +548,51 @@ const at = (t: number) => {
             </tbody>
           </table>
           <div class="heatmap" role="img" :aria-label="`When each camera had each state, second by second, over ${section.summary.bins.length} s`"
-            @pointermove="heatHover(i, section.summary.bins.length, $event)" @pointerleave="heat = null">
+            :class="{ pickable: !paper }" @pointermove="heatHover(i, section.summary.bins.length, $event)" @pointerleave="heat = null"
+            @click="heatPick(i, section, $event)">
             <template v-for="camera in section.summary.cameras" :key="camera.name">
               <div class="heat-camera">{{ camera.name }}</div>
               <template v-for="state in visionStates" :key="state.state">
                 <div class="heat-label small">{{ state.label }}</div>
-                <div class="heat-row" :style="{ gridTemplateColumns: `repeat(${section.summary.bins.length}, minmax(0, 1fr))`, columnGap: section.summary.bins.length > 300 ? '0' : '1px' }">
+                <div class="heat-row" :style="heatGrid(section.summary.bins.length)">
                   <span v-for="(_, bin) in section.summary.bins" :key="bin" class="heat-cell" :style="cellStyle(camera, bin, state.state)"></span>
+                  <span v-if="pinnedBin(i, section) !== null" class="heat-pin" :style="pinStyle(pinnedBin(i, section)!, section.summary.bins.length)"></span>
+                </div>
+              </template>
+            </template>
+            <template v-if="visionBands[i]">
+              <div class="heat-camera">Context</div>
+              <div class="heat-label small">Match</div>
+              <div class="heat-row band" :style="heatGrid(section.summary.bins.length)">
+                <span v-for="run in visionBands[i]!.phaseRuns" :key="run.from" class="band-run" :style="runStyle(run)">
+                  <span class="band-text">{{ run.label }}</span>
+                </span>
+                <span v-if="pinnedBin(i, section) !== null" class="heat-pin" :style="pinStyle(pinnedBin(i, section)!, section.summary.bins.length)"></span>
+              </div>
+              <template v-if="visionBands[i]!.alliance">
+                <div class="heat-label small">Field zone</div>
+                <div class="heat-row band" :style="heatGrid(section.summary.bins.length)">
+                  <span v-for="run in visionBands[i]!.zoneRuns" :key="run.from" class="band-run" :style="runStyle(run)">
+                    <span class="band-text">{{ run.label }}</span>
+                  </span>
+                  <span v-if="pinnedBin(i, section) !== null" class="heat-pin" :style="pinStyle(pinnedBin(i, section)!, section.summary.bins.length)"></span>
                 </div>
               </template>
             </template>
             <div class="heat-axis small hint">
               <span>{{ at(section.summary.bins[0][0]) }}</span>
-              <span>{{ binLength(section.summary.bins) }} a cell</span>
+              <span>{{ binLength(section.summary.bins) }} a cell{{ paper ? '' : ' · click to pick a moment' }}</span>
               <span>{{ at(section.summary.bins[section.summary.bins.length - 1][1]) }}</span>
             </div>
             <template v-if="heat && heat.section === i">
               <div class="heat-column" :style="{ left: `${heat.left}px`, width: `${heat.width}px` }"></div>
               <div class="tooltip heat-tip" :style="{ left: `${heat.tipLeft}px`, width: `${heatTipWidth}px` }">
                 <div class="tooltip-time"><span>{{ binTime(section.summary.bins[heat.bin]) }}</span></div>
+                <div v-if="visionBands[i]" class="tooltip-row">
+                  <span class="swatch" :style="{ background: visionBands[i]!.phases[heat.bin].color }"></span>
+                  <span class="tooltip-label">{{ visionBands[i]!.phases[heat.bin].label }}</span>
+                  <span v-if="visionBands[i]!.zones[heat.bin]" class="tooltip-value">{{ visionBands[i]!.zones[heat.bin]!.label }}</span>
+                </div>
                 <template v-for="camera in section.summary.cameras" :key="camera.name">
                   <div class="tooltip-camera">{{ camera.name }}<span v-if="binTotal(camera, heat.bin) === 0" class="hint"> · nothing counted</span></div>
                   <div v-for="state in visionStates" :key="state.state" class="tooltip-row">
@@ -514,7 +621,8 @@ const at = (t: number) => {
             </p>
             <template v-if="visionFields[i]">
               <h4 class="sub">
-                On the field at {{ at(visionPin(i)!) }}
+                On the field at {{ at(visionPin(i)!) }}<template v-if="visionBands[i] && pinnedBin(i, section) !== null
+                  && visionBands[i]!.zones[pinnedBin(i, section)!]"> · {{ visionBands[i]!.zones[pinnedBin(i, section)!]!.label }}</template>
                 <span class="hint small">{{ picked(i) ? '' : '(the largest disagreement)' }}{{ paper ? '' : ' · click either chart to pick another moment' }}</span>
               </h4>
               <div class="vision-field">
@@ -532,6 +640,10 @@ const at = (t: number) => {
               </div>
             </template>
           </template>
+          <p v-if="visionBands[i]?.alliance" class="hint small">
+            Field zone: the {{ visionBands[i]!.alliance }} alliance's (where the robot started auto), as its drivers see it; the right side
+            striped. Zones end at each hub's line.
+          </p>
           <p v-if="section.alarms.length" class="small">
             Disagreeing with the fused pose:
             <span v-for="(alarm, i) in section.alarms" :key="i" class="disagree">{{ at(alarm.start) }} {{ alarm.title }} ({{ alarm.detail }}){{ i < section.alarms.length - 1 ? '; ' : '' }}</span>
@@ -667,6 +779,7 @@ h4 {
 }
 
 .heat-row {
+  position: relative;
   display: grid;
   gap: 1px;
   height: 14px;
@@ -759,6 +872,44 @@ h4 {
   height: 10px;
   margin-right: 6px;
   border-radius: 2px;
+}
+
+.heatmap.pickable {
+  cursor: pointer;
+}
+
+/* The moment pinned: a column down every row. */
+.heat-pin {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  box-sizing: border-box;
+  min-width: 2px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.heat-row.band {
+  height: 18px;
+}
+
+.band-run {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 2px;
+}
+
+.band-text {
+  padding: 0 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
 }
 
 .heat-axis {

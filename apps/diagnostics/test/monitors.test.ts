@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { monitorSettings, persistent, rateAt, runMonitors, valueAt, type Gates, type Series } from '@shared/monitors';
 import { matchKey } from '@shared/signal-match';
-import { counterIncrease, counterState, visionBins, visionSummary } from '@shared/vision';
+import { allianceFrom, counterIncrease, counterState, visionBins, visionSummary, zoneAt } from '@shared/vision';
 
 // A signal from (time, value) pairs.
 const series = (points: [number, number][]): Series => ({ times: points.map((p) => p[0]), values: points.map((p) => p[1]) });
@@ -180,4 +180,19 @@ assert.deepEqual(visionBins([[10, 12.5]]), [[10, 11], [11, 12], [12, 12.5]], 'th
   // Kept for the charts and the field: the measurement, and the fused pose.
   assert.deepEqual(left.measured, { times: [1], x: [5.1], y: [3], heading: [null], meters: [0.1], degrees: [null] });
   assert.deepEqual(summary.fused, { times: [0], x: [5], y: [3], heading: [0] });
+}
+
+// Where on the field: the alliance from where auto started, and zones and
+// sides as that alliance's drivers see them.
+{
+  const track = { times: [0, 10, 20], x: [8, 2, 3], y: [4, 4, 4], heading: [0, 0, 0] };
+  assert.equal(allianceFrom(track, 10), 'blue');
+  assert.equal(allianceFrom({ ...track, x: [8, 15, 14] }, 10), 'red');
+  assert.equal(allianceFrom(undefined, 10), null);
+  assert.deepEqual(zoneAt(2, 6, 'blue'), { zone: 'ours', side: 'left' });
+  assert.deepEqual(zoneAt(8, 6, 'blue'), { zone: 'neutral', side: 'left' });
+  assert.deepEqual(zoneAt(15, 2, 'blue'), { zone: 'theirs', side: 'right' });
+  // Red looks the other way: its left is low y.
+  assert.deepEqual(zoneAt(15, 2, 'red'), { zone: 'ours', side: 'left' });
+  assert.deepEqual(zoneAt(2, 6, 'red'), { zone: 'theirs', side: 'right' });
 }

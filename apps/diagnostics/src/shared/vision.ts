@@ -80,6 +80,37 @@ export function counterIncrease(series: Series, a: number, b: number): number {
   return to >= from ? to - from : to;
 }
 
+// --- Where on the field ---
+
+// The 2026 field (metres, blue alliance wall at x = 0), and where its zones
+// end: each alliance's zone from its wall to its hub's line, the neutral
+// zone between. The zone lines are taken from the hubs' centres; check them
+// against the game manual.
+export const fieldZones = { length: 16.541, width: 8.069, allianceDepth: 4.63 };
+
+export type Alliance = 'blue' | 'red';
+export type FieldZone = 'ours' | 'neutral' | 'theirs';
+export const zoneLabels: Record<FieldZone, string> = { ours: 'Our zone', neutral: 'Neutral zone', theirs: 'Their zone' };
+
+// The alliance, from where the robot was when auto started (it starts in
+// its own zone): the first fused pose at or after auto's start, or the
+// first at all. Null with no pose. The logs don't say it otherwise.
+export function allianceFrom(track: VisionTrack | undefined, autoStart: number | null): Alliance | null {
+  if (!track || track.times.length === 0) return null;
+  const i = autoStart === null ? 0 : Math.max(0, track.times.findIndex((t) => t >= autoStart));
+  return track.x[i] < fieldZones.length / 2 ? 'blue' : 'red';
+}
+
+// Which zone a position is in, and which side, as the alliance's drivers
+// see it from their wall (blue looks along +x, so its left is +y).
+export function zoneAt(x: number, y: number, alliance: Alliance): { zone: FieldZone; side: 'left' | 'right' } {
+  const fromOwnWall = alliance === 'blue' ? x : fieldZones.length - x;
+  const zone: FieldZone = fromOwnWall <= fieldZones.allianceDepth ? 'ours'
+    : fromOwnWall >= fieldZones.length - fieldZones.allianceDepth ? 'theirs' : 'neutral';
+  const upper = y > fieldZones.width / 2;
+  return { zone, side: (alliance === 'blue') === upper ? 'left' : 'right' };
+}
+
 // The bins: the spans' extent cut into whole seconds (the last one shorter
 // if it ends part way through one).
 export function visionBins(spans: [number, number][], seconds = 1): [number, number][] {
