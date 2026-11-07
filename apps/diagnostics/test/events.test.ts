@@ -1,8 +1,8 @@
 // Log review: merging spans, modes and match phases, faults, notes' files.
 
 import assert from 'node:assert/strict';
-import { mergeSpans, phaseClock, phaseAt, tapeSegments } from '@shared/events';
-import { enabledSpans, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
+import { brownoutCount, mergeSpans, phaseClock, phaseAt, tapeSegments, type LogEvent } from '@shared/events';
+import { brownoutDetail, enabledSpans, eventsFrom, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
 import { notesPathSegments } from '@shared/storage-layout';
 const series = (times: number[], values: number[] | string[]) => ({ key: 'k', kind: typeof values[0] === 'string' ? 'string' : 'number', times: Float64Array.from(times), values: typeof values[0] === 'string' ? values : Float64Array.from(values as number[]), downsampled: false, stats: null }) as never;
 
@@ -28,10 +28,22 @@ assert.equal(phaseClock(phases, 20), '');
 assert.equal(faultTitle('TalonFX-59/Fault_SupplyCurrLimit'), 'TalonFX-59: supply current limit');
 assert.equal(faultTitle('TalonFX-60/Fault_RotorFault1'), 'TalonFX-60: rotor fault1');
 assert.equal(faultTitle('CANcoder-4/Fault_BadMagnet'), 'CANcoder-4: magnet out of range');
+assert.equal(faultTitle('TalonFX-59/StickyFault_BridgeBrownout'), 'TalonFX-59: bridge brownout (sticky)');
+// Every fault while it's happening is an error; sticky ones are warnings.
+// Motors' faults are warnings; the Pigeon's errors, sticky or not; anything
+// else's an error while it's happening and a warning once only sticky.
+// Current limits are information.
 assert.equal(faultSeverity('TalonFX-1/Fault_StatorCurrLimit'), 'info');
-assert.equal(faultSeverity('TalonFX-1/Fault_ForwardSoftLimit'), 'info');
-assert.equal(faultSeverity('TalonFX-1/Fault_DeviceTemp'), 'warning');
-assert.equal(faultSeverity('TalonFX-1/Fault_BridgeBrownout'), 'error');
+assert.equal(faultSeverity('TalonFX-1/StickyFault_SupplyCurrLimit'), 'info');
+assert.equal(faultSeverity('TalonFX-1/Fault_ForwardSoftLimit'), 'warning');
+assert.equal(faultSeverity('TalonFX-1/Fault_BridgeBrownout'), 'warning');
+assert.equal(faultSeverity('TalonFX-1/StickyFault_BridgeBrownout'), 'info');
+assert.equal(faultSeverity('TalonFXS-7/Fault_DeviceTemp'), 'warning');
+assert.equal(faultSeverity('Pigeon2-1/Fault_Hardware'), 'error');
+assert.equal(faultSeverity('Pigeon2-1/StickyFault_BootDuringEnable'), 'error');
+assert.equal(faultSeverity('CANcoder-4/Fault_BadMagnet'), 'error');
+assert.equal(faultSeverity('CANcoder-4/StickyFault_BadMagnet'), 'info');
+assert.equal(faultSeverity('CANrange-3/StickyFault_Hardware'), 'warning');
 // Notes' files can't step out of notes/.
 assert.deepEqual(notesPathSegments('logs/frc973/2026-10-18/roborio/a.wpilog'), ['notes', 'frc973~2026-10-18~roborio~a.wpilog.json']);
 assert.equal(notesPathSegments('../../x')[1].includes('/'), false);
@@ -65,4 +77,20 @@ assert.deepEqual(enabledSpans([{ time: 0, mode: 'disabled' }], 100), []);
   // Never enabled: one stretch.
   assert.deepEqual(tapeSegments([5, 50], [], []), [{ kind: 'disabled', start: 5, end: 50 }]);
   assert.deepEqual(tapeSegments([5, 5], [], []), []);
+}
+
+// --- Brownouts: the flag going on and off close together is one ---
+{
+  // As mttd Q19's: on for a tenth of a second, every fifth, eleven times; then once more later.
+  const flags = [...Array.from({ length: 11 }, (_, i) => ({ start: 282 + i * 0.3, end: 282.1 + i * 0.3 })), { start: 305.8, end: 305.9 }];
+  const events = eventsFrom('brownout', 'error', 'Brownout', flags, { key: '/Robot/SystemStats/BrownedOut', detail: (count, span) => brownoutDetail(flags, count, span) });
+  assert.equal(events.length, 2);
+  assert.equal(events[0].count, 11);
+  assert.equal(events[0].detail, 'Browned out 1.10 s in all, on and off 11 times over 3.1 s');
+  assert.equal(events[1].detail, 'Browned out 0.10 s');
+  assert.deepEqual(brownoutCount(events), { brownouts: 2, flags: 12 });
+  // The same brownout in a Driver Station log too: still one.
+  const ds: LogEvent = { ...events[0], id: 'ds', key: 'DS/Brownout', count: 1, start: 282.05, end: 282.2 };
+  assert.deepEqual(brownoutCount([...events, ds]), { brownouts: 2, flags: 12 });
+  assert.deepEqual(brownoutCount([]), { brownouts: 0, flags: 0 });
 }

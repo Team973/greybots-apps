@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import { deviceLines, parseDeviceLines } from '@shared/devices';
 import { eventKinds, type EventKind } from '@shared/events';
 import { monitorCatalog } from '@shared/monitors';
 import {
@@ -48,6 +49,7 @@ function newSection(type: ReportSectionType): ReportSection {
     case 'events': return { type, title: 'Errors and warnings', kinds: [], problemsOnly: true };
     case 'monitors': return { type, title: 'Monitors', ids: [] };
     case 'vision': return { type, title: 'Vision system' };
+    case 'devices': return { type, title: 'Device health', devices: [] };
   }
 }
 
@@ -205,6 +207,16 @@ const canSave = () => draft.value.name.trim() !== '';
         </div>
         <p class="hint small">None ticked runs every monitor. Their bounds are in the code (monitorSettings, src/shared/monitors.ts).</p>
       </template>
+      <template v-else-if="section.type === 'devices'">
+        <input v-model="section.title" aria-label="Device health title" maxlength="120" />
+        <textarea :value="deviceLines(section.devices)" rows="8" aria-label="Devices, one per line"
+          placeholder="TalonFX-2, Module 0 drive, canivore"
+          @change="section.devices = parseDeviceLines(($event.target as HTMLTextAreaElement).value)"></textarea>
+        <p class="hint small">
+          A device a line: its name in the Hoot logs, what it is, and its bus (rio or canivore). Each must be in its bus's Hoot log and logging
+          all through the span, with no fault while it's on: any of those is an error (current limits and sticky faults are information).
+        </p>
+      </template>
       <template v-else-if="section.type === 'vision'">
         <input v-model="section.title" aria-label="Vision title" maxlength="120" />
         <p class="hint small">Each camera the robot reads: frames used and thrown out, when (a heatmap), and its measurements against the fused pose.</p>
@@ -219,6 +231,8 @@ const canSave = () => draft.value.name.trim() !== '';
         <label class="choice small"><input v-model="section.problemsOnly" type="checkbox" /> Errors and warnings only</label>
         <label class="choice small"><input type="checkbox" :checked="section.topic === 'power'"
           @change="section.topic = ($event.target as HTMLInputElement).checked ? 'power' : undefined" /> Power only (brownouts; battery, voltage, supply current, breaker and reboot faults)</label>
+        <label class="choice small"><input type="checkbox" :checked="section.topic === 'pigeon-canivore'"
+          @change="section.topic = ($event.target as HTMLInputElement).checked ? 'pigeon-canivore' : undefined" /> Pigeon and CANivore only (the Pigeon's faults; the CANivore's bus down, errors, buffer full)</label>
         <p class="hint small">No kinds ticked lists every kind.</p>
       </template>
     </div>

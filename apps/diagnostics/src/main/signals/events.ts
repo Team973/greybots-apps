@@ -69,14 +69,34 @@ function increases(series: SignalSeries | null): { start: number; end: null; val
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-const busName = (key: string) => (/canivore/i.test(key) ? 'CANivore' : 'roboRIO CAN bus');
+const isCanivore = (key: string) => /canivore/i.test(key);
+const busName = (key: string) => (isCanivore(key) ? 'CANivore' : 'roboRIO CAN bus');
+// The CANivore carries the drive and the Pigeon: anything wrong with it is an error.
+const busSeverity = (key: string, severity: EventSeverity): EventSeverity => (isCanivore(key) ? 'error' : severity);
 
 // --- From a data log ---
 
+// The roboRIO's brownout flag, logged as it changes. With the battery near
+// the brownout voltage it goes on and off every tenth of a second or so
+// (156 times in mttd Q19, in 8 brownouts): each brownout is the flag's
+// spans close together, saying how often it came on and for how long.
 function brownouts(source: LogSignalSource, end: number): LogEvent[] {
   return source.catalog()
     .filter((s) => s.kind === 'boolean' && s.count > 0 && /brown(ed)?.?out$/i.test(s.key))
-    .flatMap((s) => eventsFrom('brownout', 'error', 'Brownout', spansWhere(source.read(s.key), (v) => v === 1, end), { key: s.key }));
+    .flatMap((s) => {
+      const spans = spansWhere(source.read(s.key), (v) => v === 1, end);
+      return eventsFrom('brownout', 'error', 'Brownout', spans, { key: s.key, detail: (count, span) => brownoutDetail(spans, count, span) });
+    });
+}
+
+// "Browned out 1.2 s in all, on and off 11 times over 3.3 s".
+export function brownoutDetail(spans: Span[], count: number, span: Span): string {
+  const to = span.end ?? span.start;
+  const on = spans
+    .filter((s) => s.start >= span.start && s.start <= to)
+    .reduce((t, s) => t + ((s.end ?? s.start) - s.start), 0);
+  const time = `Browned out ${on.toFixed(on < 10 ? 2 : 1)} s`;
+  return count > 1 ? `${time} in all, on and off ${count} times over ${(to - span.start).toFixed(1)} s` : time;
 }
 
 function canErrors(source: LogSignalSource, end: number): LogEvent[] {
@@ -95,14 +115,14 @@ function canErrors(source: LogSignalSource, end: number): LogEvent[] {
         if (series && values) for (let i = 0; i < values.length; i++) if (series.times[i] >= span.start && series.times[i] <= (span.end ?? span.start)) max = Math.max(max, values[i]);
         return max;
       };
-      out.push(...eventsFrom('can', 'warning', `${busName(key)}: ${errors[2].toLowerCase()} errors`, spans, {
+      out.push(...eventsFrom('can', busSeverity(key, 'warning'), `${busName(key)}: ${errors[2].toLowerCase()} errors`, spans, {
         key,
         detail: (count, span) => `Up to ${plural(most(span), 'error')}${count > 1 ? `, ${count} times` : ''}`
       }));
     } else if (/off.?count$/i.test(key) && /can|bus/i.test(key)) {
       out.push(...eventsFrom('can', 'error', `${busName(key)}: bus off`, increases(source.read(key)), { key }));
     } else if (/tx.?full.?count$/i.test(key)) {
-      out.push(...eventsFrom('can', 'warning', `${busName(key)}: transmit buffer full`, increases(source.read(key)), { key }));
+      out.push(...eventsFrom('can', busSeverity(key, 'warning'), `${busName(key)}: transmit buffer full`, increases(source.read(key)), { key }));
     }
   }
   return out;
@@ -320,7 +340,7 @@ const quietDsCodes = new Set([44004, 44000, 44007, 44008]);
 export function dsLogEvents(log: DsLog, messages: DsMessage[], options: { robotConsole: boolean; key: (name: string) => string }): LogEvent[] {
   const { key } = options;
   const out: LogEvent[] = [
-    ...eventsFrom('brownout', 'error', 'Brownout', log.brownouts, { key: key('Brownout') }),
+    ...eventsFrom('brownout', 'error', 'Brownout', log.brownouts, { key: key('Brownout'), detail: (count, span) => brownoutDetail(log.brownouts, count, span) }),
     ...eventsFrom('network', 'error', 'Lost communication with the robot while enabled', log.lost.filter((l) => l.enabled), { key: key('Robot connected') }),
     ...eventsFrom('network', 'info', 'Robot disconnected', log.lost.filter((l) => !l.enabled), { key: key('Robot connected') }),
     ...eventsFrom('network', 'warning', 'Poor connection', log.poorLink, {
@@ -487,10 +507,26 @@ export function matchPhases(changes: ModeChange[], end: number, inMatch: boolean
 
 // --- Device faults, from Hoot logs ---
 
-// Faults that are a device doing as it was told (a current limit holding,
-// a limit switch) are worth seeing but aren't trouble.
-const routineFaults = /CurrLimit|StaticBrakeDisabled|(Forward|Reverse)(Hard|Soft)Limit$/;
-const warningFaults = /Unlicensed|DeviceTemp|ProcTemp|LoopTimeSlow|DataAcquiredLate|Saturated/;
+// A device's fault. A sticky fault stays set until cleared, so says only
+// that it happened at some point, maybe before this log. Information
+// (hidden as routine):
+// - a current limit holding: the motor doing as it was told;
+// - a motor controller's or CANcoder's sticky fault: the fault itself, while
+//   it happened, is listed too.
+// Otherwise by the device:
+// - a motor controller's are warnings: a motor faults often and the robot
+//   carries on;
+// - the Pigeon's are errors, sticky or not: the robot's heading is
+//   everything it drives and aims by;
+// - anything else's (a CANcoder) is an error while it's happening; any
+//   other device's sticky fault a warning.
+const stickyFault = /(^|\/)StickyFault_/;
+const currentLimit = /(Sticky)?Fault_(Stator|Supply)CurrLimit$/;
+const motorDevice = /^(TalonFXS?|TalonSRX|VictorSPX)-/;
+const pigeonDevice = /^Pigeon2-/;
+const cancoderDevice = /^CANcoder-/;
+
+export const isStickyFault = (name: string) => stickyFault.test(name);
 
 const faultWords: Record<string, string> = {
   ProcTemp: 'processor temperature',
@@ -505,13 +541,18 @@ const faultWords: Record<string, string> = {
 };
 
 export function faultSeverity(fault: string): EventSeverity {
-  return routineFaults.test(fault) ? 'info' : warningFaults.test(fault) ? 'warning' : 'error';
+  if (currentLimit.test(fault)) return 'info';
+  if (isStickyFault(fault) && (motorDevice.test(fault) || cancoderDevice.test(fault))) return 'info';
+  if (pigeonDevice.test(fault)) return 'error';
+  if (motorDevice.test(fault)) return 'warning';
+  return isStickyFault(fault) ? 'warning' : 'error';
 }
 
-// `TalonFX-59/Fault_SupplyCurrLimit` -> "TalonFX-59: supply current limit".
+// `TalonFX-59/Fault_SupplyCurrLimit` -> "TalonFX-59: supply current limit";
+// `TalonFX-59/StickyFault_SupplyCurrLimit` -> "TalonFX-59: supply current limit (sticky)".
 export function faultTitle(name: string): string {
   const [device, field] = name.split('/');
-  const fault = field.replace(/^Fault_/, '');
+  const fault = field.replace(/^(Sticky)?Fault_/, '');
   const words = faultWords[fault] ?? fault.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').toLowerCase();
-  return `${device}: ${words}`;
+  return `${device}: ${words}${isStickyFault(name) ? ' (sticky)' : ''}`;
 }

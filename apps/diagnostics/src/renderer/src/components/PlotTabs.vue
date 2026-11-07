@@ -18,12 +18,13 @@ const emit = defineEmits<{
   close: [id: string];
 }>();
 
-const types: PanelType[] = ['field', 'console', 'pie', 'robot3d'];
+const types: PanelType[] = ['line', 'field', 'console', 'pie', 'robot3d'];
 const full = computed(() => props.panels.length >= maxPanels);
 
-// Two of a kind are told apart by number: Pie: shares, Pie: shares 2.
+// Two of a kind are told apart by number: Pie: shares, Pie: shares 2; the
+// first line chart's tab is "Line chart", so another is "Line chart 2".
 const titles = computed(() => {
-  const seen = new Map<string, number>();
+  const seen = new Map<string, number>([[panelLabels.line, 1]]);
   return props.panels.map((panel) => {
     const title = panelTitle(panel);
     const n = (seen.get(title) ?? 0) + 1;

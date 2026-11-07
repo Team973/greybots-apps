@@ -1,14 +1,17 @@
-// More kinds of plot than the line chart (#144): a 2D field, the console, a
-// pie chart and a 3D robot. They sit under the line chart on the Signals
-// page and show the same moment: the pin, the playhead, or now when live.
+// More plots than the line chart (#144): more line charts, a 2D field, the
+// console, a pie chart and a 3D robot. Each is a tab beside the line
+// chart's on the Signals page, and they show the same span and moment: the
+// pin, the playhead, or now when live.
 //
 // Nothing here may touch Node or the DOM.
 
 import type { HeatMeasure } from './field-heat';
+import type { SignalKind } from './signals';
 
-export type PanelType = 'field' | 'console' | 'pie' | 'robot3d';
+export type PanelType = 'line' | 'field' | 'console' | 'pie' | 'robot3d';
 
 export const panelLabels: Record<PanelType, string> = {
+  line: 'Line chart',
   field: '2D field',
   console: 'Console',
   pie: 'Pie chart',
@@ -49,6 +52,32 @@ export interface FieldPanel {
   // Seconds of where each robot has been, drawn behind it. 0 for none.
   trail: number;
   items: FieldItem[];
+}
+
+// Another line chart: its own signals on its own axes, as the first's.
+export interface LineAxis {
+  id: string;
+  side: 'left' | 'right';
+}
+
+export interface LineTrace {
+  key: string;
+  kind: SignalKind;
+  // An axis's id, or 'lanes' for a band.
+  axis: string;
+  band: 'top' | 'bottom';
+  // A palette slot, or '#rrggbb'.
+  color: PanelColor;
+  hidden?: boolean;
+}
+
+export interface LinePanel {
+  id: string;
+  type: 'line';
+  // Its tab's name, or '' for "Line chart 2" and so on.
+  title: string;
+  axes: LineAxis[];
+  traces: LineTrace[];
 }
 
 export interface ConsolePanel {
@@ -107,10 +136,11 @@ export interface Robot3dPanel {
   season: string;
 }
 
-export type PlotPanel = FieldPanel | ConsolePanel | PiePanel | Robot3dPanel;
+export type PlotPanel = LinePanel | FieldPanel | ConsolePanel | PiePanel | Robot3dPanel;
 
 // A plot's name, for its tab.
 export function panelTitle(panel: PlotPanel): string {
+  if (panel.type === 'line') return panel.title || panelLabels.line;
   if (panel.type === 'console') return panel.key && panel.key !== 'console' ? `Console: ${panel.key.split('/').pop()}` : 'Console';
   if (panel.type === 'pie') return panel.title || (panel.mode === 'states' ? 'Pie: time at each value' : panel.measure === 'energy' ? 'Pie: energy' : 'Pie: shares');
   return panelLabels[panel.type];
@@ -120,6 +150,8 @@ export function panelTitle(panel: PlotPanel): string {
 // and this many slices in a pie (past the palette's colours, the smallest
 // are grey).
 export const maxPanels = 6;
+// Signals on one line chart: the palette's colours.
+export const maxLineTraces = 8;
 export const maxFieldItems = 8;
 export const maxPieKeys = 24;
 
@@ -127,6 +159,8 @@ export const defaultRobotSize = 0.9;
 
 export function newPanel(type: PanelType, id: string, season: string): PlotPanel {
   switch (type) {
+    case 'line':
+      return { id, type, title: '', axes: [], traces: [] };
     case 'field':
       return { id, type, season, rotation: 0, robotSize: defaultRobotSize, trail: 2, items: [] };
     case 'console':
@@ -141,6 +175,8 @@ export function newPanel(type: PanelType, id: string, season: string): PlotPanel
 // The signals a panel reads.
 export function panelKeys(panel: PlotPanel): string[] {
   switch (panel.type) {
+    case 'line':
+      return panel.traces.map((t) => t.key);
     case 'field':
       return panel.items.flatMap((item) => (item.style === 'heat' && item.value ? [item.key, item.value] : [item.key]));
     case 'console':
@@ -393,6 +429,32 @@ function cleanColor(raw: unknown): PanelColor {
   return 0;
 }
 
+// A line chart's axes and signals as saved or received: each signal on an
+// axis it has (or a band), at most the palette's worth.
+export function cleanChart(rawAxes: unknown, rawTraces: unknown): { axes: LineAxis[]; traces: LineTrace[] } {
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const axes = (Array.isArray(rawAxes) ? rawAxes : [])
+    .filter(isObject)
+    .filter((a) => typeof a.id === 'string' && (a.side === 'left' || a.side === 'right'))
+    .slice(0, maxLineTraces)
+    .map((a) => ({ id: a.id as string, side: a.side as 'left' | 'right' }));
+  const traces = (Array.isArray(rawTraces) ? rawTraces : [])
+    .filter(isObject)
+    .filter((t) => typeof t.key === 'string' && typeof t.axis === 'string' && (t.axis === 'lanes' || axes.some((a) => a.id === t.axis)))
+    .slice(0, maxLineTraces)
+    .map((t): LineTrace => ({
+      key: (t.key as string).slice(0, 500),
+      kind: (['number', 'boolean', 'string'].includes(t.kind as string) ? t.kind : 'number') as SignalKind,
+      axis: t.axis as string,
+      band: t.band === 'bottom' ? 'bottom' : 'top',
+      color: typeof t.color === 'number' && Number.isInteger(t.color) && t.color >= 0 && t.color < maxLineTraces
+        ? t.color
+        : typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : 0,
+      ...(t.hidden === true ? { hidden: true } : {})
+    }));
+  return { axes, traces };
+}
+
 // One panel as saved or received, with what's known and nothing else; null
 // if it isn't one.
 export function cleanPanel(raw: unknown): PlotPanel | null {
@@ -401,6 +463,8 @@ export function cleanPanel(raw: unknown): PlotPanel | null {
   const id = panelId(p.id);
   if (!id) return null;
   switch (p.type) {
+    case 'line':
+      return { id, type: 'line', title: text(p.title, 120), ...cleanChart(p.axes, p.traces) };
     case 'field': {
       const items = Array.isArray(p.items) ? p.items : [];
       return {
@@ -472,6 +536,8 @@ export function cleanPanels(raw: unknown): PlotPanel[] {
 export function mapPanelKeys(panel: PlotPanel, find: (key: string) => string | null): PlotPanel {
   const map = (key: string) => (key ? find(key) ?? key : key);
   switch (panel.type) {
+    case 'line':
+      return { ...panel, traces: panel.traces.map((t) => ({ ...t, key: map(t.key) })) };
     case 'field':
       return { ...panel, items: panel.items.map((item) => ({ ...item, key: map(item.key), ...(item.value ? { value: map(item.value) } : {}) })) };
     case 'console':

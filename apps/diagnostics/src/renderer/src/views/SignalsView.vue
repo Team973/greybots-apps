@@ -30,7 +30,7 @@ import TimeTape from '@/components/TimeTape.vue';
 import ViewsMenu from '@/components/ViewsMenu.vue';
 import { formatBytes, formatTime, logCompanions } from '@/format';
 import { palette } from '@/palette';
-import { eventColor, isProblem, noteEvent, shownEvent, type EventFilter } from '@/review';
+import { allLevels, eventColor, eventLevels, isProblem, noteEvent, shownEvent, type EventFilter } from '@/review';
 import { maxTraces, usePlotStore, type AxisSide, type BandSide, type PlotTarget, type TraceColor } from '@/stores/plot-store';
 
 const plotStore = usePlotStore();
@@ -800,12 +800,16 @@ function storedFilter(): EventFilter {
   const all = eventKinds.map((k) => k.kind);
   try {
     const saved = JSON.parse(localStorage.getItem('signals.eventFilter') ?? 'null') as EventFilter | null;
-    if (saved && Array.isArray(saved.kinds)) return { kinds: all.filter((k) => saved.kinds.includes(k)), routine: !!saved.routine };
+    if (saved && Array.isArray(saved.kinds)) {
+      // Filters saved before levels could be picked show every level.
+      const levels = Array.isArray(saved.levels) ? eventLevels.map((l) => l.level).filter((l) => saved.levels.includes(l)) : allLevels();
+      return { kinds: all.filter((k) => saved.kinds.includes(k)), levels, routine: !!saved.routine };
+    }
   } catch {
     // Fall through to everything but the routine.
   }
   // State changes and button presses are many: only once picked.
-  return { kinds: all.filter((k) => !quietKinds.includes(k)), routine: false };
+  return { kinds: all.filter((k) => !quietKinds.includes(k)), levels: allLevels(), routine: false };
 }
 const eventFilter = ref<EventFilter>(storedFilter());
 watch(eventFilter, (value) => localStorage.setItem('signals.eventFilter', JSON.stringify(value)));
@@ -942,7 +946,12 @@ onUnmounted(pause);
 const season = computed(() => seasonFor(summary.value?.startedAt ?? logs.value?.find((l) => l.id === selectedLog.value)?.recorded));
 
 // The tab shown: the line chart, or another plot (#144).
-const shownPanel = computed(() => plotStore.panels.find((p) => p.id === plotStore.activeTab) ?? null);
+// The other plot shown, or null for a line chart (the first, or another:
+// whichever it is, its signals are the store's).
+const shownPanel = computed(() => {
+  const panel = plotStore.panels.find((p) => p.id === plotStore.activeTab);
+  return panel && panel.type !== 'line' ? panel : null;
+});
 const onLine = computed(() => shownPanel.value === null);
 const chartHeight = 460;
 
@@ -1174,7 +1183,7 @@ watch(() => route.query.session, (session) => {
       <nav v-if="fromReports" class="back-row" aria-label="Back">
         <md-outlined-button id="back-to-reports" @click="backToReports">← Back to reports</md-outlined-button>
       </nav>
-      <PlotTabs v-if="summary" :panels="plotStore.panels" :active="shownPanel?.id ?? 'line'" @select="plotStore.showTab($event)"
+      <PlotTabs v-if="summary" :panels="plotStore.panels" :active="plotStore.activeTab" @select="plotStore.showTab($event)"
         @add="addPlot" @close="plotStore.removePanel($event)" />
       <div class="toolbar">
         <!-- Material's zoom_in and zoom_out icons, drawn here (no icon font: the

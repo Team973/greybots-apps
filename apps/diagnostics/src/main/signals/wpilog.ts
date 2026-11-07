@@ -57,7 +57,35 @@ function readUint(bytes: Uint8Array, offset: number, length: number): number {
   return value;
 }
 
+// Records parsed between looks at the clock, when parsing in turns.
+const recordsPerTurn = 20_000;
+
 export function parseLog(bytes: Uint8Array): ParsedLog {
+  const steps = parseSteps(bytes);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+// The same, a turn at a time: it lets everything else waiting in the main
+// process (the window's requests) go between turns of about `turnMs`. A
+// Hoot log's export can take a second or more to parse whole, and the
+// window would hang for all of it.
+export async function parseLogInTurns(bytes: Uint8Array, turnMs = 25): Promise<ParsedLog> {
+  const steps = parseSteps(bytes);
+  let since = performance.now();
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    if (performance.now() - since >= turnMs) {
+      await new Promise((resolve) => setImmediate(resolve));
+      since = performance.now();
+    }
+  }
+}
+
+function* parseSteps(bytes: Uint8Array): Generator<void, ParsedLog, void> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < 12 || decoder.decode(bytes.subarray(0, 6)) !== 'WPILOG') {
     throw new LogFormatError('Not a WPILib data log.');
@@ -74,7 +102,9 @@ export function parseLog(bytes: Uint8Array): ParsedLog {
   let truncated = false;
 
   let offset = 12 + extraLength;
+  let count = 0;
   while (offset < bytes.length) {
+    if (++count % recordsPerTurn === 0) yield;
     const bitfield = bytes[offset];
     const idLength = (bitfield & 0x3) + 1;
     const sizeLength = ((bitfield >> 2) & 0x3) + 1;

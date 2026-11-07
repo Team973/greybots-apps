@@ -6,7 +6,8 @@
 //
 // Nothing here may touch Node or the DOM.
 
-import { isPowerEvent, type EventKind, type LogEvent, type MatchPhase } from './events';
+import type { DeviceHealth, DeviceSpec } from './devices';
+import { isPigeonCanivoreEvent, isPowerEvent, type EventKind, type LogEvent, type MatchPhase } from './events';
 import { monitorEvents, type MonitorAlarm, type MonitorResult } from './monitors';
 import type { MatchInfo, MatchType } from './offload';
 import type { VisionSummary } from './vision';
@@ -109,13 +110,17 @@ export type ReportSection =
   // Each slice's share of the total over the span: a signal (a motor's
   // current), or a group of them added up (a subsystem's motors).
   | { type: 'pie'; title: string; measure: PieMeasure; voltage: string; slices: PieSliceSpec[] }
-  // `topic` 'power': only power problems (isPowerEvent), whatever the kinds.
-  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean; topic?: 'power' }
+  // `topic`: only power problems (isPowerEvent), or the Pigeon's and
+  // CANivore's (isPigeonCanivoreEvent), whatever the kinds.
+  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean; topic?: 'power' | 'pigeon-canivore' }
   // The post-match monitors (monitors.ts): these, or every one with none.
   | { type: 'monitors'; title: string; ids: string[] }
   // Each camera: good data used against thrown out, when (a heatmap), and
   // how far its measurements were from the fused pose (vision.ts).
-  | { type: 'vision'; title: string };
+  | { type: 'vision'; title: string }
+  // Every CAN device listed: in the Hoot logs, logging, and without faults
+  // (devices.ts). Its errors are the report's.
+  | { type: 'devices'; title: string; devices: DeviceSpec[] };
 
 // What a pie adds up, as a pie plot's (plots.ts): `voltage` is the signal
 // every current is multiplied by for energy, or '' for each current's own.
@@ -203,7 +208,8 @@ export const sectionLabels: Record<ReportSectionType, string> = {
   pie: 'Pie chart',
   events: 'Events',
   monitors: 'Monitors (automatic checks)',
-  vision: 'Vision system'
+  vision: 'Vision system',
+  devices: 'Device health'
 };
 
 export const maxNameLength = 120;
@@ -257,7 +263,8 @@ export type RenderedSection =
   | { type: 'events'; title: string; events: LogEvent[] }
   | { type: 'monitors'; title: string; results: MonitorResult[] }
   // `recorded`: when the log was, for which season's field to draw.
-  | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[]; recorded?: string };
+  | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[]; recorded?: string }
+  | { type: 'devices'; title: string; health: DeviceHealth };
 
 export interface Report {
   id: string;
@@ -348,8 +355,13 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
 // --- A report's problems ---
 
 // Whether an events section lists an event: of its kinds, and its topic.
+// One of every kind lists every kind but the monitors' alarms: those are
+// the monitors and vision sections' (only where they're asked for, so a
+// wheel slipping isn't in every report's errors). Ticked, they're listed.
 export function sectionLists(section: Extract<ReportSection, { type: 'events' }>, event: LogEvent): boolean {
-  return (section.kinds.length === 0 || section.kinds.includes(event.kind)) && (section.topic !== 'power' || isPowerEvent(event));
+  const onTopic = section.topic === 'power' ? isPowerEvent(event) : section.topic === 'pigeon-canivore' ? isPigeonCanivoreEvent(event) : true;
+  const ofKind = section.kinds.length === 0 ? event.kind !== 'monitor' : section.kinds.includes(event.kind);
+  return ofKind && onTopic;
 }
 
 // The monitor the vision section shows.
@@ -360,9 +372,10 @@ export const isProblem = (event: LogEvent) => event.severity === 'error' || even
 // A report's errors and warnings are only what its own sections check: the
 // events its events sections list, and the alarms of the monitors its
 // monitors and vision sections show. So the Vision System report flags only
-// the cameras, and the log's device faults (the Hoot logs', the robot
-// code's) go to the reports that list them, the Match Report and the
-// match-phase ones such as Autonomous.
+// the cameras, Power Analysis only the battery's problems, the monitors'
+// alarms are in the reports that show those monitors, and the log's device
+// faults (the Hoot logs', the robot code's) go to the reports that list
+// them, the Match Report and the match-phase ones such as Autonomous.
 export function reportProblems(sections: ReportSection[], events: LogEvent[], monitors: MonitorResult[]): LogEvent[] {
   const found = new Map<string, LogEvent>();
   const add = (list: LogEvent[]) => {

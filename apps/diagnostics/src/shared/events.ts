@@ -121,6 +121,18 @@ export function mergeSpans(spans: { start: number; end: number | null }[], gap =
   return out;
 }
 
+// Brownouts in a span, as people count them: each time the battery sagged
+// below the roboRIO's brownout voltage, its flag going on and off close
+// together being one (as the events are), and the same brownout from the
+// data log and a Driver Station log one. `flags`: how many times the flag
+// came on, by the source that saw it most.
+export function brownoutCount(events: LogEvent[]): { brownouts: number; flags: number } {
+  const brownouts = events.filter((e) => e.kind === 'brownout');
+  const bySource = new Map<string, number>();
+  for (const e of brownouts) bySource.set(e.key ?? '', (bySource.get(e.key ?? '') ?? 0) + (e.count || 1));
+  return { brownouts: mergeSpans(brownouts).length, flags: Math.max(0, ...bySource.values()) };
+}
+
 // "Teleop 1:05": the phase a time is in and how far into it, or ''.
 export function phaseClock(phases: MatchPhase[], t: number): string {
   const at = phaseAt(phases, t);
@@ -129,12 +141,18 @@ export function phaseClock(phases: MatchPhase[], t: number): string {
   return `${phaseLabels[at.phase.name]} ${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 }
 
-// Power problems: brownouts, and faults, alerts and messages about the
-// battery, voltage, supply current, breakers or reboots. What a Power
-// Analysis report lists, rather than wheel slip or a camera.
-const powerWords = /brown ?out|under ?volt|voltage|supply|battery|breaker|power|reboot/i;
+// The battery's problems: brownouts, and faults, alerts and messages about
+// the battery, its voltage sagging (a device's undervoltage or supply
+// voltage, a bridge brownout) or a breaker. What a Power Analysis report
+// lists: not wheel slip, a camera, a current limit or a CAN error.
+const batteryWords = /brown ?out|under ?volt|supply voltage|battery|breaker/i;
 export const isPowerEvent = (event: LogEvent) =>
-  event.kind === 'brownout' || (['fault', 'alert', 'message', 'can'].includes(event.kind) && powerWords.test(event.title));
+  event.kind === 'brownout' || (['fault', 'alert', 'message'].includes(event.kind) && batteryWords.test(event.title));
+
+// The Pigeon's faults, and the CANivore's problems (its bus down, errors,
+// buffer full): what a Match Report's Pigeon and CANivore section lists.
+export const isPigeonCanivoreEvent = (event: LogEvent) =>
+  (event.kind === 'fault' && /^Pigeon2-/.test(event.title)) || (event.kind === 'can' && /canivore/i.test(event.title));
 
 // The playback tape's stretches: the log cut into disabled, auto, teleop
 // and endgame (and enabled, outside a match's phases: test mode, or a log

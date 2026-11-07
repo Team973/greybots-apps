@@ -162,7 +162,7 @@ export class HootLog {
       return null;
     });
     // Hoot times as they are (seconds since the Hoot log started).
-    return bytes ? new LogSignalSource(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0) : null;
+    return bytes ? LogSignalSource.open(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), 0) : null;
   }
 
   private requestExport(id: string): Promise<void> {

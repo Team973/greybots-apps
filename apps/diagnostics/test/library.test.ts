@@ -6,7 +6,7 @@ import { matchKey, searchMatches, sharedTail } from '@shared/signal-match';
 import { cleanLibraryItem } from '@shared/library-check';
 import { planSync } from '@shared/library-sync';
 import { outdatedStarter, starterLibrary, starterStamp } from '@shared/starters';
-import { reportProblems, templateKeys, theAutoReport, type LibraryItem, type Pipeline, type ReportTemplate } from '@shared/library';
+import { reportProblems, sectionLists, templateKeys, theAutoReport, type LibraryItem, type Pipeline, type ReportTemplate } from '@shared/library';
 import type { LogEvent } from '@shared/events';
 import type { MonitorResult } from '@shared/monitors';
 import { integrateProduct } from '@shared/signals';
@@ -51,8 +51,8 @@ const viewIds = new Set(starters.filter((s) => s.kind === 'view').map((s) => s.i
 for (const t of starters) {
   if (t.kind !== 'template') continue;
   for (const s of t.sections) if (s.type === 'chart') assert.ok(s.viewId && viewIds.has(s.viewId), `${t.name}: ${s.title}`);
-  // Monitors and vision sections find their own signals.
-  assert.ok(templateKeys(t.sections, t.scope).length > 0 || t.sections.some((s) => s.type === 'monitors' || s.type === 'vision'), t.name);
+  // Monitors, vision and device sections find their own signals.
+  assert.ok(templateKeys(t.sections, t.scope).length > 0 || t.sections.some((s) => s.type === 'monitors' || s.type === 'vision' || s.type === 'devices'), t.name);
 }
 const pipeline = starters.find((s) => s.kind === 'pipeline')!;
 assert.equal(pipeline.kind === 'pipeline' && pipeline.enabled, false, 'the starter pipeline starts off');
@@ -124,6 +124,8 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
   assert.equal(outdatedStarter({ ...keptAsAdded, changed: '2026-11-05T10:00:00.000Z' }, power), false);
   // Up to date already.
   assert.equal(outdatedStarter(power, power), false);
+  // Brought up to date before, and the starter's changed again since.
+  assert.equal(outdatedStarter({ ...keptAsAdded, changed: '2026-11-07T00:00:00.000Z' }, power), true);
   // The scope is kept as read.
   assert.deepEqual((cleanLibraryItem({ ...power, scope: { type: 'enabled' } }) as { scope: unknown }).scope, { type: 'enabled' });
 }
@@ -152,12 +154,33 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
     reportProblems([{ type: 'events', title: '', kinds: [], problemsOnly: true, topic: 'power' }], [{ ...fault, id: title, kind, title }], monitors).length;
   assert.equal(power('TalonFX-60: bridge brownout'), 1);
   assert.equal(power('TalonFX-2: undervoltage'), 1);
-  assert.equal(power('TalonFX-58: supply current limit'), 1);
+  assert.equal(power('Pigeon2-1: supply voltage unstable'), 1);
+  // Only the battery's: not a current limit, a temperature, a reboot, CAN or a monitor.
+  assert.equal(power('TalonFX-58: supply current limit'), 0);
   assert.equal(power('TalonFX-58: device temperature'), 0);
+  assert.equal(power('TalonFX-58: rebooted while enabled'), 0);
+  assert.equal(power('CANivore: transmit buffer full', 'can'), 0);
   assert.equal(power('Wheel slip', 'monitor'), 0);
+  // An events section of every kind leaves the monitors' alarms to the
+  // monitors sections; ticked, they're listed.
+  const slip = { ...fault, id: 'monitor:slip', kind: 'monitor' as const, title: 'Module 0 wheel slipping' };
+  assert.equal(reportProblems([{ type: 'events', title: '', kinds: [], problemsOnly: true }], [slip], monitors).length, 0);
+  assert.equal(reportProblems([{ type: 'events', title: '', kinds: ['monitor'], problemsOnly: true }], [slip], monitors).length, 1);
   // The Match Report: the log's faults and every monitor's warnings, once each.
   assert.deepEqual(ids(templates.get('Match Report')!.sections).sort(),
     ['brownout', 'hoot:fault', 'monitor:pair-shooter:pair-shooter:2.00', 'monitor:vision-disagreement:vision-disagreement:2.00']);
   // An events section of only some kinds: those.
   assert.deepEqual(ids([{ type: 'events', title: '', kinds: ['brownout'], problemsOnly: true }]), ['brownout']);
+}
+
+// A Pigeon and CANivore section: the Pigeon's faults and the CANivore's bus
+// problems, not a motor's faults or the rio's bus.
+{
+  const section = { type: 'events' as const, title: 'Pigeon and CANivore', kinds: ['fault', 'can'] as LogEvent['kind'][], problemsOnly: true, topic: 'pigeon-canivore' as const };
+  const event = (kind: LogEvent['kind'], title: string): LogEvent => ({ id: title, kind, severity: 'error', title, detail: '', start: 0, end: null, key: null, count: 1 });
+  assert.equal(sectionLists(section, event('fault', 'Pigeon2-1: hardware')), true);
+  assert.equal(sectionLists(section, event('can', 'Hoot CANivore 17E61D98: CAN bus down')), true);
+  assert.equal(sectionLists(section, event('can', 'CANivore: transmit buffer full')), true);
+  assert.equal(sectionLists(section, event('fault', 'TalonFX-2: bridge brownout')), false);
+  assert.equal(sectionLists(section, event('can', 'roboRIO CAN bus: bus off')), false);
 }

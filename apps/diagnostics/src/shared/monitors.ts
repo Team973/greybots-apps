@@ -275,17 +275,29 @@ export function wheelGaps(pose: { x: Series; y: Series; r: Series }, positions: 
 }
 
 export const median = (values: number[]) => {
+  // Three or four (the other modules, or all of them), every step: without sorting.
+  if (values.length === 3) {
+    const [a, b, c] = values;
+    return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+  }
+  if (values.length === 4) {
+    const [a, b, c, d] = values;
+    // The middle two: all four but the largest and the smallest.
+    return (a + b + c + d - Math.max(a, b, c, d) - Math.min(a, b, c, d)) / 2;
+  }
   const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
   return sorted.length === 0 ? 0 : sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
 // Where `check` holds for at least `persist` seconds, stepping through the
-// spans: each alarm with the step where its value was largest.
+// spans: each alarm with the step where its value was largest. A check's
+// detail can be a function, called only for a step that's on (most aren't:
+// formatting every step's was a third of the monitors' time).
 export function persistent(
   spans: [number, number][],
   persist: number,
-  check: (t: number) => { on: boolean; value: number; detail: string } | null,
+  check: (t: number) => { on: boolean; value: number; detail: string | (() => string) } | null,
   step = monitorSettings.stepSeconds
 ): { start: number; end: number; value: number; detail: string }[] {
   const found: { start: number; end: number; value: number; detail: string }[] = [];
@@ -301,12 +313,13 @@ export function persistent(
         close();
         continue;
       }
-      if (!run) run = { start: t, end: t, value: now.value, detail: now.detail };
+      const detail = () => (typeof now.detail === 'function' ? now.detail() : now.detail);
+      if (!run) run = { start: t, end: t, value: now.value, detail: detail() };
       else {
         run.end = t;
         if (now.value > run.value) {
           run.value = now.value;
-          run.detail = now.detail;
+          run.detail = detail();
         }
       }
     }
@@ -346,7 +359,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
       return {
         on: big >= s.pair.runningAmps && diff > s.pair.amps && diff > s.pair.share * big,
         value: diff,
-        detail: `${pair.a[0]} ${fmt(Math.abs(ia))} A, ${pair.b[0]} ${fmt(Math.abs(ib))} A (${Math.round((diff / big) * 100)}% apart)`
+        detail: () => `${pair.a[0]} ${fmt(Math.abs(ia))} A, ${pair.b[0]} ${fmt(Math.abs(ib))} A (${Math.round((diff / big) * 100)}% apart)`
       };
     }).map((a) => ({ start: a.start, end: a.end, title: `${pair.name} imbalanced`, detail: `${a.detail}, for ${seconds(a)}`, key: found[0].key }));
   }
@@ -357,7 +370,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
     if (result.checked) {
       result.alarms = persistent(gates.enabled, s.twist.persist, (t) => {
         const v = valueAt(found[0].series, t);
-        return v === null ? null : { on: Math.abs(v) > s.twist.rotations, value: Math.abs(v), detail: `left − right ${fmt(v, 2)} rot` };
+        return v === null ? null : { on: Math.abs(v) > s.twist.rotations, value: Math.abs(v), detail: () => `left − right ${fmt(v, 2)} rot` };
       }).map((a) => ({ start: a.start, end: a.end, title: 'Intake arm twisted', detail: `${a.detail}, for ${seconds(a)}`, key: found[0].key }));
     }
   }
@@ -369,11 +382,22 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
     const { result, found } = need('swerve-outlier', 'Swerve module outlier', wanted);
     if (result.checked) {
       const of = (m: number, k: number) => found[m * 3 + k].series;
+      // Whether the modules were told to move, at each step: the same for
+      // each module's check, so worked out once.
+      const commanded = new Map<number, boolean>();
+      const isCommanded = (t: number) => {
+        let on = commanded.get(t);
+        if (on === undefined) {
+          const targets = modules.map((o) => valueAt(of(o, 2), t));
+          on = !targets.some((v) => v === null) && median(targets.map((v) => Math.abs(v!))) > s.swerve.commandedMps;
+          commanded.set(t, on);
+        }
+        return on;
+      };
       for (const m of modules) {
         const others = modules.filter((o) => o !== m);
         const alarms = persistent(gates.enabled, s.swerve.persist, (t) => {
-          const targets = modules.map((o) => valueAt(of(o, 2), t));
-          if (targets.some((v) => v === null) || median(targets.map((v) => Math.abs(v!))) <= s.swerve.commandedMps) return null;
+          if (!isCommanded(t)) return null;
           const current = valueAt(of(m, 0), t);
           const velocity = valueAt(of(m, 1), t);
           const otherCurrents = others.map((o) => valueAt(of(o, 0), t));
@@ -384,7 +408,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
           const byCurrent = Math.abs(current) > s.swerve.minAmps && Math.abs(current) > s.swerve.times * mc;
           const byVelocity = Math.abs(velocity) > s.swerve.times * mv;
           const ratio = Math.max(mc > 0 ? Math.abs(current) / mc : 0, mv > 0 ? Math.abs(velocity) / mv : 0);
-          return { on: byCurrent || byVelocity, value: ratio, detail: `${fmt(Math.abs(current))} A, ${fmt(Math.abs(velocity), 2)} m/s (others ${fmt(mc)} A, ${fmt(mv, 2)} m/s)` };
+          return { on: byCurrent || byVelocity, value: ratio, detail: () => `${fmt(Math.abs(current))} A, ${fmt(Math.abs(velocity), 2)} m/s (others ${fmt(mc)} A, ${fmt(mv, 2)} m/s)` };
         });
         result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `Swerve module ${m} unlike the others`, detail: `${a.detail}, for ${seconds(a)}`, key: found[m * 3].key })));
       }
@@ -401,7 +425,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
         const y = valueAt(found[1].series, t, s.path.holdSeconds);
         if (x === null || y === null) return null;
         const error = Math.hypot(x, y);
-        return { on: error > s.path.meters, value: error, detail: `${fmt(error, 2)} m off the path` };
+        return { on: error > s.path.meters, value: error, detail: () => `${fmt(error, 2)} m off the path` };
       }).map((a) => ({ start: a.start, end: a.end, title: 'Off the path in auto', detail: `up to ${a.detail}, for ${seconds(a)}`, key: found[0].key }));
     }
   }
@@ -413,7 +437,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
         const theta = valueAt(found[0].series, t, s.path.holdSeconds);
         if (theta === null) return null;
         const degrees = Math.abs(wrap(theta)) * 180 / Math.PI;
-        return { on: degrees > s.path.degrees, value: degrees, detail: `${fmt(degrees)}° off the path's heading` };
+        return { on: degrees > s.path.degrees, value: degrees, detail: () => `${fmt(degrees)}° off the path's heading` };
       }).map((a) => ({ start: a.start, end: a.end, title: "Off the path's heading in auto", detail: `up to ${a.detail}, for ${seconds(a)}`, key: found[0].key }));
     }
   }
@@ -443,7 +467,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
             if (!gap) return null;
             const over = sign * (gap.wheel - gap.expected);
             const moving = Math.max(gap.wheel, gap.expected) > s.slip.movingMps;
-            return { on: moving && over > s.slip.mps, value: over, detail: `wheel ${fmt(gap.wheel, 2)} m/s, ${fmt(gap.expected, 2)} m/s for how the robot moved (over ${fmt(s.slip.windowSeconds)} s)` };
+            return { on: moving && over > s.slip.mps, value: over, detail: () => `wheel ${fmt(gap.wheel, 2)} m/s, ${fmt(gap.expected, 2)} m/s for how the robot moved (over ${fmt(s.slip.windowSeconds)} s)` };
           });
           result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `Module ${m} ${title}`, detail: `${a.detail}, for ${seconds(a)}`, key: found[3 + m].key })));
         }
@@ -469,7 +493,7 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
         const alarms = persistent(gates.enabled, s.vision.persist, (t) => {
           const d = measurementGap({ x: fx, y: fy, r: fr }, { x: mx.series, y: my.series, r: heading?.series ?? null }, t, s.vision.freshSeconds);
           if (!d) return null;
-          return { on: d.meters > s.vision.meters || (d.degrees ?? 0) > s.vision.degrees, value: d.meters, detail: `${fmt(d.meters, 2)} m${d.degrees === null ? '' : `, ${fmt(d.degrees)}°`} from the fused pose` };
+          return { on: d.meters > s.vision.meters || (d.degrees ?? 0) > s.vision.degrees, value: d.meters, detail: () => `${fmt(d.meters, 2)} m${d.degrees === null ? '' : `, ${fmt(d.degrees)}°`} from the fused pose` };
         });
         result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `${camera.name} camera disagrees with the fused pose`, detail: `up to ${a.detail}, for ${seconds(a)}`, key: mx.key })));
       }
@@ -531,7 +555,7 @@ function surfMonitors(
     const r = valueAt(roll, t);
     if (p === null || r === null) return null;
     const tilt = Math.max(Math.abs(p), Math.abs(r));
-    return { on: tilt > s.surf.degrees, value: tilt, detail: `${Math.abs(p) >= Math.abs(r) ? 'pitch' : 'roll'} ${fmt(tilt)}°` };
+    return { on: tilt > s.surf.degrees, value: tilt, detail: () => `${Math.abs(p) >= Math.abs(r) ? 'pitch' : 'roll'} ${fmt(tilt)}°` };
   });
   for (const tilt of tilts) {
     // Only in the pile: not crossing a field element, or being shoved.

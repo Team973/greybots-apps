@@ -17,7 +17,7 @@ import {
   type ViewSpan
 } from './library';
 import type { MatchType } from './offload';
-import { cleanPanels } from './plots';
+import { cleanChart, cleanPanels } from './plots';
 
 type Raw = Record<string, unknown>;
 
@@ -29,30 +29,11 @@ const time = (value: unknown, fallback: string) => (typeof value === 'string' &&
 const allKinds = new Set<string>(eventKinds.map((k) => k.kind));
 const eventKindList = (value: unknown): EventKind[] => strings(value).filter((k): k is EventKind => allKinds.has(k));
 
-// Most signals a chart can have, and sections a template.
-const maxTraces = 8;
+// Most sections a template can have.
 const maxSections = 40;
 
 export function cleanViewBody(raw: Raw): ViewBody {
-  const axes = (Array.isArray(raw.axes) ? raw.axes : [])
-    .filter(isObject)
-    .filter((a) => typeof a.id === 'string' && (a.side === 'left' || a.side === 'right'))
-    .slice(0, maxTraces)
-    .map((a) => ({ id: a.id as string, side: a.side as 'left' | 'right' }));
-  const traces = (Array.isArray(raw.traces) ? raw.traces : [])
-    .filter(isObject)
-    .filter((t) => typeof t.key === 'string' && typeof t.axis === 'string' && (t.axis === 'lanes' || axes.some((a) => a.id === t.axis)))
-    .slice(0, maxTraces)
-    .map((t) => ({
-      key: (t.key as string).slice(0, 500),
-      kind: (['number', 'boolean', 'string'].includes(t.kind as string) ? t.kind : 'number') as ViewBody['traces'][number]['kind'],
-      axis: t.axis as string,
-      band: (t.band === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom',
-      color: typeof t.color === 'number' && Number.isInteger(t.color) && t.color >= 0 && t.color < maxTraces
-        ? t.color
-        : typeof t.color === 'string' && /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : 0,
-      ...(t.hidden === true ? { hidden: true } : {})
-    }));
+  const { axes, traces } = cleanChart(raw.axes, raw.traces);
   const span = isObject(raw.span) ? raw.span : {};
   const cleanSpan: ViewSpan = span.type === 'phase' && ['auto', 'teleop', 'endgame', 'match'].includes(span.phase as string)
     ? { type: 'phase', phase: span.phase as 'auto' | 'teleop' | 'endgame' | 'match' }
@@ -109,11 +90,21 @@ function cleanSection(raw: Raw): ReportSection | null {
           .map((slice) => ({ label: text(slice.label), keys: strings(slice.keys, 40).map((k) => k.slice(0, 500)) }))
       };
     case 'events':
-      return { type: 'events', title: text(raw.title), kinds: eventKindList(raw.kinds), problemsOnly: raw.problemsOnly !== false, ...(raw.topic === 'power' ? { topic: 'power' as const } : {}) };
+      return { type: 'events', title: text(raw.title), kinds: eventKindList(raw.kinds), problemsOnly: raw.problemsOnly !== false, ...(raw.topic === 'power' || raw.topic === 'pigeon-canivore' ? { topic: raw.topic as 'power' | 'pigeon-canivore' } : {}) };
     case 'monitors':
       return { type: 'monitors', title: text(raw.title), ids: strings(raw.ids, 40) };
     case 'vision':
       return { type: 'vision', title: text(raw.title) };
+    case 'devices':
+      return {
+        type: 'devices',
+        title: text(raw.title),
+        devices: (Array.isArray(raw.devices) ? raw.devices : [])
+          .filter(isObject)
+          .filter((d) => typeof d.device === 'string' && /^[A-Za-z0-9]+-\d{1,3}$/.test(d.device))
+          .slice(0, 100)
+          .map((d) => ({ device: d.device as string, label: text(d.label), bus: d.bus === 'rio' ? 'rio' as const : 'canivore' as const }))
+      };
     default:
       return null;
   }

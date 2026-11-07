@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 
-import { eventKinds, maxNoteLength, type EventKind, type LogEvent, type MatchPhase } from '@shared/events';
-import { eventColor, eventTime, isProblem, isRoutine, shownEvent, type EventFilter } from '@/review';
+import { eventKinds, maxNoteLength, type EventKind, type EventSeverity, type LogEvent, type MatchPhase } from '@shared/events';
+import { eventColor, eventLevels, severityColor, eventTime, isProblem, isRoutine, shownEvent, shownLevel, type EventFilter } from '@/review';
 import { eventsPng } from '@/events-image';
 
 // The events of a log, listed under its chart: what kinds show, a jump to
@@ -34,11 +34,24 @@ const emit = defineEmits<{
 
 const shown = computed(() => props.events.filter((e) => shownEvent(e, filter.value)));
 const problems = computed(() => shown.value.filter(isProblem));
+// Each kind's count, of the levels shown; each level's, of the kinds shown.
 const counts = computed(() => {
   const out = new Map<EventKind, number>();
-  for (const e of props.events) if (filter.value.routine || !isRoutine(e)) out.set(e.kind, (out.get(e.kind) ?? 0) + 1);
+  for (const e of props.events) if (shownLevel(e, filter.value)) out.set(e.kind, (out.get(e.kind) ?? 0) + 1);
   return out;
 });
+const levelCounts = computed(() => {
+  const out = new Map<EventSeverity, number>();
+  for (const e of props.events) {
+    if (e.kind !== 'note' && filter.value.kinds.includes(e.kind) && (filter.value.routine || !isRoutine(e))) out.set(e.severity, (out.get(e.severity) ?? 0) + 1);
+  }
+  return out;
+});
+
+function toggleLevel(level: EventSeverity) {
+  const levels = filter.value.levels.includes(level) ? filter.value.levels.filter((l) => l !== level) : [...filter.value.levels, level];
+  filter.value = { ...filter.value, levels };
+}
 const routineCount = computed(() => props.events.filter(isRoutine).length);
 
 function toggleKind(kind: EventKind) {
@@ -80,6 +93,7 @@ async function copyImage() {
       subtitle: [
         `${errors} ${errors === 1 ? 'error' : 'errors'}, ${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`,
         `showing ${kinds.map((k) => k.label).join(', ') || 'nothing'}${filter.value.routine ? ', routine too' : ''}`,
+        filter.value.levels.length < eventLevels.length ? `${eventLevels.filter((l) => filter.value.levels.includes(l.level)).map((l) => l.label.toLowerCase()).join(', ') || 'no levels'} only` : '',
         props.pending
       ].filter(Boolean).join(' · '),
       rows: shown.value.map((event) => ({
@@ -158,7 +172,14 @@ function onNoteKey(event: KeyboardEvent) {
     </div>
     <p v-if="copyState !== 'idle' && copyState !== 'copied'" class="error-text">{{ copyState }}</p>
 
-    <div class="kinds">
+    <div class="kinds levels" role="group" aria-label="Levels shown">
+      <span class="hint small">Level</span>
+      <button v-for="level in eventLevels" :key="level.level" class="chip level" :style="{ '--level': severityColor(level.level, dark) }"
+        :aria-pressed="filter.levels.includes(level.level)" @click="toggleLevel(level.level)">
+        {{ level.label }} <span class="hint">{{ levelCounts.get(level.level) ?? 0 }}</span></button>
+    </div>
+    <div class="kinds" role="group" aria-label="Kinds shown">
+      <span class="hint small">Type</span>
       <template v-for="kind in eventKinds" :key="kind.kind">
         <button v-if="counts.get(kind.kind) || kind.kind === 'note'" class="chip" :aria-pressed="filter.kinds.includes(kind.kind)"
           @click="toggleKind(kind.kind)">{{ kind.label }} <span class="hint">{{ counts.get(kind.kind) ?? 0 }}</span></button>
@@ -276,6 +297,22 @@ function onNoteKey(event: KeyboardEvent) {
 .chip[aria-pressed='true'] {
   border-color: #2a78d6;
   background: color-mix(in srgb, #2a78d6 18%, transparent);
+}
+
+.levels {
+  margin-bottom: 6px;
+}
+
+.chip.level {
+  border-color: var(--level);
+}
+
+.chip.level[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--level) 22%, transparent);
+}
+
+.chip.level[aria-pressed='false'] {
+  opacity: 0.6;
 }
 
 .routine {

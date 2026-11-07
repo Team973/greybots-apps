@@ -2,11 +2,15 @@ import { defineStore } from 'pinia';
 
 import type { EventKind } from '@shared/events';
 import type { ViewBody, ViewSpan } from '@shared/library';
-import { cleanPanels, mapPanelKeys, maxPanels, newPanel, type PanelType, type PlotPanel } from '@shared/plots';
+import { chartsNow, copyChart, isLineTab, keepLine, takeLine, type LineChart } from '@shared/line-charts';
+import { cleanPanels, mapPanelKeys, maxPanels, newPanel, type LinePanel, type PanelType, type PlotPanel } from '@shared/plots';
 import type { SignalKind } from '@shared/signals';
 
 // What's on the Signals page's chart: which log or live session, which
-// signals, on which axes, and the time span shown. Kept in a store so it
+// signals, on which axes, and the time span shown. There can be more line
+// charts, in tabs: the one shown (or last shown) has its signals in `axes`
+// and `traces`, and the others keep theirs (the first's in `mainLine`, the
+// rest's in their tabs), so all the chart's code works on whichever it is. Kept in a store so it
 // survives going to another page and back, and saved, so it's there again
 // when the app is opened. Saving charts by name comes with dashboards (#95).
 
@@ -73,8 +77,19 @@ interface SavedChart {
 
 let nextPanelId = 1;
 
-function loadChart(): SavedChart {
-  const empty: SavedChart = { logId: '', axes: [], traces: [], view: null, panels: [], activeTab: 'line' };
+// New axes are numbered after any brought in.
+function countAxes(axes: PlotAxis[]) {
+  for (const axis of axes) nextAxisId = Math.max(nextAxisId, Number(axis.id.replace(/^axis/, '')) + 1 || nextAxisId);
+}
+
+interface LoadedChart extends SavedChart {
+  // The line chart in axes and traces: 'line' for the first, or a tab's id.
+  lineTab: string;
+  mainLine: LineChart;
+}
+
+function loadChart(): LoadedChart {
+  const empty: LoadedChart = { logId: '', axes: [], traces: [], view: null, panels: [], activeTab: 'line', lineTab: 'line', mainLine: { axes: [], traces: [] } };
   try {
     const saved = JSON.parse(localStorage.getItem(savedKey) ?? 'null') as Partial<SavedChart> | null;
     if (!saved || typeof saved !== 'object') return empty;
@@ -86,12 +101,18 @@ function loadChart(): SavedChart {
           (t.axis === 'lanes' || axes.some((a) => a.id === t.axis))).slice(0, maxTraces)
       : [];
     const view = Array.isArray(saved.view) && saved.view.length === 2 && saved.view.every(Number.isFinite) ? saved.view : null;
-    // New axes are numbered after the ones brought back.
-    for (const axis of axes) nextAxisId = Math.max(nextAxisId, Number(axis.id.replace(/^axis/, '')) + 1 || nextAxisId);
+    countAxes(axes);
     const panels = cleanPanels(saved.panels);
-    for (const panel of panels) nextPanelId = Math.max(nextPanelId, Number(panel.id.replace(/^panel/, '')) + 1 || nextPanelId);
+    for (const panel of panels) {
+      nextPanelId = Math.max(nextPanelId, Number(panel.id.replace(/^panel/, '')) + 1 || nextPanelId);
+      if (panel.type === 'line') countAxes(panel.axes);
+    }
     const activeTab = panels.some((p) => p.id === saved.activeTab) ? saved.activeTab! : 'line';
-    return { logId: typeof saved.logId === 'string' ? saved.logId : '', axes, traces, view, panels, activeTab };
+    const logId = typeof saved.logId === 'string' ? saved.logId : '';
+    // Another line chart shown: its signals are the ones in play.
+    const line = panels.find((p): p is LinePanel => p.id === activeTab && p.type === 'line');
+    if (line) return { logId, ...copyChart(line), view, panels, activeTab, lineTab: line.id, mainLine: { axes, traces } };
+    return { logId, axes, traces, view, panels, activeTab, lineTab: 'line', mainLine: { axes: [], traces: [] } };
   } catch {
     return empty;
   }
@@ -109,7 +130,9 @@ export const usePlotStore = defineStore('plot', {
       // Seconds, as in signal series. Null shows the whole log.
       view: saved.view,
       panels: saved.panels,
-      activeTab: saved.activeTab
+      activeTab: saved.activeTab,
+      lineTab: saved.lineTab,
+      mainLine: saved.mainLine
     };
   },
   getters: {
@@ -120,7 +143,9 @@ export const usePlotStore = defineStore('plot', {
       const sameSide = state.axes.filter((a) => a.side === axis.side);
       return `${axis.side === 'left' ? 'L' : 'R'}${sameSide.indexOf(axis) + 1}`;
     },
-    trace: (state) => (key: string) => state.traces.find((t) => t.key === key)
+    trace: (state) => (key: string) => state.traces.find((t) => t.key === key),
+    // Whether a tab is a line chart's: the first's, or another's.
+    isLineTab: (state) => (id: string) => isLineTab(state.panels, id)
   },
   actions: {
     addAxis(side: AxisSide): string {
@@ -194,12 +219,13 @@ export const usePlotStore = defineStore('plot', {
     },
     // What's on the chart, to save as a view (#148).
     viewBody(span: ViewSpan, eventKinds: EventKind[] | null): ViewBody {
+      const { main, panels } = chartsNow(this);
       return {
-        axes: this.axes.map((a) => ({ ...a })),
-        traces: this.traces.map((t) => ({ key: t.key, kind: t.kind, axis: t.axis, band: t.band, color: t.color, ...(t.hidden ? { hidden: true } : {}) })),
+        axes: main.axes,
+        traces: main.traces.map((t) => ({ key: t.key, kind: t.kind, axis: t.axis, band: t.band, color: t.color, ...(t.hidden ? { hidden: true } : {}) })),
         span,
         eventKinds,
-        panels: this.panels.map((p) => JSON.parse(JSON.stringify(p)) as PlotPanel)
+        panels
       };
     },
     // Puts a saved view on the chart, each signal found in this log by
@@ -221,10 +247,14 @@ export const usePlotStore = defineStore('plot', {
       }
       this.axes = axes.map(({ id, side }) => ({ id, side }));
       this.traces = traces.slice(0, maxTraces);
-      // A view saved before there were other plots leaves them as they are.
+      // A view saved before there were other plots leaves them as they are
+      // (and its signals go on the line chart shown).
       if (body.panels) {
         this.panels = body.panels.map((p) => mapPanelKeys({ ...p, id: `panel${nextPanelId++}` }, find));
+        for (const panel of this.panels) if (panel.type === 'line') countAxes(panel.axes);
         this.activeTab = 'line';
+        this.lineTab = 'line';
+        this.mainLine = { axes: [], traces: [] };
       }
       this.prune();
       return missing;
@@ -235,11 +265,16 @@ export const usePlotStore = defineStore('plot', {
       if (this.panels.length >= maxPanels) return `At most ${maxPanels} plots can be open beside the chart.`;
       const panel = newPanel(type, `panel${nextPanelId++}`, season);
       this.panels.push(panel);
-      this.activeTab = panel.id;
+      this.showTab(panel.id);
       return '';
     },
     showTab(id: string) {
-      this.activeTab = id === 'line' || this.panels.some((p) => p.id === id) ? id : 'line';
+      const tab = id === 'line' || this.panels.some((p) => p.id === id) ? id : 'line';
+      if (isLineTab(this.panels, tab) && tab !== this.lineTab) {
+        keepLine(this);
+        countAxes(takeLine(this, tab));
+      }
+      this.activeTab = tab;
     },
     updatePanel(panel: PlotPanel) {
       const at = this.panels.findIndex((p) => p.id === panel.id);
@@ -250,13 +285,16 @@ export const usePlotStore = defineStore('plot', {
       const at = this.panels.findIndex((p) => p.id === id);
       if (at === -1) return;
       this.panels.splice(at, 1);
-      if (this.activeTab === id) this.activeTab = this.panels[at - 1]?.id ?? 'line';
+      // A line chart closed while in play: the first comes back into play.
+      if (this.lineTab === id) countAxes(takeLine(this, 'line'));
+      if (this.activeTab === id) this.showTab(this.panels[at - 1]?.id ?? 'line');
     },
     setView(view: [number, number] | null) {
       this.view = view;
     },
     save() {
-      const chart: SavedChart = { logId: this.logId, axes: this.axes, traces: this.traces, view: this.view, panels: this.panels, activeTab: this.activeTab };
+      const { main, panels } = chartsNow(this);
+      const chart: SavedChart = { logId: this.logId, axes: main.axes, traces: main.traces, view: this.view, panels, activeTab: this.activeTab };
       localStorage.setItem(savedKey, JSON.stringify(chart));
     }
   }

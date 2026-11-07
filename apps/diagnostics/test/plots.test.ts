@@ -46,7 +46,7 @@ assert.deepEqual(foldSlices([{ label: 'a', value: 5 }, { label: 'b', value: 3 },
 assert.deepEqual(foldSlices([{ label: 'a', value: 0 }], 3), []);
 
 // --- Panels as kept ---
-for (const type of ['field', 'console', 'pie', 'robot3d'] as const) assert.deepEqual(cleanPanel(newPanel(type, 'panel1', '2026')), newPanel(type, 'panel1', '2026'), type);
+for (const type of ['line', 'field', 'console', 'pie', 'robot3d'] as const) assert.deepEqual(cleanPanel(newPanel(type, 'panel1', '2026')), newPanel(type, 'panel1', '2026'), type);
 assert.equal(cleanPanel({ id: 'bad id!', type: 'field' }), null);
 assert.equal(cleanPanel({ id: 'p', type: 'chart' }), null);
 const field = cleanPanel({ id: 'p', type: 'field', rotation: 45, robotSize: 99, season: '20xx', items: [{ key: 'a', style: 'nope', color: 99, opacity: 3 }, { nokey: 1 }] })!;
