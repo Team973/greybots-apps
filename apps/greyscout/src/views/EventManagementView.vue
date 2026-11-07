@@ -39,7 +39,7 @@ import { getEventList, getEventOverride, setEventOverride } from "@/lib/event-ma
             <h1>Event Data</h1>
             <p class="event-hint">Pulls the team list and match schedule from The Blue Alliance for the current event.
                 A team that has dropped out of the event is removed from the app.</p>
-            <md-filled-button v-on:click="refreshEventData" :disabled="eventRefreshing" class="load-button">
+            <md-filled-button v-on:click="refreshEvent" :disabled="eventRefreshing" class="load-button">
                 {{ eventRefreshing ? 'Refreshing…' : 'Refresh Event Data' }}
             </md-filled-button>
             <p v-if="eventRefreshMessage" class="event-refresh-message">{{ eventRefreshMessage }}</p>
@@ -73,7 +73,9 @@ export default {
             await this.eventStore.updateEvent();
             this.eventChanging = false;
         },
-        async refreshEventData() {
+        // Not named refreshEventData: the template would call the import of that
+        // name from <script setup> instead, since setup bindings win over methods.
+        async refreshEvent() {
             this.eventRefreshing = true;
             this.eventRefreshMessage = "";
             this.eventRefreshError = "";
