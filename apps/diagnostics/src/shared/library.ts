@@ -165,7 +165,7 @@ export interface LibraryItemOf {
 export const kindLabels: Record<LibraryKind, { one: string; many: string }> = {
   view: { one: 'view', many: 'views' },
   template: { one: 'report template', many: 'report templates' },
-  pipeline: { one: 'pipeline', many: 'pipelines' },
+  pipeline: { one: 'auto report', many: 'auto reports' },
   mapping: { one: 'robot mapping', many: 'robot mappings' }
 };
 

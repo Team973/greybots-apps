@@ -34,11 +34,11 @@ export const storageFolders: StorageFolder[] = [
   },
   {
     name: 'library',
-    purpose: 'Saved views, report templates, pipelines and robot mappings.'
+    purpose: 'Saved views, report templates, auto reports and robot mappings.'
   },
   {
     name: 'reports',
-    purpose: 'Reports made from logs, by hand or by a pipeline.'
+    purpose: 'Reports made from logs, by hand or automatically.'
   },
   {
     name: 'models',

@@ -57,7 +57,7 @@ onUnmounted(() => clearInterval(timer));
   <section id="account-section" class="card">
     <h2>Team account</h2>
     <p class="hint">
-      Signed in with a greybots-apps account, saved views, report templates, pipelines and robot mappings are shared with the team, and
+      Signed in with a greybots-apps account, saved views, report templates, auto reports and robot mappings are shared with the team, and
       theirs come here. Members and above share; only leads and admins delete what's shared. Reports and notes stay on this computer.
     </p>
     <template v-if="account?.signedIn">

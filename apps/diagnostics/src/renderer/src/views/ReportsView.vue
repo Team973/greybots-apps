@@ -32,7 +32,7 @@ type Tab = 'reports' | 'templates' | 'pipelines' | 'robots';
 const tabs: { id: Tab; label: string }[] = [
   { id: 'reports', label: 'Reports' },
   { id: 'templates', label: 'Templates' },
-  { id: 'pipelines', label: 'Pipelines' },
+  { id: 'pipelines', label: 'Auto reports' },
   { id: 'robots', label: 'Robot mappings' }
 ];
 
@@ -341,7 +341,7 @@ onUnmounted(() => clearInterval(statusTimer));
         <label class="check"><input id="report-analyzed-only" v-model="cardFilter.analyzedOnly" type="checkbox" /> Only logs with reports</label>
       </div>
       <p v-if="reports.length === 0 && cardFilter.analyzedOnly" class="hint">
-        No reports yet. They're made here, or by a pipeline when logs are downloaded.
+        No reports yet. They're made here, or automatically when logs are downloaded or imported (Auto reports).
       </p>
       <p v-else-if="shownCards.length === 0" class="hint">No logs match the filter.</p>
       <div v-else id="report-cards" class="log-cards">
@@ -395,12 +395,12 @@ onUnmounted(() => clearInterval(statusTimer));
         <md-filled-button id="new-template" @click="editing = blankTemplate()">New template</md-filled-button>
         <md-outlined-button id="add-starters" @click="addStarters">Add the starters</md-outlined-button>
         <span v-if="startersAdded !== null" class="hint small">
-          {{ startersAdded ? `Added ${startersAdded} starter views, templates and pipelines.` : 'The starters are all here already.' }}
+          {{ startersAdded ? `Added ${startersAdded} starter views, templates and auto reports.` : 'The starters are all here already.' }}
         </span>
       </div>
       <p class="hint small">
         The starters are the Match Report, Match Review, Autonomous and Power Analysis templates; views for Pit Health, Drivetrain, Shooter,
-        Electrical, Match Review, Controls Debug, Automated Test and Battery Health; and a pipeline for qualification matches (off until it's turned on).
+        Electrical, Match Review, Controls Debug, Automated Test and Battery Health; and an auto report for qualification matches (off until it's turned on).
       </p>
       <p v-if="templates.length === 0" class="hint">None yet.</p>
       <ul class="items">
@@ -418,10 +418,10 @@ onUnmounted(() => clearInterval(statusTimer));
     </section>
   </template>
 
-  <!-- Pipelines -->
+  <!-- Auto reports (pipelines in the code and library) -->
   <template v-else-if="tab === 'pipelines'">
     <section v-if="editingPipeline" class="card">
-      <h2>{{ editingPipeline.id ? `Change ${editingPipeline.name}` : 'New pipeline' }}</h2>
+      <h2>{{ editingPipeline.id ? `Change ${editingPipeline.name}` : 'New auto report' }}</h2>
       <form id="pipeline-editor" class="form" @submit.prevent="savePipeline">
         <label class="pick"><span class="hint small">Name</span><input v-model="editingPipeline.name" maxlength="120" required /></label>
         <label class="check"><input v-model="editingPipeline.enabled" type="checkbox" /> On</label>
@@ -457,10 +457,10 @@ onUnmounted(() => clearInterval(statusTimer));
       </form>
     </section>
     <section v-else class="card">
-      <h2>Pipelines</h2>
-      <p class="hint">Make reports from logs as they arrive: each new log a pipeline applies to gets a report from each of its templates.</p>
+      <h2>Auto report generation</h2>
+      <p class="hint">Makes reports by itself as logs arrive: each new log an auto report applies to gets a report from each of its templates.</p>
       <div class="card-actions">
-        <md-filled-button id="new-pipeline" @click="editingPipeline = blankPipeline()">New pipeline</md-filled-button>
+        <md-filled-button id="new-pipeline" @click="editingPipeline = blankPipeline()">New auto report</md-filled-button>
       </div>
       <p v-if="pipelines.length === 0" class="hint">None yet.</p>
       <ul class="items">

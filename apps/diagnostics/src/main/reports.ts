@@ -502,7 +502,7 @@ export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manu
             status.current = `${pipeline.name}: ${run.template} for ${run.logLabel}`;
             try {
               if (!template) throw new Error('The template is gone.');
-              const report = await makeReport(settings, template, file.id, `Pipeline: ${pipeline.name}`);
+              const report = await makeReport(settings, template, file.id, `Auto report: ${pipeline.name}`);
               await saveReport(settings, report);
               run.reportId = report.id;
             } catch (error) {
