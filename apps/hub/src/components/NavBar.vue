@@ -28,6 +28,7 @@ async function signOut() {
       <span aria-hidden="true">{{ viewMode.isDarkMode ? '☀' : '☾' }}</span>
     </button>
     <template v-if="auth.loaded">
+      <RouterLink v-if="auth.isSignedIn" to="/reset-password" class="nav-button">Change password</RouterLink>
       <button v-if="auth.isSignedIn" class="nav-button" @click="signOut">Sign out</button>
       <RouterLink v-else to="/login" class="nav-button">Sign in</RouterLink>
     </template>

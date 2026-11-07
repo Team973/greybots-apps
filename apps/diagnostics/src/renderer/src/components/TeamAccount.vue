@@ -5,6 +5,11 @@ import '@material/web/button/outlined-button';
 
 import type { AccountStatus } from '@shared/account';
 import { formatTime } from '@/format';
+import { hubForgotPasswordUrl } from '@greybots/common/lib/hub';
+
+// No app address to come back to: once the new password is saved on the hub,
+// the person signs in here again.
+const forgotPasswordUrl = hubForgotPasswordUrl();
 
 // Signing in to a greybots-apps account shares the library (views,
 // templates, auto reports) with the team (#148).
@@ -81,6 +86,8 @@ onUnmounted(() => clearInterval(timer));
     <p v-if="account?.problem" id="account-problem" class="error-text small">{{ account.problem }}</p>
     <p v-if="account && !account.signedIn" class="hint small">
       Accounts are made in the other greybots apps (GreyScout, Preflight); a lead or admin gives each a Diagnostics role on the People page.
+      <!-- Passwords are reset on the hub; this opens it in the browser. -->
+      <a id="forgot-password" :href="forgotPasswordUrl" target="_blank" rel="noreferrer">Forgot your password?</a>
     </p>
   </section>
 </template>

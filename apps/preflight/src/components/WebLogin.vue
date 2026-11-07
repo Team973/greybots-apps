@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router';
 import AuthInput from '@greybots/common/components/AuthInput.vue';
 import { readFormValues } from '@greybots/common/lib/account';
 import '@material/web/button/filled-button';
+import { hubForgotPasswordUrl } from '@greybots/common/lib/hub';
 import { useSessionStore } from '@/stores/session-store';
 import { useSyncStore } from '@/stores/sync-store';
 
@@ -19,6 +20,8 @@ const busy = ref(false);
 // Autofill and password managers can fill the fields without the form
 // hearing about it, so their values are read from the form when signing in.
 const form = ref<HTMLFormElement | null>(null);
+
+const forgotPasswordUrl = hubForgotPasswordUrl(`${window.location.origin}/login`);
 
 async function signIn() {
   error.value = null;
@@ -55,6 +58,8 @@ async function signIn() {
     <AuthInput v-model="password" label="Password" type="password" name="password" autocomplete="current-password" />
     <p v-if="error" class="error-text">{{ error }}</p>
     <md-filled-button type="submit" :disabled="busy">Sign in</md-filled-button>
+    <!-- Passwords are reset on the hub, which comes back here after. -->
+    <a :href="forgotPasswordUrl" class="panel-link register-link">Forgot password?</a>
     <RouterLink to="/register" class="panel-link register-link">Need an account? Register</RouterLink>
   </form>
 </template>

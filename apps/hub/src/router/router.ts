@@ -5,6 +5,7 @@ import LoginView from '@/views/LoginView.vue';
 import PeopleView from '@/views/PeopleView.vue';
 import RegisterView from '@/views/RegisterView.vue';
 import ResetPasswordView from '@/views/ResetPasswordView.vue';
+import ForgotPasswordView from '@/views/ForgotPasswordView.vue';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -26,6 +27,9 @@ const router = createRouter({
     { path: '/', name: 'home', component: HomeView, meta: { title: 'Home', requiresSignIn: true } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', guestOnly: true } },
     { path: '/register', name: 'register', component: RegisterView, meta: { title: 'Register', guestOnly: true } },
+    // Every greybots app sends people here to reset a forgotten password (not
+    // guest-only: someone signed in here may be locked out of another app).
+    { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView, meta: { title: 'Reset password' } },
     // Reached from the link in a password reset email, which signs the person
     // in for long enough to choose a new password.
     { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { title: 'Reset password' } },

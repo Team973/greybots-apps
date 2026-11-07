@@ -25,9 +25,10 @@ import {
     DEFAULT_ARCHETYPE
 } from '@/lib/picklist-query';
 import type { Tier, TierGroup, TeamTierStats, TeamMatchSummary, TeamPitSummary, Archetype } from '@/lib/picklist-query';
-import { hasDividers, layoutFromSaved, layoutFromTierSections, serializeLayout } from '@/lib/team-list-layout';
+import { hasDividers, layoutFromSaved, layoutFromTierSections, serializeLayout, teamItem } from '@/lib/team-list-layout';
 import type { TeamListLayout } from '@/lib/team-list-layout';
 import { defenseThresholdPercent } from '@/lib/constants';
+import { toTeamNumber, compareTeamNumbers } from '@/lib/team-number';
 import type { TeamNumber } from '@/lib/team-number';
 export type { Archetype };
 
@@ -47,6 +48,12 @@ export interface TeamEntry {
 const PICKEM_TIER_SIZES: Record<Exclude<Tier, 'DNP'>, number> = {
     S: 3, A: 7, B: 8, C: 10, D: 4
 };
+
+/** Insert into a list kept in team-number order (an Unranked pool). */
+function insertInTeamOrder<T>(list: T[], value: T, numberOf: (item: T) => TeamNumber) {
+    const index = list.findIndex((item) => compareTeamNumbers(numberOf(item), numberOf(value)) > 0);
+    list.splice(index < 0 ? list.length : index, 0, value);
+}
 
 function emptyTierSections(): Record<TierGroup, TeamNumber[]> {
     const groups = {} as Record<TierGroup, TeamNumber[]>;
@@ -520,6 +527,57 @@ export const usePicklistStore = defineStore('picklist', {
         /** Unrank every team on the personal list, back to all-Unranked. */
         resetPersonalList(archetype: Archetype) {
             this.personalTierSections[archetype] = buildTierSections([], {}, this.allTeams);
+        },
+
+        /**
+         * Typing a team number into a personal list's tier (or Unranked):
+         * the team moves there from wherever it was, onto the end of a
+         * tier, or into team-number order in Unranked. Local only; returns
+         * an error to show, or null. Same checks as the Playoffs page.
+         */
+        moveTypedTeamToTier(archetype: Archetype, rawTeamNumber: unknown, group: TierGroup): string | null {
+            const teamNumber = toTeamNumber(rawTeamNumber);
+            if (!teamNumber) return 'Enter a team number, like 973.';
+            if (!this.teamMap[teamNumber]) return `Team ${teamNumber} isn't at this event.`;
+            const sections = this.personalTierSections[archetype];
+            if ((sections[group] ?? []).includes(teamNumber)) {
+                return `Team ${teamNumber} is already ${group === 'Unranked' ? 'unranked' : `in ${group}`}.`;
+            }
+
+            TIER_GROUPS.forEach((g) => {
+                const index = (sections[g] ?? []).indexOf(teamNumber);
+                if (index >= 0) sections[g].splice(index, 1);
+            });
+            if (!sections[group]) sections[group] = [];
+            if (group === 'Unranked') insertInTeamOrder(sections[group], teamNumber, (n) => n);
+            else sections[group].push(teamNumber);
+            return null;
+        },
+
+        /**
+         * Typing a team number into the team list: 'ranked' puts it at the
+         * bottom of the ranked list, 'unranked' takes it off. Local only;
+         * returns an error to show, or null.
+         */
+        moveTypedTeamInTeamList(archetype: Archetype, rawTeamNumber: unknown, target: 'ranked' | 'unranked'): string | null {
+            const teamNumber = toTeamNumber(rawTeamNumber);
+            if (!teamNumber) return 'Enter a team number, like 973.';
+            if (!this.teamMap[teamNumber]) return `Team ${teamNumber} isn't at this event.`;
+            const layout = this.teamLayout[archetype];
+            const isTeam = (item) => item.kind === 'team' && item.team === teamNumber;
+            const rankedIndex = layout.ranked.findIndex(isTeam);
+            if (target === 'ranked' && rankedIndex >= 0) {
+                const rank = layout.ranked.slice(0, rankedIndex + 1).filter((item) => item.kind === 'team').length;
+                return `Team ${teamNumber} is already ranked #${rank}.`;
+            }
+            const unrankedIndex = layout.unranked.findIndex(isTeam);
+            if (target === 'unranked' && unrankedIndex >= 0) return `Team ${teamNumber} is already unranked.`;
+
+            if (rankedIndex >= 0) layout.ranked.splice(rankedIndex, 1);
+            if (unrankedIndex >= 0) layout.unranked.splice(unrankedIndex, 1);
+            if (target === 'ranked') layout.ranked.push(teamItem(teamNumber));
+            else insertInTeamOrder(layout.unranked, teamItem(teamNumber), (item) => item.team);
+            return null;
         },
 
         /**

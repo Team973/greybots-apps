@@ -4,7 +4,7 @@ import { useDirectoryStore } from '@/stores/directory-store';
 import HomeView from '@/views/HomeView.vue';
 import LoginView from '@/views/LoginView.vue';
 import RegisterView from '@/views/RegisterView.vue';
-import ResetPasswordView from '@/views/ResetPasswordView.vue';
+import HubResetRedirect from '@greybots/common/components/HubResetRedirect.vue';
 import PendingView from '@/views/PendingView.vue';
 
 declare module 'vue-router' {
@@ -36,9 +36,9 @@ const router = createRouter({
     { path: '/people', name: 'people', component: () => import('@/views/PeopleView.vue'), meta: { title: 'People', requiresAccess: true, requiresLead: true } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', guestOnly: true } },
     { path: '/register', name: 'register', component: RegisterView, meta: { title: 'Register', guestOnly: true } },
-    // Reached from the link in a password reset email, which signs the person
-    // in for long enough to choose a new password.
-    { path: '/reset-password', name: 'reset-password', component: ResetPasswordView, meta: { title: 'Reset password' } },
+    // Passwords are reset on the hub; a reset link that still points here is
+    // sent on to it.
+    { path: '/reset-password', name: 'reset-password', component: HubResetRedirect, meta: { title: 'Reset password' } },
     // Signed in, but no Workshop role (yet).
     { path: '/pending', name: 'pending', component: PendingView, meta: { title: 'Waiting for approval' } },
     { path: '/:pathMatch(.*)*', redirect: '/' }

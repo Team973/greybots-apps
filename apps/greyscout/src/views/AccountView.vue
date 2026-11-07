@@ -22,7 +22,7 @@ import { loadPreferences, savePreferences, allianceEntryChoices } from "@/lib/pr
             <h1>Preferences</h1>
             <p>Remembered on this device.</p>
             <label class="preference">
-                <span>Enter alliance teams on the Playoffs page by</span>
+                <span>Enter teams on the Pick List and Playoffs pages by</span>
                 <select id="pref-alliance-entry" class="preference-select" :value="preferences.allianceEntry"
                     @change="setAllianceEntry($event.target.value)">
                     <option v-for="choice in allianceEntryChoices" :key="choice.key" :value="choice.key">{{ choice.text }}</option>

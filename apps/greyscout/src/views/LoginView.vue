@@ -9,6 +9,8 @@ import { readFormValues } from '@greybots/common/lib/account';
 
 import { supabase } from "@greybots/common/supabase/client";
 
+import { hubForgotPasswordUrl } from '@greybots/common/lib/hub';
+
 import { useAuthStore } from "@/stores/auth-store";
 </script>
 
@@ -16,7 +18,7 @@ import { useAuthStore } from "@/stores/auth-store";
     <div class="main-content">
         <!-- Real forms with native inputs, so autofill and password managers
              work; the values are read from the form when it's submitted. -->
-        <form class="login-tile" v-if="!showForgotPassword" @submit.prevent="logInUser($event)">
+        <form class="login-tile" @submit.prevent="logInUser($event)">
             <h1 class="login-tile-element">Log in</h1>
             <div class="login-tile-element login-field">
                 <AuthInput :model-value="userEmail" @update:modelValue="updateEmail" label="Email" :error="emailError"
@@ -33,30 +35,11 @@ import { useAuthStore } from "@/stores/auth-store";
                 <md-filled-button type="submit" class="load-button">Log in</md-filled-button>
             </div>
             <div class="login-tile-element">
-                <md-text-button type="button" v-on:click="showForgotPassword = true">Forgot password?</md-text-button>
+                <!-- Passwords are reset on the hub, which comes back here after. -->
+                <md-text-button type="button" v-on:click="forgotPassword()">Forgot password?</md-text-button>
             </div>
             <div class="login-tile-element">
                 <md-text-button type="button" v-on:click="$router.push('/register')">Need an account? Register</md-text-button>
-            </div>
-        </form>
-
-        <form class="login-tile" v-else @submit.prevent="sendPasswordReset($event)">
-            <h1 class="login-tile-element">Reset password</h1>
-            <div class="login-tile-element login-field">
-                <AuthInput :model-value="resetEmail" @update:modelValue="updateResetEmail" label="Email"
-                    :error="resetEmailError" type="email" name="email" autocomplete="username" />
-            </div>
-            <div class="login-tile-element" v-if="resetError">
-                <p class="form-error">{{ resetError }}</p>
-            </div>
-            <div class="login-tile-element" v-if="resetSuccess">
-                <p class="form-success">{{ resetSuccess }}</p>
-            </div>
-            <div class="login-tile-element">
-                <md-filled-button type="submit" class="load-button">Send reset email</md-filled-button>
-            </div>
-            <div class="login-tile-element">
-                <md-text-button type="button" v-on:click="showForgotPassword = false">Back to log in</md-text-button>
             </div>
         </form>
     </div>
@@ -71,11 +54,6 @@ export default {
             emailError: false,
             passwordError: false,
             formError: "",
-            showForgotPassword: false,
-            resetEmail: "",
-            resetEmailError: false,
-            resetError: "",
-            resetSuccess: "",
             authStore: null,
         }
     },
@@ -87,10 +65,6 @@ export default {
         updatePassword(text) {
             this.userPassword = text;
             this.passwordError = (this.userPassword == "");
-        },
-        updateResetEmail(text) {
-            this.resetEmail = text;
-            this.resetEmailError = (this.resetEmail == "");
         },
         async logInUser(event) {
             this.formError = "";
@@ -121,27 +95,8 @@ export default {
             await this.authStore.checkUser();
             this.$router.push(this.authStore.role === 'member' ? '/schedule' : '/picklist');
         },
-        async sendPasswordReset(event) {
-            this.resetError = "";
-            this.resetSuccess = "";
-            if (event?.target instanceof HTMLFormElement) {
-                this.resetEmail = readFormValues(event.target).email ?? this.resetEmail;
-            }
-            this.resetEmailError = (this.resetEmail == "");
-            if (this.resetEmailError) {
-                return;
-            }
-
-            const { error } = await supabase.auth.resetPasswordForEmail(this.resetEmail, {
-                redirectTo: `${window.location.origin}/reset-password`
-            });
-
-            if (error) {
-                this.resetError = error.message;
-                return;
-            }
-
-            this.resetSuccess = "If that email is in our system, a reset link has been sent.";
+        forgotPassword() {
+            window.location.assign(hubForgotPasswordUrl(`${window.location.origin}/login`));
         },
         // Supabase redirects here with error params in the URL (hash for the
         // implicit flow, query string for PKCE) when a confirmation/recovery
@@ -187,11 +142,6 @@ export default {
 
 .form-error {
     color: #c0392b;
-    margin: 0;
-}
-
-.form-success {
-    color: #3a9e3a;
     margin: 0;
 }
 </style>

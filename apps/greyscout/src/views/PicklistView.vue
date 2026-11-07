@@ -16,6 +16,8 @@ import PicklistRow from '@/components/PicklistRow.vue';
 import PicklistDividerRow from '@/components/PicklistDividerRow.vue';
 import PicklistUnrankedCard from '@/components/PicklistUnrankedCard.vue';
 import SearchableDropdown from '@greybots/common/components/SearchableDropdown.vue';
+import PicklistTypeTeamInput from '@/components/PicklistTypeTeamInput.vue';
+import { loadPreferences, savePreferences, allianceEntryChoices } from '@/lib/preferences';
 
 const picklistStore = usePicklistStore();
 const authStore = useAuthStore();
@@ -421,6 +423,37 @@ const unrankedTeamGroup = {
     put: (_to, _from, dragEl: HTMLElement) => !dragEl.classList.contains('picklist-divider')
 };
 
+// ─── Typing team numbers ───────────────────────────────────────────────────────
+// The "Enter teams by" preference (shared with the Playoffs page, also set on
+// the Account page): when it's typing, each tier, the ranked team list and
+// Unranked get a box to type a team number into, which moves that team
+// there from wherever it is. Dragging still works either way, for
+// reordering within a tier. A typed move saves like a drag does.
+
+const entryMode = ref(loadPreferences().allianceEntry);
+const useTyping = computed(() => isEditable.value && entryMode.value === 'type');
+
+function setEntryMode(mode: string) {
+    entryMode.value = mode === 'type' ? 'type' : 'drag';
+    savePreferences({ allianceEntry: entryMode.value });
+}
+
+function typeIntoTier(group: string) {
+    return (raw: string) => {
+        const error = picklistStore.moveTypedTeamToTier(activeArchetype.value, raw, group);
+        if (!error) saveList();
+        return error;
+    };
+}
+
+function typeIntoTeamList(target: 'ranked' | 'unranked') {
+    return (raw: string) => {
+        const error = picklistStore.moveTypedTeamInTeamList(activeArchetype.value, raw, target);
+        if (!error) saveList();
+        return error;
+    };
+}
+
 // ─── Inline stats (issue #123) ─────────────────────────────────────────────────
 // Shows each ranked team's stats on its collapsed row, so teams can be
 // compared at a glance instead of expanding them one at a time. Remembered
@@ -552,14 +585,16 @@ function toggleTierCollapse(group: string) {
             <div class="picklist-tab-description">
                 <span v-if="activeTab === 'personal' && picklistStore.viewingScoutUserId">
                     {{ picklistStore.viewingScoutName }}'s personal tier ranking (read-only).</span>
-                <span v-else-if="activeTab === 'personal'">Your personal tier ranking. Drag rows between tiers or reorder
-                    within a tier, then save.</span>
+                <span v-else-if="activeTab === 'personal'">Your personal tier ranking. <template v-if="useTyping">Type a
+                    team number into a tier to move it there, or drag rows to reorder them.</template><template v-else>Drag
+                    rows between tiers or reorder within a tier.</template> Changes save as you go.</span>
                 <span v-else-if="picklistStore.viewingPastEventId">{{ picklistStore.viewingPastEventName }}'s
                     {{ activeTab === 'team' ? 'team pick list' : 'democratic ranking' }} (read-only).</span>
                 <span v-else-if="activeTab === 'democratic'">Aggregated tier ranking from all scouts' personal lists
                     (read-only).</span>
-                <span v-else>Official team pick list — only leads can edit. Drag teams into order, and add dividers to
-                    split it into groups. Changes save as you go.</span>
+                <span v-else>Official team pick list — only leads can edit. <template v-if="useTyping">Type team
+                    numbers to rank them in order, or drag teams to reorder them,</template><template v-else>Drag teams
+                    into order,</template> and add dividers to split it into groups. Changes save as you go.</span>
             </div>
 
             <!-- Loading state -->
@@ -581,6 +616,13 @@ function toggleTierCollapse(group: string) {
             <div v-else class="picklist-list-wrapper">
                 <!-- Save / status bar -->
                 <div class="picklist-save-bar" v-if="isEditable">
+                    <label class="picklist-entry-mode">
+                        <span>Enter teams by</span>
+                        <select id="picklist-entry-mode" class="picklist-entry-mode-select" :value="entryMode"
+                            @change="setEntryMode($event.target.value)">
+                            <option v-for="choice in allianceEntryChoices" :key="choice.key" :value="choice.key">{{ choice.text }}</option>
+                        </select>
+                    </label>
                     <button v-if="activeTab === 'team'" id="btn-reset-democratic" class="picklist-reset-btn"
                         :disabled="picklistStore.isSaving || !hasDemocraticVotes"
                         title="Overwrite the team list with the current democratic tier grouping" @click="resetTeamFromDemocratic">
@@ -705,8 +747,11 @@ function toggleTierCollapse(group: string) {
                             </div>
 
                             <div v-if="picklistStore.activeTeamLayout.ranked.length === 0" class="tier-section-empty">
-                                {{ isEditable ? 'Drag teams here to rank them' : 'No teams were ranked' }}
+                                {{ useTyping ? 'Type a team number below to rank it' : isEditable ? 'Drag teams here to rank them' : 'No teams were ranked' }}
                             </div>
+                            <PicklistTypeTeamInput v-if="useTyping" :key="`type-ranked-${activeArchetype}`"
+                                input-id="picklist-type-ranked" placeholder="Type a team # to rank it next"
+                                label="Team number to add to the bottom of the ranked list" :enter="typeIntoTeamList('ranked')" />
                         </div>
                     </div>
 
@@ -717,6 +762,10 @@ function toggleTierCollapse(group: string) {
                             <span class="tier-section-name">Unranked</span>
                             <span class="tier-section-count">{{ picklistStore.activeTeamLayout.unranked.length }}</span>
                         </div>
+
+                        <PicklistTypeTeamInput v-if="useTyping && !isTierCollapsed('Unranked')" :key="`type-team-unranked-${activeArchetype}`"
+                            input-id="picklist-type-team-unranked" placeholder="Type a team # to unrank it"
+                            label="Team number to take off the ranked list" :enter="typeIntoTeamList('unranked')" />
 
                         <draggable v-if="isEditable" v-show="!isTierCollapsed('Unranked')" :list="picklistStore.activeTeamLayout.unranked"
                             :group="unrankedTeamGroup" :item-key="layoutItemKey" handle=".unranked-card-handle" animation="200"
@@ -742,7 +791,7 @@ function toggleTierCollapse(group: string) {
 
                         <div v-if="!isTierCollapsed('Unranked') && picklistStore.activeTeamLayout.unranked.length === 0"
                             class="tier-section-empty">
-                            {{ isEditable ? 'Drag teams here to unrank them' : 'No unranked teams' }}
+                            {{ useTyping ? 'No unranked teams' : isEditable ? 'Drag teams here to unrank them' : 'No unranked teams' }}
                         </div>
                     </div>
                 </div>
@@ -799,8 +848,11 @@ function toggleTierCollapse(group: string) {
 
                             <div v-if="!isTierCollapsed(group) && (picklistStore.activeSections[group] || []).length === 0"
                                 class="tier-section-empty">
-                                {{ isEditable ? 'Drag teams here' : 'No teams in this tier' }}
+                                {{ useTyping ? 'Type a team number below to put it here' : isEditable ? 'Drag teams here' : 'No teams in this tier' }}
                             </div>
+                            <PicklistTypeTeamInput v-if="useTyping && !isTierCollapsed(group)" :key="`type-${group}-${activeArchetype}`"
+                                :input-id="`picklist-type-${group}`" :placeholder="`Type a team # to put it in ${group}`"
+                                :label="`Team number to add to tier ${group}`" :enter="typeIntoTier(group)" />
                         </div>
                     </div>
 
@@ -811,6 +863,10 @@ function toggleTierCollapse(group: string) {
                             <span class="tier-section-name">Unranked</span>
                             <span class="tier-section-count">{{ (picklistStore.activeSections['Unranked'] || []).length }}</span>
                         </div>
+
+                        <PicklistTypeTeamInput v-if="useTyping && !isTierCollapsed('Unranked')" :key="`type-Unranked-${activeArchetype}`"
+                            input-id="picklist-type-Unranked" placeholder="Type a team # to unrank it"
+                            label="Team number to unrank" :enter="typeIntoTier('Unranked')" />
 
                         <!-- Editable: same cross-tier drag group as the ranked
                              lists above, so a team can be dragged either way
@@ -845,7 +901,7 @@ function toggleTierCollapse(group: string) {
 
                         <div v-if="!isTierCollapsed('Unranked') && (picklistStore.activeSections['Unranked'] || []).length === 0"
                             class="tier-section-empty">
-                            {{ isEditable ? 'Drag teams here' : 'No unranked teams' }}
+                            {{ useTyping ? 'No unranked teams' : isEditable ? 'Drag teams here' : 'No unranked teams' }}
                         </div>
                     </div>
                 </div>
@@ -1045,6 +1101,25 @@ function toggleTierCollapse(group: string) {
     justify-content: flex-end;
     gap: 12px;
     margin-bottom: 12px;
+}
+
+.picklist-entry-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    margin-right: auto;
+}
+
+.picklist-entry-mode-select {
+    padding: 7px 10px;
+    min-height: 36px;
+    border-radius: 8px;
+    border: 1.5px solid rgba(128, 128, 128, 0.35);
+    background: var(--tile-background-color);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 13px;
 }
 
 .save-status {
