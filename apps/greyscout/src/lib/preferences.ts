@@ -9,8 +9,9 @@ export type AllianceEntry = 'drag' | 'type';
 export type AlliancePoolOrder = 'tba' | 'picklist' | 'smart';
 
 export interface Preferences {
-    // How teams are put on alliances on the Playoffs page: dragged from the
-    // pool, or by typing a team number into an alliance.
+    // How teams are entered on the Playoffs page (dragged from the pool, or
+    // typed into an alliance) and on the Pick List (dragged, or typed into a
+    // tier or the ranked list; dragging still works there for reordering).
     allianceEntry: AllianceEntry;
     // How the Playoffs page orders the available teams.
     alliancePoolOrder: AlliancePoolOrder;
