@@ -88,6 +88,9 @@ export interface SavedView extends LibraryItemBase, ViewBody {
 // What part of a log a report is of.
 export type ReportScope =
   | { type: 'match' }
+  // Wherever the robot was enabled (auto, teleop or test): not the time
+  // it sat disabled on the field or in the pit.
+  | { type: 'enabled' }
   | { type: 'auto' }
   | { type: 'teleop' }
   // A test mode, or anything else: wherever these flags all hold.
@@ -140,6 +143,7 @@ export interface Pipeline extends LibraryItemBase {
   robots: string[];
   // Matches of these types only, or 'none' for logs that aren't a match (empty: any).
   matchTypes: (MatchType | 'none')[];
+  // Which templates it ran, before every template ran. Kept, not used.
   templateIds: string[];
   // When a download or import brings several new logs at once (a backlog,
   // say): reports on all of them, on just the newest, or none.
@@ -176,6 +180,7 @@ export const kindLabels: Record<LibraryKind, { one: string; many: string }> = {
 
 export const scopeLabels: Record<ReportScope['type'], string> = {
   match: 'The whole match (or log)',
+  enabled: 'While the robot is enabled',
   auto: 'Autonomous only',
   teleop: 'Teleop only',
   conditions: 'While chosen signals are true (a test mode)'

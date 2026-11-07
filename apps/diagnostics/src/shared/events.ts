@@ -79,6 +79,8 @@ export interface Annotation {
 export interface SessionEvents {
   events: LogEvent[];
   phases: MatchPhase[];
+  // When the robot was enabled (any mode), in seconds on the timeline.
+  enabled: [number, number][];
   notes: Annotation[];
   // What's still being looked through (device faults in Hoot logs, which
   // owlet exports first), or ''. Asked for again until it's ''.

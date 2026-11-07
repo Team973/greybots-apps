@@ -39,6 +39,7 @@ import {
   hasConsole,
   hasDriverStationEnable,
   hootModes,
+  enabledSpans,
   matchPhases,
   modeEvents,
   spansWhere,
@@ -909,7 +910,7 @@ function findEvents(session: Session): FoundEvents {
 }
 
 export async function sessionEvents(settings: Settings, id: string): Promise<SessionEvents> {
-  if (isLiveId(id)) return { events: [], phases: [], notes: [], pending: '' };
+  if (isLiveId(id)) return { events: [], phases: [], enabled: [], notes: [], pending: '' };
   const session = await openSession(settings, id);
   const found = (session.events ??= findEvents(session));
   // While the Hoot logs are read, robot code's own flags stand in.
@@ -917,6 +918,7 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
   const inMatch = !!session.file.match || found.fmsAttached || session.dsLogs.some((ds) => ds.events.match);
   const inSpan = (event: LogEvent) => event.start <= session.end && (event.end ?? event.start) >= session.start;
   const phases: MatchPhase[] = modes ? matchPhases(modes.changes, session.end, inMatch) : [];
+  const enabled = modes ? enabledSpans(modes.changes, session.end) : [];
   const events = [
     ...(modes ? modeEvents(modes.changes, modes.key) : []).filter(inSpan),
     ...found.dataLog,
@@ -927,6 +929,7 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
   return {
     events,
     phases,
+    enabled,
     notes: await loadNotes(settings, id),
     pending: found.scanning ? 'Looking for device faults in the Hoot logs…' : ''
   };

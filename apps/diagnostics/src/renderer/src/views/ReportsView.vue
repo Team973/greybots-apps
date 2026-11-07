@@ -467,7 +467,7 @@ onUnmounted(() => clearInterval(statusTimer));
         Pick all {{ selectable.length }} shown<template v-if="selected.size"> · {{ selected.size }} picked</template>
       </label>
       <p v-if="reports.length === 0 && cardFilter.analyzedOnly" class="hint">
-        No reports yet. They're made here, or automatically when logs are downloaded or imported (Auto reports).
+        No reports yet. They're run here, or automatically when logs are downloaded or imported (Auto reports).
       </p>
       <p v-else-if="shownCards.length === 0" class="hint">No logs match the filter.</p>
       <div v-else id="report-cards" class="log-cards">
@@ -553,7 +553,7 @@ onUnmounted(() => clearInterval(statusTimer));
           @update:model-value="updateAuto({ enabled: $event })"></Switch>
         <span :class="autoReport.enabled ? 'on-text' : 'hint'">{{ autoReport.enabled ? 'On' : 'Off' }}</span>
       </div>
-      <p class="hint">Makes reports by itself as logs arrive: each new log it applies to gets a report from each template picked here. Saved as it's changed.</p>
+      <p class="hint">Runs reports by itself as logs arrive: each new log it applies to gets a report from every template ({{ templates.length }} now; ones saved for one robot only on that robot's logs). Saved as it's changed.</p>
 
       <fieldset>
         <legend class="hint small">Runs on logs that are</legend>
@@ -583,15 +583,6 @@ onUnmounted(() => clearInterval(statusTimer));
         <input :value="autoReport.robots.join(', ')" placeholder="frc973, frc973B"
           @change="updateAuto({ robots: ($event.target as HTMLInputElement).value.split(',').map((r) => r.trim()).filter(Boolean) })" />
       </label>
-      <fieldset>
-        <legend class="hint small">Runs these templates</legend>
-        <p v-if="templates.length === 0" class="hint small">No templates yet.</p>
-        <div class="chips">
-          <label v-for="t in templates" :key="t.id" class="chip">
-            <input type="checkbox" :checked="autoReport.templateIds.includes(t.id)" @change="updateAuto({ templateIds: toggle(autoReport.templateIds, t.id) })" /><span>{{ t.name }}</span>
-          </label>
-        </div>
-      </fieldset>
       <div v-if="autoReport.id" class="run small">
         Run it now on
         <select v-model="runLog" aria-label="Log to run it on">
@@ -605,7 +596,7 @@ onUnmounted(() => clearInterval(statusTimer));
     </section>
     <section class="card">
       <h2>Lately</h2>
-      <p v-if="pipelineStatus?.current" class="hint">Making {{ pipelineStatus.current }}…</p>
+      <p v-if="pipelineStatus?.current" class="hint">Running {{ pipelineStatus.current }}…</p>
       <p v-if="!pipelineStatus?.recent.length" class="hint">Nothing since the app started.</p>
       <ul class="items">
         <li v-for="run in pipelineStatus?.recent ?? []" :key="run.at + run.template" class="item">

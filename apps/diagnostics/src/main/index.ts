@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import type { DiagnosticsApi } from '@shared/ipc';
 import { libraryKinds, type LibraryKind } from '@shared/library';
-import { starterLibrary } from '@shared/starters';
+import { outdatedStarter, starterLibrary } from '@shared/starters';
 import { normalizeSettings, settingsErrors, type Settings } from '@shared/settings';
 import { accountName, accountStatus, deleteItem, signIn, signOut, startCloudSync, syncLibrary, syncSoon } from './cloud-sync';
 import { checkConnection } from './connection-check';
@@ -131,6 +131,22 @@ async function knownLog(settings: Settings, id: string) {
 function libraryKind(kind: unknown): LibraryKind {
   if (!libraryKinds.includes(kind as LibraryKind)) throw new Error('There is no such kind of library item.');
   return kind as LibraryKind;
+}
+
+// Starters in the library that nobody has changed, brought up to date when
+// a starter changes (Power Analysis now covers only the time the robot is
+// enabled). One someone has changed is left as it is.
+async function upgradeStarters() {
+  const settings = await loadSettings();
+  let upgraded = 0;
+  for (const starter of starterLibrary()) {
+    const kept = await getLibraryItem(settings, starter.kind, starter.id);
+    if (kept && outdatedStarter(kept, starter)) {
+      await storeLibraryItem(settings, { ...starter, cloud: kept.cloud });
+      upgraded += 1;
+    }
+  }
+  if (upgraded) syncSoon();
 }
 
 const handlers: DiagnosticsApi = {
@@ -263,6 +279,7 @@ const handlers: DiagnosticsApi = {
       await storeLibraryItem(settings, item);
       added += 1;
     }
+    await upgradeStarters();
     if (added) syncSoon();
     return added;
   },
@@ -356,6 +373,7 @@ if (!app.requestSingleInstanceLock()) {
 
     createWindow();
     watchForRobot();
+    upgradeStarters().catch((error) => console.error(error));
     watchOwlet();
     startCloudSync().catch((error) => console.error(error));
 

@@ -120,6 +120,12 @@ async function scopeSpans(context: Context, scope: ReportScope): Promise<[number
   switch (scope.type) {
     case 'match':
       return [matchSpan(phases, context.whole)];
+    case 'enabled': {
+      const spans = (context.review.enabled ?? []).map(([start, end]): [number, number] =>
+        [Math.max(start, context.whole[0]), Math.min(end, context.whole[1])]).filter(([start, end]) => end > start);
+      if (spans.length === 0) throw new Error('The robot was never enabled in this log.');
+      return spans;
+    }
     case 'auto':
     case 'teleop': {
       const spans = phaseSpans(phases, scope.type);
@@ -538,10 +544,14 @@ export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manu
       status.recent = [run, ...status.recent].slice(0, recentRuns);
     };
 
-    // A log's reports together: they share its open session.
+    // Every template runs (for any robot, or the log's): which ones isn't
+    // chosen. A log's reports together: they share its open session.
+    const templates = await listLibrary(settings, 'template');
     const runLog = (file: SignalLogFile) => Promise.all(pipelines
       .filter((pipeline) => pipelineApplies(pipeline, file, how))
-      .flatMap((pipeline) => pipeline.templateIds.map((templateId) => runOne(file, pipeline, templateId))));
+      .flatMap((pipeline) => templates
+        .filter((template) => !template.robot || template.robot === file.robot)
+        .map((template) => runOne(file, pipeline, template.id))));
 
     try {
       let next = 0;

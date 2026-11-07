@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { matchKey, searchMatches, sharedTail } from '@shared/signal-match';
 import { cleanLibraryItem } from '@shared/library-check';
 import { planSync } from '@shared/library-sync';
-import { starterLibrary } from '@shared/starters';
+import { outdatedStarter, starterLibrary, starterStamp } from '@shared/starters';
 import { templateKeys, theAutoReport, type LibraryItem, type Pipeline } from '@shared/library';
 import { integrateProduct } from '@shared/signals';
 
@@ -109,4 +109,18 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
   // The one that runs is the first made.
   assert.equal(theAutoReport([newer, older])?.name, 'First');
   assert.equal(theAutoReport([]), null);
+}
+
+// --- Starters brought up to date, unless someone changed them ---
+{
+  const power = starterLibrary().find((item) => item.name === 'Power Analysis') as LibraryItem & { scope: { type: string } };
+  assert.equal(power.scope.type, 'enabled');
+  const keptAsAdded = { ...power, changed: starterStamp, scope: { type: 'match' } } as LibraryItem;
+  assert.equal(outdatedStarter(keptAsAdded, power), true);
+  // Someone changed it: theirs stays.
+  assert.equal(outdatedStarter({ ...keptAsAdded, changed: '2026-11-05T10:00:00.000Z' }, power), false);
+  // Up to date already.
+  assert.equal(outdatedStarter(power, power), false);
+  // The scope is kept as read.
+  assert.deepEqual((cleanLibraryItem({ ...power, scope: { type: 'enabled' } }) as { scope: unknown }).scope, { type: 'enabled' });
 }

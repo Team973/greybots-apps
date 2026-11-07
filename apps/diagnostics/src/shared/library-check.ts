@@ -68,7 +68,7 @@ export function cleanViewBody(raw: Raw): ViewBody {
 
 function cleanScope(raw: unknown): ReportScope {
   if (!isObject(raw)) return { type: 'match' };
-  if (raw.type === 'auto' || raw.type === 'teleop') return { type: raw.type };
+  if (raw.type === 'auto' || raw.type === 'teleop' || raw.type === 'enabled') return { type: raw.type };
   if (raw.type === 'conditions') {
     const conditions = (Array.isArray(raw.conditions) ? raw.conditions : [])
       .filter(isObject)

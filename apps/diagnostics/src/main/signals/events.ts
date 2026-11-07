@@ -452,6 +452,20 @@ export function modeEvents(changes: ModeChange[], key: string | null): LogEvent[
   }));
 }
 
+// When the robot was enabled (auto, teleop or test), as spans. A brief drop
+// (a dropped packet) doesn't split one.
+export function enabledSpans(changes: ModeChange[], end: number): [number, number][] {
+  const spans: [number, number][] = [];
+  changes.forEach((change, i) => {
+    if (change.mode === 'disabled') return;
+    const until = changes[i + 1]?.time ?? end;
+    const last = spans[spans.length - 1];
+    if (last && change.time - last[1] <= 2) last[1] = Math.max(last[1], until);
+    else spans.push([change.time, until]);
+  });
+  return spans.filter(([start, stop]) => stop > start);
+}
+
 // Auto and teleop where the robot was enabled in them; in a match, the end
 // of teleop is its endgame. A brief drop (a dropped packet) doesn't split one.
 export function matchPhases(changes: ModeChange[], end: number, inMatch: boolean): MatchPhase[] {

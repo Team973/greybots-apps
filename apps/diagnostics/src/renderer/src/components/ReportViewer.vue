@@ -125,7 +125,7 @@ const at = (t: number) => {
     <header class="report-head">
       <h2>{{ report.name }}</h2>
       <p class="hint small">
-        Made {{ formatTime(report.generated) }} · {{ report.by }} · from the template “{{ report.template.name }}”
+        Run {{ formatTime(report.generated) }} · {{ report.by }} · from the template “{{ report.template.name }}”
       </p>
       <p v-if="report.missing.length" class="warning-text small">
         Not in this log: {{ report.missing.join(', ') }}.
