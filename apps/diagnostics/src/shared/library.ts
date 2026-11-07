@@ -6,7 +6,7 @@
 //
 // Nothing here may touch Node or the DOM.
 
-import type { EventKind, LogEvent, MatchPhase } from './events';
+import { isPowerEvent, type EventKind, type LogEvent, type MatchPhase } from './events';
 import { monitorEvents, type MonitorAlarm, type MonitorResult } from './monitors';
 import type { MatchInfo, MatchType } from './offload';
 import type { VisionSummary } from './vision';
@@ -109,7 +109,8 @@ export type ReportSection =
   // Each slice's share of the total over the span: a signal (a motor's
   // current), or a group of them added up (a subsystem's motors).
   | { type: 'pie'; title: string; measure: PieMeasure; voltage: string; slices: PieSliceSpec[] }
-  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean }
+  // `topic` 'power': only power problems (isPowerEvent), whatever the kinds.
+  | { type: 'events'; title: string; kinds: EventKind[]; problemsOnly: boolean; topic?: 'power' }
   // The post-match monitors (monitors.ts): these, or every one with none.
   | { type: 'monitors'; title: string; ids: string[] }
   // Each camera: good data used against thrown out, when (a heatmap), and
@@ -346,6 +347,11 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
 
 // --- A report's problems ---
 
+// Whether an events section lists an event: of its kinds, and its topic.
+export function sectionLists(section: Extract<ReportSection, { type: 'events' }>, event: LogEvent): boolean {
+  return (section.kinds.length === 0 || section.kinds.includes(event.kind)) && (section.topic !== 'power' || isPowerEvent(event));
+}
+
 // The monitor the vision section shows.
 export const visionMonitor = 'vision-disagreement';
 
@@ -363,7 +369,7 @@ export function reportProblems(sections: ReportSection[], events: LogEvent[], mo
     for (const event of list) if (isProblem(event)) found.set(event.id, event);
   };
   for (const section of sections) {
-    if (section.type === 'events') add(events.filter((e) => section.kinds.length === 0 || section.kinds.includes(e.kind)));
+    if (section.type === 'events') add(events.filter((e) => sectionLists(section, e)));
     if (section.type === 'monitors') add(monitorEvents(monitors.filter((r) => section.ids.length === 0 || section.ids.includes(r.id))));
     if (section.type === 'vision') add(monitorEvents(monitors.filter((r) => r.id === visionMonitor)));
   }

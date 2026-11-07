@@ -45,7 +45,8 @@ export const starterStamp = '2026-11-01T00:00:00.000Z';
 // Starters changed since, and when. A copy nobody has changed is brought up
 // to date (see upgradeStarters); a changed one is left as its owner made it.
 //   Power Analysis: over the time the robot is enabled, not the whole log;
-//     and no errors and warnings list (it has no checks of its own).
+//     and only power problems (brownouts, voltage, supply current), not
+//     wheel slip or the cameras.
 //   Autonomous: path tracking error and the path and surf monitors.
 //   Match Report: the monitors, and the log's errors and warnings.
 export const starterRevisions: Record<string, string> = {
@@ -256,6 +257,7 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
   ]],
   ['5f0c2a10-0002-4000-8000-000000000011', 'Power Analysis', "Where the battery's energy goes while the robot is enabled, in watt-hours: each motor's share, and each subsystem's. From the robot code's log (each motor's supply current times the battery's voltage), and from the Hoot logs alone (each TalonFX's own supply voltage and current).", { type: 'enabled' }, [
     { type: 'summary' },
+    { type: 'events', title: 'Power problems', kinds: [], problemsOnly: true, topic: 'power' },
     { type: 'heading', text: "From the robot code's log" },
     { type: 'text', text: "Each motor's supply current, as the robot code logs it, times the battery's voltage." },
     ...energyPies('', (name) => keyOf.get(name)!, `${stats}/BatteryVoltage`),

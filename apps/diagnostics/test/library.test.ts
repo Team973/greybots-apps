@@ -145,8 +145,16 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
   // The Vision System report: only the cameras' disagreement, not the
   // Hoot logs' faults or the motors' monitors.
   assert.deepEqual(ids(templates.get('Vision System')!.sections), ['monitor:vision-disagreement:vision-disagreement:2.00']);
-  // Power Analysis: none.
-  assert.deepEqual(ids(templates.get('Power Analysis')!.sections), []);
+  // Power Analysis: only power problems (the brownout), not the other
+  // fault or any monitor's (wheel slip, surfing).
+  assert.deepEqual(ids(templates.get('Power Analysis')!.sections), ['brownout']);
+  const power = (title: string, kind: LogEvent['kind'] = 'fault') =>
+    reportProblems([{ type: 'events', title: '', kinds: [], problemsOnly: true, topic: 'power' }], [{ ...fault, id: title, kind, title }], monitors).length;
+  assert.equal(power('TalonFX-60: bridge brownout'), 1);
+  assert.equal(power('TalonFX-2: undervoltage'), 1);
+  assert.equal(power('TalonFX-58: supply current limit'), 1);
+  assert.equal(power('TalonFX-58: device temperature'), 0);
+  assert.equal(power('Wheel slip', 'monitor'), 0);
   // The Match Report: the log's faults and every monitor's warnings, once each.
   assert.deepEqual(ids(templates.get('Match Report')!.sections).sort(),
     ['brownout', 'hoot:fault', 'monitor:pair-shooter:pair-shooter:2.00', 'monitor:vision-disagreement:vision-disagreement:2.00']);

@@ -129,6 +129,13 @@ export function phaseClock(phases: MatchPhase[], t: number): string {
   return `${phaseLabels[at.phase.name]} ${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 }
 
+// Power problems: brownouts, and faults, alerts and messages about the
+// battery, voltage, supply current, breakers or reboots. What a Power
+// Analysis report lists, rather than wheel slip or a camera.
+const powerWords = /brown ?out|under ?volt|voltage|supply|battery|breaker|power|reboot/i;
+export const isPowerEvent = (event: LogEvent) =>
+  event.kind === 'brownout' || (['fault', 'alert', 'message', 'can'].includes(event.kind) && powerWords.test(event.title));
+
 // The phase a time is in, and how far into it.
 export function phaseAt(phases: MatchPhase[], t: number): { phase: MatchPhase; into: number } | null {
   // Endgame is inside teleop: it wins.

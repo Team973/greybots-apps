@@ -12,6 +12,7 @@ import type { SignalLogFile } from '@shared/ipc';
 import {
   isProblem,
   reportProblems,
+  sectionLists,
   reportSummary,
   templateKeys,
   theAutoReport,
@@ -411,9 +412,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         break;
       }
       case 'events': {
-        const chosen = events.filter((e) =>
-          (section.kinds.length === 0 || section.kinds.includes(e.kind)) &&
-          (section.problemsOnly ? isProblem(e) : !isRoutine(e)));
+        const chosen = events.filter((e) => sectionLists(section, e) && (section.problemsOnly ? isProblem(e) : !isRoutine(e)));
         sections.push({ type: 'events', title: section.title, events: chosen });
         break;
       }
