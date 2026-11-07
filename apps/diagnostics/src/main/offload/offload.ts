@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { isUnnamedLog, parseLogName, type OffloadedFile, type OffloadProgress, type RobotLogLocation } from '@shared/offload';
 import { logPathSegments } from '@shared/storage-layout';
 import { indexKey, loadIndex, storeIndex, type OffloadIndex } from './offload-index';
+import type { ClearCandidate } from './clear';
 import type { FileReader, FoundFile } from './readers';
 
 // One place to offload from: the robot, or a folder on this computer.
@@ -30,6 +31,9 @@ export interface OffloadResult {
   // Files pulled again because they'd changed on the robot since (a log
   // still being written, that grew): their reports are run again.
   changed: string[];
+  // Every file pulled this time, as it was where it came from: what may be
+  // cleared off the robot afterwards (clear.ts).
+  pulled: ClearCandidate[];
 }
 
 // How many files are pulled at once. Each file from the robot already keeps
@@ -141,7 +145,7 @@ export async function offloadLogs(
   now = new Date(),
   store?: IndexStore
 ): Promise<OffloadResult> {
-  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [], changed: [] };
+  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [], changed: [], pulled: [] };
   const own = !store;
   const { index, writer } = store ?? (await openIndexStore(dataDirectory));
   const absolute = (localPath: string) => join(dataDirectory, ...localPath.split('/'));
@@ -343,6 +347,7 @@ export async function offloadLogs(
     delete index.partials[key];
     record(download);
     result.copied += 1;
+    result.pulled.push({ path: file.path, name: file.name, size: file.size, modified, localPath: download.localPath });
     if (download.replaces) result.changed.push(download.localPath);
   };
 

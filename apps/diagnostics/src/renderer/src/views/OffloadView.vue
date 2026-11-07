@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import NumberInput from '@greybots/common/components/Number.vue';
 import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
@@ -101,6 +102,28 @@ async function offloadNow() {
   startMessage.value = await offload;
   await refresh();
 }
+
+// --- Clearing the logs just downloaded off the robot (#139) ---
+// Asked twice: a button opens the list, and the delete in it only works
+// once its box is ticked. The main process checks every file again before
+// deleting it (clear.ts) and leaves any that may still be open.
+const clearOpen = ref(false);
+const clearSure = ref(false);
+const clearMessage = ref('');
+function openClear() {
+  clearSure.value = false;
+  clearMessage.value = '';
+  clearOpen.value = true;
+}
+async function clearNow() {
+  const clearable = status.value?.clearable;
+  if (!clearable || !clearSure.value) return;
+  clearMessage.value = await window.diagnostics.clearRobotLogs(clearable.downloadedAt, clearable.files.length)
+    .catch((error: Error) => error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+  await refresh();
+  if (!clearMessage.value) clearOpen.value = false;
+}
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 onMounted(async () => {
   await refresh();
@@ -244,6 +267,67 @@ onUnmounted(() => clearTimeout(timer));
       </div>
     </template>
   </section>
+
+  <!-- The logs just downloaded, offered for clearing off the robot. -->
+  <section v-if="status && (status.clearable || status.lastClear)" id="clear-robot" class="card">
+    <h2>Clear the robot</h2>
+    <template v-if="status.clearable && !status.running">
+      <p>
+        The last download pulled {{ plural(status.clearable.files.length, 'log') }} ({{ formatBytes(status.clearable.bytes) }}) from the
+        robot, and they're safely on this laptop. Clear them off the robot to make room?
+      </p>
+      <p class="hint">
+        Only these logs, and only those it's safe to: the newest log in each folder, the newest Hoot session, anything changed in
+        the last 5 minutes and logs still named FRC_TBD_ stay, in case they're still being written.
+      </p>
+      <div class="card-actions">
+        <md-outlined-button id="clear-robot-start" :disabled="status.clearing || !status.robotHost" @click="openClear">
+          Clear from the robot…
+        </md-outlined-button>
+        <span v-if="!status.robotHost" class="hint">Connect the robot to clear them.</span>
+      </div>
+    </template>
+    <div v-if="status.lastClear && !status.clearable" id="last-clear">
+      <p>
+        Cleared {{ formatTime(status.lastClear.finishedAt) }}: {{ plural(status.lastClear.deleted, 'log') }} deleted from the robot<template
+          v-if="status.lastClear.foldersRemoved">, and {{ plural(status.lastClear.foldersRemoved, 'empty Hoot session folder') }}</template>.
+      </p>
+      <details v-if="status.lastClear.kept.length">
+        <summary>{{ plural(status.lastClear.kept.length, 'log') }} left on the robot</summary>
+        <ul class="clear-list">
+          <li v-for="kept in status.lastClear.kept" :key="kept.name + kept.reason"><span class="path">{{ kept.name }}</span>: {{ kept.reason }}</li>
+        </ul>
+      </details>
+      <p v-for="error in status.lastClear.errors" :key="error" class="error-text">{{ error }}</p>
+    </div>
+  </section>
+
+  <AppDialog :open="clearOpen" title="Delete these logs from the robot?" @close="clearOpen = false">
+    <template v-if="status?.clearable">
+      <p>
+        {{ plural(status.clearable.files.length, 'log') }} ({{ formatBytes(status.clearable.bytes) }}) from the robot at
+        {{ status.clearable.host }}, downloaded {{ formatTime(status.clearable.downloadedAt) }}:
+      </p>
+      <ul class="clear-list">
+        <li v-for="file in status.clearable.files" :key="file.path" class="path">{{ file.path }}</li>
+      </ul>
+      <p class="hint small">
+        Each is checked again first: one that's changed on the robot since, whose copy here isn't whole, or that may still be being
+        written stays. Deleted logs can't be brought back from the robot; the copies on this laptop stay.
+      </p>
+      <label class="choice">
+        <input id="clear-robot-sure" v-model="clearSure" type="checkbox" />
+        Yes, delete these logs from the robot
+      </label>
+      <p v-if="clearMessage" class="error-text">{{ clearMessage }}</p>
+    </template>
+    <template #actions>
+      <md-outlined-button @click="clearOpen = false">Cancel</md-outlined-button>
+      <md-filled-button id="clear-robot-confirm" :disabled="!clearSure || status?.clearing" @click="clearNow">
+        {{ status?.clearing ? 'Deleting…' : `Delete ${status?.clearable ? plural(status.clearable.files.length, 'log') : 'logs'} from the robot` }}
+      </md-filled-button>
+    </template>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -266,5 +350,20 @@ onUnmounted(() => clearTimeout(timer));
 
 progress {
   width: 100%;
+}
+
+.clear-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
 }
 </style>

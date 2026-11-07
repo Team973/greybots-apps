@@ -136,6 +136,16 @@ Data logs still named `FRC_TBD_…` are skipped. WPILib renames a log once the D
 
 **Order and age.** Of what's been found so far, data logs are pulled first, then the robot program log, then Hoot logs; newest first within each. A robot can hold gigabytes of logs (team 973's held 6.4 GB in 230 files in October 2026, mostly Hoot logs of 100-250 MB each), so the small files with the most in them shouldn't wait behind those. Logs recorded more than `offloadDays` ago aren't pulled at all, so an old backlog doesn't hold up today's matches.
 
+**Clearing the robot** (#139, `src/main/offload/clear.ts`). Downloading only reads from the robot. Afterwards, the Download page offers to clear the logs that download just pulled (data logs and Hoot logs, never the program's own log or Driver Station logs), and only those, for two hours or until the next download. It asks twice: **Clear from the robot…** opens the list, and its delete only works once **Yes, delete these logs from the robot** is ticked. The main process checks the request names that download and its count, then logs in again and checks each file before deleting it. A log stays on the robot when:
+
+- it's still named `FRC_TBD_`;
+- it's the newest log in its folder, or for Hoot logs (a folder per session, its logs written together) in the newest session: kept whole, since the newest file in every session would otherwise stay for good;
+- it changed within 5 minutes of the newest log on the robot (the robot's clock may be unset, so its own latest file stands for now);
+- it has changed on the robot since it was downloaded, or is gone;
+- the copy on this laptop is missing or a different size.
+
+A Hoot session folder left empty is removed (the logs folders themselves never are). The page says what was deleted, and each log left and why.
+
 **Speed.** Four files are pulled at once. Over the radio, round trips are what's slow rather than bandwidth. ssh2's own read stream waits for each 32 KB chunk before asking for the next, so the app keeps 32 reads in flight per file instead (as ssh2's `fastGet` does) and puts the chunks back in order. The index is written at most once a second while files come in, and again at the end.
 
 Measured in October 2026: against a local OpenSSH server the app's reader runs at 70-80 MB/s inside Electron, so the app isn't the limit. Against team 973's roboRIO over the radio it got 2.7 MB/s with one connection and only 3.2 MB/s with three, so the limit is shared (the link, or the robot's CPU while robot code runs) rather than one core per connection, and more connections aren't worth it. The roboRIO's SSH server has compression switched off. A faster cipher for the roboRIO's CPU (ChaCha20) would need ssh2's native add-on, since Electron's crypto library doesn't have it.

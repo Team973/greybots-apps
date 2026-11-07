@@ -182,6 +182,10 @@ export interface DiagnosticsApi {
   getOffloadStatus(): Promise<OffloadStatus>;
   // Starts an offload and resolves when it's done, to why it didn't start or ''.
   startOffload(): Promise<string>;
+  // Deletes from the robot the logs the last download pulled (as
+  // OffloadStatus.clearable has them, named by its downloadedAt and how many,
+  // so a stale request does nothing). Resolves to why it didn't, or ''.
+  clearRobotLogs(downloadedAt: string, count: number): Promise<string>;
   getOffloadedFiles(query: OffloadedFilesQuery): Promise<OffloadedFiles>;
   // Files a person dropped or picked (logs, folders, zip files), filed into
   // the archive. Resolves when done, to what happened or why it didn't start.
@@ -282,6 +286,7 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'checkConnection',
   'getOffloadStatus',
   'startOffload',
+  'clearRobotLogs',
   'getOffloadedFiles',
   'importLogs',
   'getImportStatus',

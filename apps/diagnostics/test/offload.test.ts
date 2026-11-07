@@ -7,6 +7,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { Readable } from 'node:stream';
+import { clearLogs, recentMs, type ClearCandidate, type RobotEntry, type RobotFiles } from '@main/offload/clear';
 import { findRobot } from '@main/offload/find-robot';
 import { offloadLogs, type OffloadJob } from '@main/offload/offload';
 import type { FileReader, FoundFile, OnFiles } from '@main/offload/readers';
@@ -93,6 +94,9 @@ async function main() {
     // Two data logs, the program log and two Hoot logs; FRC_TBD_ and .txt aren't pulled.
     assert.equal(first.copied, 5);
     assert.equal(first.bytes, 100 + 50 + 5 + 300 + 200);
+    // Each, as it was on the robot: what may be cleared off it afterwards.
+    assert.equal(first.pulled.length, 5);
+    assert.ok(first.pulled.every((f) => f.path.startsWith('/home/lvuser/') && f.localPath.startsWith('logs/frc973/')));
     // Each folder listed once (the logs folders hold data logs and Hoot logs both).
     assert.equal(robot.listed.filter((f) => f === '/home/lvuser/logs').length, 1);
     assert.ok(!robot.listed.includes('/u/logs'));
@@ -176,7 +180,97 @@ async function main() {
   assert.equal(await findRobot({ ...team, addressMode: 'manual', manualAddress: '10.0.0.5' }, answers({ '10.0.0.5': [1, true], '172.22.11.2': [1, true] })), '10.0.0.5');
 }
 
-main().catch((error) => {
+// --- Clearing downloaded logs off the robot (#139) ---
+
+// A robot's files in memory, for clearing: folders of files, and what was
+// deleted.
+class FakeFiles implements RobotFiles {
+  removed: string[] = [];
+  foldersRemoved: string[] = [];
+  constructor(public tree: Record<string, RobotEntry[]>) {}
+  async list(folder: string) {
+    return this.tree[folder] ? this.tree[folder].map((e) => ({ ...e })) : null;
+  }
+  async remove(path: string) {
+    const folder = posix.dirname(path);
+    this.tree[folder] = this.tree[folder].filter((e) => e.name !== posix.basename(path));
+    this.removed.push(path);
+  }
+  async removeFolder(path: string) {
+    if (this.tree[path]?.length) throw new Error('not empty');
+    delete this.tree[path];
+    const parent = posix.dirname(path);
+    this.tree[parent] = this.tree[parent].filter((e) => e.name !== posix.basename(path));
+    this.foldersRemoved.push(path);
+  }
+}
+
+async function clearing() {
+  const at = (minutes: number) => new Date(Date.UTC(2026, 10, 7, 4, 0) + minutes * 60_000);
+  const file = (name: string, size: number, minutes: number): RobotEntry => ({ name, folder: false, size, modified: at(minutes) });
+  const folder = (name: string): RobotEntry => ({ name, folder: true, size: 0, modified: at(0) });
+  const L = '/home/lvuser/logs';
+  const robot = new FakeFiles({
+    [L]: [
+      file('FRC_20261107_030000_mttd_Q1.wpilog', 100, 0),
+      file('FRC_20261107_031000_mttd_Q2.wpilog', 100, 10),
+      file('FRC_20261107_032000_mttd_Q3.wpilog', 100, 20),
+      // Changed within 5 minutes of the newest (the robot's "now").
+      file('FRC_20261107_033400_mttd_Q4.wpilog', 100, 37),
+      // The newest: may still be open.
+      file('FRC_20261107_034000_mttd_Q5.wpilog', 100, 40),
+      file('FRC_TBD_123.wpilog', 100, 5),
+      folder('session-a'),
+      folder('session-b')
+    ],
+    [`${L}/session-a`]: [file('rio.hoot', 300, 1), file('canivore.hoot', 300, 1)],
+    [`${L}/session-b`]: [file('rio.hoot', 300, 30), file('rio-2.hoot', 300, 40)]
+  });
+  const candidate = (path: string, size: number, minutes: number): ClearCandidate =>
+    ({ path, name: posix.basename(path), size, modified: at(minutes).toISOString(), localPath: `logs/frc973/${posix.basename(path)}` });
+  const candidates = [
+    candidate(`${L}/FRC_20261107_030000_mttd_Q1.wpilog`, 100, 0),
+    // It grew since it was downloaded.
+    candidate(`${L}/FRC_20261107_031000_mttd_Q2.wpilog`, 90, 9),
+    candidate(`${L}/FRC_20261107_032000_mttd_Q3.wpilog`, 100, 20),
+    candidate(`${L}/FRC_20261107_033400_mttd_Q4.wpilog`, 100, 37),
+    candidate(`${L}/FRC_20261107_034000_mttd_Q5.wpilog`, 100, 40),
+    candidate(`${L}/FRC_TBD_123.wpilog`, 100, 5),
+    candidate(`${L}/session-a/rio.hoot`, 300, 1),
+    candidate(`${L}/session-a/canivore.hoot`, 300, 1),
+    candidate(`${L}/session-b/rio.hoot`, 300, 30),
+    // Gone from the robot already.
+    candidate(`${L}/FRC_20261107_020000_mttd_P1.wpilog`, 100, -60)
+  ];
+  // The copies here: Q3's is short (a failed copy).
+  const local = async (localPath: string) => (localPath.endsWith('Q3.wpilog') ? 50 : candidates.find((c) => c.localPath === localPath)!.size);
+
+  const outcome = await clearLogs(candidates, robot, local, ['/home/lvuser/logs', '/u/logs']);
+  assert.deepEqual(outcome.errors, []);
+  // Q1, and the older Hoot session whole.
+  assert.deepEqual(outcome.deleted.sort(), ['FRC_20261107_030000_mttd_Q1.wpilog', 'canivore.hoot', 'rio.hoot']);
+  const why = Object.fromEntries(outcome.kept.map((k) => [k.name, k.reason]));
+  assert.match(why['FRC_20261107_031000_mttd_Q2.wpilog'], /changed on the robot/);
+  assert.match(why['FRC_20261107_032000_mttd_Q3.wpilog'], /copy on this laptop/);
+  assert.match(why['FRC_20261107_033400_mttd_Q4.wpilog'], /last 5 minutes/);
+  assert.match(why['FRC_20261107_034000_mttd_Q5.wpilog'], /newest log in its folder/);
+  assert.match(why['FRC_TBD_123.wpilog'], /FRC_TBD_/);
+  assert.match(why['FRC_20261107_020000_mttd_P1.wpilog'], /no longer on the robot/);
+  // session-b is the newest session: kept whole, even its older log.
+  assert.match(why['rio.hoot'], /newest Hoot session/);
+  assert.deepEqual(robot.tree[`${L}/session-b`].map((e) => e.name), ['rio.hoot', 'rio-2.hoot']);
+  // session-a was left empty: removed. The logs folder itself never is.
+  assert.deepEqual(robot.foldersRemoved, [`${L}/session-a`]);
+  assert.ok(robot.tree[L]);
+  assert.equal(recentMs, 5 * 60 * 1000);
+
+  // Nothing asked for, nothing deleted; and nothing else is ever touched.
+  const untouched = new FakeFiles({ [L]: [file('FRC_20261107_030000_mttd_Q1.wpilog', 100, 0), file('FRC_20261107_031000_mttd_Q2.wpilog', 100, 10)] });
+  assert.deepEqual((await clearLogs([], untouched, local, [L])).deleted, []);
+  assert.equal(untouched.tree[L].length, 2);
+}
+
+main().then(clearing).catch((error) => {
   console.error(error);
   process.exit(1);
 });

@@ -18,7 +18,7 @@ export interface RobotLogLocation {
 // WPILib's DataLogManager and CTRE's SignalLogger both write to a USB drive
 // when one is plugged in (/u, a link to /media/sda1) and to /home/lvuser/logs
 // otherwise. Hoot files go in a folder per session, hence the depth.
-const robotLogDirectories = ['/home/lvuser/logs', '/u/logs'];
+export const robotLogDirectories = ['/home/lvuser/logs', '/u/logs'];
 
 // Pulled in this order (newest first within each): the small files with
 // the most in them first, so they aren't stuck behind Hoot logs, which can
@@ -186,4 +186,27 @@ export interface OffloadStatus {
   // Each part under way (the robot and Driver Station logs go at once).
   jobs: OffloadProgress[];
   lastRun: OffloadRunSummary | null;
+  // Logs the last download pulled from the robot, which may be cleared off
+  // it (#139); null once cleared, after the next download, or after a while.
+  clearable: ClearableLogs | null;
+  clearing: boolean;
+  lastClear: ClearSummary | null;
+}
+
+export interface ClearableLogs {
+  // The download they came from (its start), to name it when clearing.
+  downloadedAt: string;
+  host: string;
+  files: { name: string; path: string; size: number }[];
+  bytes: number;
+}
+
+export interface ClearSummary {
+  finishedAt: string;
+  host: string;
+  deleted: number;
+  foldersRemoved: number;
+  // Left on the robot, and why.
+  kept: { name: string; reason: string }[];
+  errors: string[];
 }

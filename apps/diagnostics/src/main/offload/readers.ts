@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { Client, type FileEntryWithStats, type SFTPWrapper } from 'ssh2';
 
 import { robotSshUser } from '@shared/offload';
+import type { RobotEntry, RobotFiles } from './clear';
 
 export interface FoundFile {
   path: string;
@@ -90,7 +91,7 @@ const sshTimeoutMs = 5000;
 const sftpChunkBytes = 32 * 1024;
 const sftpReadsInFlight = 32;
 
-export class SftpReader implements FileReader {
+export class SftpReader implements FileReader, RobotFiles {
   connected = true;
 
   private constructor(private client: Client, private sftp: SFTPWrapper) {
@@ -151,6 +152,32 @@ export class SftpReader implements FileReader {
 
   realpath(directory: string): Promise<string | null> {
     return new Promise((resolve) => this.sftp.realpath(directory, (error, path) => resolve(error ? null : path)));
+  }
+
+  // --- Clearing logs (clear.ts): only ever asked for after a download, and
+  // only for what was downloaded ---
+
+  async list(folder: string): Promise<RobotEntry[] | null> {
+    try {
+      const entries = await this.readdir(folder);
+      return entries.map((entry) => ({
+        name: entry.filename,
+        folder: entry.attrs.isDirectory(),
+        size: entry.attrs.size,
+        modified: new Date(entry.attrs.mtime * 1000)
+      }));
+    } catch (error) {
+      if (!this.connected) throw error;
+      return null;
+    }
+  }
+
+  remove(path: string): Promise<void> {
+    return new Promise((resolve, reject) => this.sftp.unlink(path, (error) => (error ? reject(error) : resolve())));
+  }
+
+  removeFolder(path: string): Promise<void> {
+    return new Promise((resolve, reject) => this.sftp.rmdir(path, (error) => (error ? reject(error) : resolve())));
   }
 
   // ssh2's own read stream asks for one chunk at a time and waits for it, so
