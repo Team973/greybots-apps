@@ -946,7 +946,12 @@ onUnmounted(pause);
 const season = computed(() => seasonFor(summary.value?.startedAt ?? logs.value?.find((l) => l.id === selectedLog.value)?.recorded));
 
 // The tab shown: the line chart, or another plot (#144).
-const shownPanel = computed(() => plotStore.panels.find((p) => p.id === plotStore.activeTab) ?? null);
+// The other plot shown, or null for a line chart (the first, or another:
+// whichever it is, its signals are the store's).
+const shownPanel = computed(() => {
+  const panel = plotStore.panels.find((p) => p.id === plotStore.activeTab);
+  return panel && panel.type !== 'line' ? panel : null;
+});
 const onLine = computed(() => shownPanel.value === null);
 const chartHeight = 460;
 
@@ -1178,7 +1183,7 @@ watch(() => route.query.session, (session) => {
       <nav v-if="fromReports" class="back-row" aria-label="Back">
         <md-outlined-button id="back-to-reports" @click="backToReports">← Back to reports</md-outlined-button>
       </nav>
-      <PlotTabs v-if="summary" :panels="plotStore.panels" :active="shownPanel?.id ?? 'line'" @select="plotStore.showTab($event)"
+      <PlotTabs v-if="summary" :panels="plotStore.panels" :active="plotStore.activeTab" @select="plotStore.showTab($event)"
         @add="addPlot" @close="plotStore.removePanel($event)" />
       <div class="toolbar">
         <!-- Material's zoom_in and zoom_out icons, drawn here (no icon font: the
