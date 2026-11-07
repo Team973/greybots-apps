@@ -1,7 +1,7 @@
 // The post-match monitors and the vision summary, on made-up signals.
 
 import assert from 'node:assert/strict';
-import { moduleSpeed, monitorSettings, persistent, rateAt, runMonitors, valueAt, type Gates, type Series } from '@shared/monitors';
+import { median, moduleSpeed, monitorSettings, persistent, rateAt, runMonitors, valueAt, type Gates, type Series } from '@shared/monitors';
 import { matchKey } from '@shared/signal-match';
 import { allianceFrom, counterIncrease, counterState, visionBins, visionSummary, zoneAt } from '@shared/vision';
 
@@ -270,4 +270,21 @@ assert.deepEqual(visionBins([[10, 12.5]]), [[10, 11], [11, 12], [12, 12.5]], 'th
   // Red looks the other way: its left is low y.
   assert.deepEqual(zoneAt(15, 2, 'red'), { zone: 'ours', side: 'left' });
   assert.deepEqual(zoneAt(2, 6, 'red'), { zone: 'theirs', side: 'right' });
+}
+
+// The median, fast for three and four (every step), as sorting would give.
+{
+  const sorted = (values: number[]) => {
+    const v = [...values].sort((a, b) => a - b);
+    return v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+  };
+  for (const values of [[1, 2, 3], [3, 1, 2], [2, 3, 1], [5, 5, 1], [1, 2, 3, 4], [1, 2, 9, 10], [10, 9, 2, 1], [4, 1, 3, 2], [7, 7, 7, 1], [1, 5], [3, 1, 4, 1, 5]]) {
+    assert.equal(median(values), sorted(values), values.join(','));
+  }
+  // A check's detail, as a function, is only worked out for steps that are on.
+  let formatted = 0;
+  const alarms = persistent([[0, 1]], 0.1, (t) => ({ on: t > 0.5, value: t, detail: () => `at ${(formatted++, t).toFixed(2)}` }), 0.1);
+  assert.equal(alarms.length, 1);
+  assert.equal(alarms[0].detail, 'at 1.00');
+  assert.ok(formatted <= 5, `formatted ${formatted} times`);
 }

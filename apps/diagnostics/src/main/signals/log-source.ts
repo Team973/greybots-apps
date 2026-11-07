@@ -14,7 +14,7 @@ import {
 } from '@shared/signals';
 import type { RecordValue, SignalRecords } from '@shared/plots';
 import { StructRegistry } from './structs';
-import { decodeValue, parseLog, type LogValue, type ParsedLog } from './wpilog';
+import { decodeValue, parseLog, parseLogInTurns, type LogValue, type ParsedLog } from './wpilog';
 
 const kinds: Record<string, SignalKind> = {
   double: 'number',
@@ -77,8 +77,14 @@ export class LogSignalSource {
   readonly startedAt: string | null;
   readonly truncated: boolean;
 
-  constructor(private bytes: Uint8Array, origin?: number) {
-    this.log = parseLog(bytes);
+  // Parsed in turns, so the main process keeps answering the window while a
+  // big log's parsed (see parseLogInTurns).
+  static async open(bytes: Uint8Array, origin?: number): Promise<LogSignalSource> {
+    return new LogSignalSource(bytes, origin, await parseLogInTurns(bytes));
+  }
+
+  constructor(private bytes: Uint8Array, origin?: number, parsed?: ParsedLog) {
+    this.log = parsed ?? parseLog(bytes);
     this.truncated = this.log.truncated;
 
     let first = Infinity;

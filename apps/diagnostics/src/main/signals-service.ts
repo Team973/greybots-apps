@@ -8,7 +8,7 @@ import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogS
 import type { DsAlignment, DsLogStatus, HootSessionStatus, SessionDsLog, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
 import { filesToDelete } from '@shared/log-filter';
-import { monitorEvents, runMonitors, type Gates, type MonitorResult } from '@shared/monitors';
+import { monitorEvents, type Gates, type MonitorResult } from '@shared/monitors';
 import { matchKey } from '@shared/signal-match';
 import { notesPathSegments } from '@shared/storage-layout';
 import type { SignalRecords } from '@shared/plots';
@@ -49,6 +49,8 @@ import {
 } from './signals/events';
 import { dsLogHead, readDsEvents, readDsLog, type DsEvents, type DsLog, type DsRecordHead } from './signals/ds-log';
 import { LogSignalSource } from './signals/log-source';
+import { monitorsOf, type MonitorsJob, type MonitorsReply } from './workers/monitors-worker';
+import createMonitorsWorker from './workers/monitors-worker?nodeWorker';
 import { dataDirectory } from './storage';
 
 // --- Finding logs ---
@@ -426,8 +428,9 @@ interface Session {
   end: number;
   // Found once, when first asked for.
   events?: FoundEvents;
-  // Run once its gates are known (they can change while Hoot logs are read).
-  monitors?: { gates: string; results: MonitorResult[] };
+  // Run once its gates are known (they can change while Hoot logs are read),
+  // in a worker thread.
+  monitors?: { gates: string; results: Promise<MonitorResult[]> };
 }
 
 // The sessions open for reading, most recently used last. A few at once, so
@@ -477,7 +480,7 @@ async function openSessionOnce(settings: Settings, id: string): Promise<Session>
     const bytes = await fs.readFile(absolute(file.localPath));
     // Its older version, if it changed, goes.
     openSessions.delete(id);
-    dataLog = new LogSignalSource(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    dataLog = await LogSignalSource.open(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   }
 
   const placements: Placement[] = [];
@@ -721,8 +724,14 @@ export async function hootStatus(settings: Settings, id: string): Promise<HootSe
   return { hoots, progress, start: session.start, end: session.end };
 }
 
+// A turn for whatever else is waiting (the window's requests): reading a
+// signal decodes it whole, up to about 0.1 s for a Hoot log's busiest, and
+// reports and the fault scan read many in a row.
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 export async function readSignal(settings: Settings, id: string, key: string, range: SignalRange): Promise<SignalSeries | null> {
   if (isLiveId(id)) return readLive(id, key, range);
+  await turn();
   const session = await openSession(settings, id);
   const ds = session.dsLogs.find((p) => key.startsWith(`${p.entry.label}/`));
   if (ds) {
@@ -825,7 +834,7 @@ interface FoundEvents {
 }
 
 // What's exported from each Hoot log to find events: every device's
-// faults and sticky faults (warnings: they stay set after the fault's gone),
+// faults and sticky faults (they stay set after the fault's gone),
 // the robot's mode, and whether the Driver Station and CAN bus were there.
 const hootEventSignal = /\/(Sticky)?Fault_|^RobotMode$|^DS:IsDSAttached$|^DS:IsFMSAttached$|^CANBusIsUp$/;
 
@@ -838,10 +847,13 @@ async function scanHoots(session: Session, found: FoundEvents) {
     const end = session.end - offset;
     const wanted = hoot.signals.filter((s) => hootEventSignal.test(s.name));
     // Together, so owlet reads the log once for all of them.
-    const read = await Promise.all(wanted.map(async (signal) => {
-      const source = await hoot.sourceFor(signal.id).catch(() => null);
-      return { signal, series: source?.read(exportedName(signal.name)) ?? null };
-    }));
+    const sources = await Promise.all(wanted.map((signal) => hoot.sourceFor(signal.id).catch(() => null)));
+    // Read one at a time, with a turn for the window between.
+    const read = [];
+    for (const [i, signal] of wanted.entries()) {
+      await turn();
+      read.push({ signal, series: sources[i]?.read(exportedName(signal.name)) ?? null });
+    }
     const shifted = (spans: { start: number; end: number | null }[]) =>
       spans.map((span) => ({ start: span.start + offset, end: span.end === null ? null : span.end + offset }));
     for (const { signal, series } of read) {
@@ -916,10 +928,12 @@ function findEvents(session: Session): FoundEvents {
 }
 
 // The post-match monitors over a session's data log, run again only when
-// its gates (when it was enabled, and auto) change.
-function sessionMonitors(session: Session, enabled: [number, number][], phases: MatchPhase[]): MonitorResult[] {
+// its gates (when it was enabled, and auto) change. In a worker thread: they
+// take most of a second over a match, and the window would hang meanwhile.
+// Here, as before, if the worker can't run.
+function sessionMonitors(settings: Settings, session: Session, enabled: [number, number][], phases: MatchPhase[]): Promise<MonitorResult[]> {
   const dataLog = session.dataLog;
-  if (!dataLog) return [];
+  if (!dataLog || !session.file.localPath) return Promise.resolve([]);
   const gates: Gates = {
     whole: [session.start, session.end],
     enabled,
@@ -927,13 +941,20 @@ function sessionMonitors(session: Session, enabled: [number, number][], phases: 
   };
   const version = JSON.stringify([gates.enabled, gates.auto]);
   if (session.monitors?.gates === version) return session.monitors.results;
-  const available = dataLog.catalog().filter((s) => s.kind === 'number').map((s) => s.key);
-  const lookup = (wanted: string) => {
-    const key = matchKey(wanted, available).key;
-    const series = key ? dataLog.read(key) : null;
-    return key && series && series.values instanceof Float64Array ? { key, series: { times: series.times, values: series.values } } : null;
-  };
-  const results = runMonitors(lookup, gates, available);
+  const job: MonitorsJob = { path: join(dataDirectory(settings), ...session.file.localPath.split('/')), gates };
+  const results = new Promise<MonitorsReply>((resolve) => {
+    const worker = createMonitorsWorker({ workerData: job });
+    worker.once('message', (reply: MonitorsReply) => {
+      resolve(reply);
+      void worker.terminate();
+    });
+    worker.once('error', (error) => resolve({ error: error.message }));
+    worker.once('exit', (code) => resolve({ error: `The monitors' worker stopped (${code}).` }));
+  }).then((reply) => {
+    if ('results' in reply) return reply.results;
+    console.error(`Monitors in a worker: ${reply.error}. Running them here.`);
+    return monitorsOf(dataLog, gates);
+  });
   session.monitors = { gates: version, results };
   return results;
 }
@@ -949,7 +970,7 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
   const inSpan = (event: LogEvent) => event.start <= session.end && (event.end ?? event.start) >= session.start;
   const phases: MatchPhase[] = modes ? matchPhases(modes.changes, session.end, inMatch) : [];
   const enabled = modes ? enabledSpans(modes.changes, session.end) : [];
-  const monitors = sessionMonitors(session, enabled, phases);
+  const monitors = await sessionMonitors(settings, session, enabled, phases);
   const events = [
     ...monitorEvents(monitors),
     ...(modes ? modeEvents(modes.changes, modes.key) : []).filter(inSpan),
