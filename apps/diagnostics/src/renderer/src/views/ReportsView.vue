@@ -186,7 +186,8 @@ const plotStore = usePlotStore();
 function openInSignals(card: LogCard) {
   plotStore.logId = card.id;
   plotStore.setView(null);
-  router.push('/signals');
+  // Signals offers a way back here (?from=reports).
+  router.push({ path: '/signals', query: { from: 'reports' } });
 }
 const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log no longer in the data folder');
 

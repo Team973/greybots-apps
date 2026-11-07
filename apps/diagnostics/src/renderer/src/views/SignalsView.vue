@@ -1010,6 +1010,14 @@ onUnmounted(() => clearInterval(runsTimer));
 // works again.
 const route = useRoute();
 const router = useRouter();
+// Opened from the Reports page (?from=reports): a way back to it, to the
+// log or report it was opened from.
+const fromReports = computed(() => route.query.from === 'reports');
+function backToReports() {
+  if (window.history.state?.back) router.back();
+  else router.push({ path: '/reports', query: plotStore.logId ? { tab: 'reports', log: plotStore.logId } : {} });
+}
+
 watch(() => route.query.session, (session) => {
   if (typeof session !== 'string' || !liveSessions.some((live) => live.id === session)) return;
   selectedLog.value = session;
@@ -1163,6 +1171,9 @@ watch(() => route.query.session, (session) => {
     </aside>
 
     <section class="card chart-area">
+      <nav v-if="fromReports" class="back-row" aria-label="Back">
+        <md-outlined-button id="back-to-reports" @click="backToReports">← Back to reports</md-outlined-button>
+      </nav>
       <PlotTabs v-if="summary" :panels="plotStore.panels" :active="shownPanel?.id ?? 'line'" @select="plotStore.showTab($event)"
         @add="addPlot" @close="plotStore.removePanel($event)" />
       <div class="toolbar">
@@ -1787,6 +1798,12 @@ select {
 .playhead {
   min-width: 170px;
   font-variant-numeric: tabular-nums;
+}
+
+.back-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .chart-body {
