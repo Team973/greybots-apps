@@ -8,7 +8,7 @@ import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { checkDevices, deviceProblems, loggingSignal, type DeviceFound, type DeviceHealth, type DeviceSpec, type HootFound } from '@shared/devices';
-import { phaseLabels, type LogEvent, type MatchPhase, type SessionEvents } from '@shared/events';
+import { brownoutCount, phaseLabels, type LogEvent, type MatchPhase, type SessionEvents } from '@shared/events';
 import type { SignalLogFile } from '@shared/ipc';
 import {
   isProblem,
@@ -214,7 +214,11 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
   }
   facts.push({ label: 'Errors', value: String(problems.filter((e) => e.severity === 'error').length) });
   facts.push({ label: 'Warnings', value: String(problems.filter((e) => e.severity === 'warning').length) });
-  if (listsEvents) facts.push({ label: 'Brownouts', value: String(problems.filter((e) => e.kind === 'brownout').reduce((n, e) => n + e.count, 0)) });
+  if (listsEvents) {
+    // Brownouts, not each time the roboRIO's flag came on (see brownoutCount).
+    const { brownouts, flags } = brownoutCount(problems);
+    facts.push({ label: 'Brownouts', value: flags > brownouts ? `${brownouts} (the roboRIO's brownout flag on ${flags} times)` : String(brownouts) });
+  }
   const battery = context.available.find((key) => batteryPattern.test(key));
   if (battery) {
     const stats = await statsOver(context, battery, spans);

@@ -76,10 +76,27 @@ const busSeverity = (key: string, severity: EventSeverity): EventSeverity => (is
 
 // --- From a data log ---
 
+// The roboRIO's brownout flag, logged as it changes. With the battery near
+// the brownout voltage it goes on and off every tenth of a second or so
+// (156 times in mttd Q19, in 8 brownouts): each brownout is the flag's
+// spans close together, saying how often it came on and for how long.
 function brownouts(source: LogSignalSource, end: number): LogEvent[] {
   return source.catalog()
     .filter((s) => s.kind === 'boolean' && s.count > 0 && /brown(ed)?.?out$/i.test(s.key))
-    .flatMap((s) => eventsFrom('brownout', 'error', 'Brownout', spansWhere(source.read(s.key), (v) => v === 1, end), { key: s.key }));
+    .flatMap((s) => {
+      const spans = spansWhere(source.read(s.key), (v) => v === 1, end);
+      return eventsFrom('brownout', 'error', 'Brownout', spans, { key: s.key, detail: (count, span) => brownoutDetail(spans, count, span) });
+    });
+}
+
+// "Browned out 1.2 s in all, on and off 11 times over 3.3 s".
+export function brownoutDetail(spans: Span[], count: number, span: Span): string {
+  const to = span.end ?? span.start;
+  const on = spans
+    .filter((s) => s.start >= span.start && s.start <= to)
+    .reduce((t, s) => t + ((s.end ?? s.start) - s.start), 0);
+  const time = `Browned out ${on.toFixed(on < 10 ? 2 : 1)} s`;
+  return count > 1 ? `${time} in all, on and off ${count} times over ${(to - span.start).toFixed(1)} s` : time;
 }
 
 function canErrors(source: LogSignalSource, end: number): LogEvent[] {
@@ -323,7 +340,7 @@ const quietDsCodes = new Set([44004, 44000, 44007, 44008]);
 export function dsLogEvents(log: DsLog, messages: DsMessage[], options: { robotConsole: boolean; key: (name: string) => string }): LogEvent[] {
   const { key } = options;
   const out: LogEvent[] = [
-    ...eventsFrom('brownout', 'error', 'Brownout', log.brownouts, { key: key('Brownout') }),
+    ...eventsFrom('brownout', 'error', 'Brownout', log.brownouts, { key: key('Brownout'), detail: (count, span) => brownoutDetail(log.brownouts, count, span) }),
     ...eventsFrom('network', 'error', 'Lost communication with the robot while enabled', log.lost.filter((l) => l.enabled), { key: key('Robot connected') }),
     ...eventsFrom('network', 'info', 'Robot disconnected', log.lost.filter((l) => !l.enabled), { key: key('Robot connected') }),
     ...eventsFrom('network', 'warning', 'Poor connection', log.poorLink, {

@@ -121,6 +121,18 @@ export function mergeSpans(spans: { start: number; end: number | null }[], gap =
   return out;
 }
 
+// Brownouts in a span, as people count them: each time the battery sagged
+// below the roboRIO's brownout voltage, its flag going on and off close
+// together being one (as the events are), and the same brownout from the
+// data log and a Driver Station log one. `flags`: how many times the flag
+// came on, by the source that saw it most.
+export function brownoutCount(events: LogEvent[]): { brownouts: number; flags: number } {
+  const brownouts = events.filter((e) => e.kind === 'brownout');
+  const bySource = new Map<string, number>();
+  for (const e of brownouts) bySource.set(e.key ?? '', (bySource.get(e.key ?? '') ?? 0) + (e.count || 1));
+  return { brownouts: mergeSpans(brownouts).length, flags: Math.max(0, ...bySource.values()) };
+}
+
 // "Teleop 1:05": the phase a time is in and how far into it, or ''.
 export function phaseClock(phases: MatchPhase[], t: number): string {
   const at = phaseAt(phases, t);
