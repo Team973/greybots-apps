@@ -136,6 +136,36 @@ const powerWords = /brown ?out|under ?volt|voltage|supply|battery|breaker|power|
 export const isPowerEvent = (event: LogEvent) =>
   event.kind === 'brownout' || (['fault', 'alert', 'message', 'can'].includes(event.kind) && powerWords.test(event.title));
 
+// The playback tape's stretches: the log cut into disabled, auto, teleop
+// and endgame (and enabled, outside a match's phases: test mode, or a log
+// with no modes), each as long as it lasted, in order, from start to end.
+export type TapeKind = 'disabled' | 'enabled' | MatchPhaseName;
+export const tapeLabels: Record<TapeKind, string> = { disabled: 'Disabled', enabled: 'Enabled', ...phaseLabels };
+export interface TapeSegment {
+  kind: TapeKind;
+  start: number;
+  end: number;
+}
+
+export function tapeSegments(full: [number, number], phases: MatchPhase[], enabled: [number, number][]): TapeSegment[] {
+  const [from, to] = full;
+  if (!(to > from)) return [];
+  const edges = [from, to, ...phases.flatMap((p) => [p.start, p.end]), ...enabled.flat()]
+    .filter((t) => t > from && t < to);
+  const cuts = [...new Set([from, ...edges, to])].sort((a, b) => a - b);
+  const out: TapeSegment[] = [];
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const [start, end] = [cuts[i], cuts[i + 1]];
+    const mid = (start + end) / 2;
+    const phase = phaseAt(phases, mid)?.phase.name;
+    const kind: TapeKind = phase ?? (enabled.some(([a, b]) => mid >= a && mid <= b) ? 'enabled' : 'disabled');
+    const last = out[out.length - 1];
+    if (last && last.kind === kind) last.end = end;
+    else out.push({ kind, start, end });
+  }
+  return out;
+}
+
 // The phase a time is in, and how far into it.
 export function phaseAt(phases: MatchPhase[], t: number): { phase: MatchPhase; into: number } | null {
   // Endgame is inside teleop: it wins.
