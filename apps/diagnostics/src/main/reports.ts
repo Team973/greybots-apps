@@ -475,44 +475,63 @@ export function pipelineApplies(pipeline: Pipeline, file: SignalLogFile, how: 'o
 
 let queue: Promise<unknown> = Promise.resolve();
 
-// Runs the pipelines that apply to each log, one report at a time. With
-// `only`, just that pipeline (run by hand, whatever its triggers say).
+// How many logs' reports are made at once. The main process keeps this
+// many logs open (signals-service), so they don't take turns loading.
+const logsAtOnce = 3;
+
+// Runs the pipelines that apply to each log: a log's reports all at once,
+// a few logs at once. With `only`, just that pipeline (run by hand,
+// whatever its triggers say).
 export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manual', only?: string): Promise<PipelineRun[]> {
   const next = queue.then(async () => {
     const settings = await loadSettings();
     const pipelines = (await listLibrary(settings, 'pipeline')).filter((p) => !only || p.id === only);
     const files = (await signalLogs(settings)).filter((log) => logIds.includes(log.id));
     const runs: PipelineRun[] = [];
+    const making = new Set<string>();
+    const showMaking = () => { status.current = making.size ? [...making].join('; ') : null; };
     status.running = true;
-    try {
-      for (const file of files) {
-        for (const pipeline of pipelines) {
-          if (!pipelineApplies(pipeline, file, how)) continue;
-          for (const templateId of pipeline.templateIds) {
-            const template = await getLibraryItem(settings, 'template', templateId);
-            const run: PipelineRun = {
-              at: new Date().toISOString(),
-              pipeline: pipeline.name,
-              template: template?.name ?? '(a template that is gone)',
-              logId: file.id,
-              logLabel: logLabel(file),
-              reportId: null,
-              problem: ''
-            };
-            status.current = `${pipeline.name}: ${run.template} for ${run.logLabel}`;
-            try {
-              if (!template) throw new Error('The template is gone.');
-              const report = await makeReport(settings, template, file.id, `Auto report: ${pipeline.name}`);
-              await saveReport(settings, report);
-              run.reportId = report.id;
-            } catch (error) {
-              run.problem = (error as Error).message;
-            }
-            runs.push(run);
-            status.recent = [run, ...status.recent].slice(0, recentRuns);
-          }
-        }
+
+    const runOne = async (file: SignalLogFile, pipeline: Pipeline, templateId: string) => {
+      const template = await getLibraryItem(settings, 'template', templateId);
+      const run: PipelineRun = {
+        at: new Date().toISOString(),
+        pipeline: pipeline.name,
+        template: template?.name ?? '(a template that is gone)',
+        logId: file.id,
+        logLabel: logLabel(file),
+        reportId: null,
+        problem: ''
+      };
+      const what = `${pipeline.name}: ${run.template} for ${run.logLabel}`;
+      making.add(what);
+      showMaking();
+      try {
+        if (!template) throw new Error('The template is gone.');
+        const report = await makeReport(settings, template, file.id, `Auto report: ${pipeline.name}`);
+        await saveReport(settings, report);
+        run.reportId = report.id;
+      } catch (error) {
+        run.problem = (error as Error).message;
+      } finally {
+        making.delete(what);
+        showMaking();
       }
+      runs.push(run);
+      status.recent = [run, ...status.recent].slice(0, recentRuns);
+    };
+
+    // A log's reports together: they share its open session.
+    const runLog = (file: SignalLogFile) => Promise.all(pipelines
+      .filter((pipeline) => pipelineApplies(pipeline, file, how))
+      .flatMap((pipeline) => pipeline.templateIds.map((templateId) => runOne(file, pipeline, templateId))));
+
+    try {
+      let next = 0;
+      const worker = async () => {
+        while (next < files.length) await runLog(files[next++]);
+      };
+      await Promise.all(Array.from({ length: Math.min(logsAtOnce, files.length) }, worker));
     } finally {
       status.running = false;
       status.current = null;

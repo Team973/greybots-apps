@@ -19,10 +19,12 @@ import { describeMatch, type MatchType } from '@shared/offload';
 import { defaultCardFilter, filterCards, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
 import type { PipelineStatus } from '@shared/reports';
 import MappingEditor from '@/components/MappingEditor.vue';
+import ReportFlags from '@/components/ReportFlags.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
 import TemplateEditor from '@/components/TemplateEditor.vue';
 import { formatTime, logCompanions } from '@/format';
 import { severityColor } from '@/review';
+import { usePlotStore } from '@/stores/plot-store';
 
 // Reports (#148): made from templates, by hand or by pipelines as logs
 // arrive; the templates and pipelines themselves; and robot mappings, for
@@ -39,7 +41,12 @@ const tabs: { id: Tab; label: string }[] = [
 const route = useRoute();
 const router = useRouter();
 const tab = computed<Tab>(() => (tabs.some((t) => t.id === route.query.tab) ? (route.query.tab as Tab) : 'reports'));
-const go = (query: Record<string, string>) => router.replace({ query });
+// Each step in (a log, a report) is a step in the history, so Back (and the
+// mouse's back button) goes to where you were.
+const go = (query: Record<string, string>) => {
+  const same = Object.keys(query).length === Object.keys(route.query).length && Object.entries(query).every(([k, v]) => route.query[k] === v);
+  if (!same) router.push({ query });
+};
 
 const reports = ref<ReportSummary[]>([]);
 const templates = ref<ReportTemplate[]>([]);
@@ -108,33 +115,69 @@ const shownCards = computed(() => filterCards(cards.value, cardFilter.value));
 const cardPage = 60;
 const cardLimit = ref(cardPage);
 watch(cardFilter, () => (cardLimit.value = cardPage), { deep: true });
-const problemList = (problems: { title: string }[]) => problems.map((p) => p.title).join('\n');
+
+// --- One log, focused: its reports, what they found, and running the rest ---
+const focusedCard = computed(() => (typeof route.query.log === 'string' ? cards.value.find((c) => c.id === route.query.log) ?? null : null));
+// Where a report open is from, for the way back.
+const reportCard = computed(() => (openReport.value ? cards.value.find((c) => c.id === openReport.value!.logId) ?? null : null));
+const crumbCard = computed(() => reportCard.value ?? focusedCard.value);
+// Which of the log's reports found each problem.
+const foundBy = (card: LogCard, id: string) =>
+  card.reports.filter((r) => r.problems.some((p) => p.id === id)).map((r) => r.templateName).join(', ');
+const reportErrors = (r: ReportSummary) => r.problems.filter((p) => p.severity === 'error');
+const reportWarnings = (r: ReportSummary) => r.problems.filter((p) => p.severity === 'warning');
+
+// Back to where you were, or up a level when there's nowhere to go back to
+// (the app opened on a report).
+function back() {
+  if (window.history.state?.back) router.back();
+  else if (openReport.value && reportCard.value) go({ tab: 'reports', log: reportCard.value.id });
+  else go({ tab: 'reports' });
+}
+
+const plotStore = usePlotStore();
+function openInSignals(card: LogCard) {
+  plotStore.logId = card.id;
+  plotStore.setView(null);
+  router.push('/signals');
+}
 const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log no longer in the data folder');
 
-// The reports a log doesn't have yet, made from its card: one from each
-// template that applies to its robot and hasn't made one for it. One log at
-// a time; the cards update as each report is made.
+// The reports a log doesn't have yet, run from its card: one from each
+// template that applies to its robot and hasn't made one for it. All of a
+// log's at once, and several logs at once (the main process keeps a few
+// logs open, so they don't take turns loading). Each card fills in as its
+// reports come.
 const missingFor = (card: LogCard) => missingTemplates(card, templates.value);
-const making = ref<{ logId: string; done: number; total: number } | null>(null);
+const running = ref(new Map<string, { done: number; total: number }>());
 async function makeMissing(card: LogCard) {
   const wanted = missingFor(card);
-  if (making.value || wanted.length === 0) return;
-  making.value = { logId: card.id, done: 0, total: wanted.length };
-  problem.value = '';
-  try {
-    for (const template of wanted) {
+  if (running.value.has(card.id) || wanted.length === 0) return;
+  const setRun = (run: { done: number; total: number } | null) => {
+    const next = new Map(running.value);
+    if (run) next.set(card.id, run);
+    else next.delete(card.id);
+    running.value = next;
+  };
+  setRun({ done: 0, total: wanted.length });
+  const failed: string[] = [];
+  await Promise.all(wanted.map(async (template) => {
+    try {
       await window.diagnostics.generateReport(template.id, card.id);
-      making.value = { ...making.value, done: making.value.done + 1 };
       reports.value = await window.diagnostics.getReports();
+    } catch (error) {
+      failed.push(`${template.name}: ${cleanError(error)}`);
+    } finally {
+      const run = running.value.get(card.id);
+      if (run) setRun({ ...run, done: run.done + 1 });
     }
-  } catch (error) {
-    problem.value = `${card.title}: ${cleanError(error)}`;
-  } finally {
-    making.value = null;
-  }
+  }));
+  setRun(null);
+  if (failed.length) problem.value = `${card.title}: ${failed.join('; ')}`;
 }
 const makeLabel = (card: LogCard) => {
-  if (making.value?.logId === card.id) return `Running ${making.value.done + 1} of ${making.value.total}…`;
+  const run = running.value.get(card.id);
+  if (run) return `Running… ${run.done} of ${run.total} done`;
   const count = missingFor(card).length;
   return card.reports.length ? `Run ${count} more` : `Run ${count} report${count === 1 ? '' : 's'}`;
 };
@@ -155,9 +198,10 @@ async function generate() {
 }
 
 async function removeReport(id: string) {
+  const logId = openReport.value?.logId;
   await window.diagnostics.deleteReport(id);
   await load();
-  go({ tab: 'reports' });
+  router.replace({ query: logId ? { tab: 'reports', log: logId } : { tab: 'reports' } });
 }
 
 const savedTo = ref('');
@@ -312,15 +356,63 @@ onUnmounted(() => clearInterval(statusTimer));
   <p v-if="problem" class="error-text no-print">{{ problem }}</p>
 
   <!-- A report, open -->
+  <nav v-if="tab === 'reports' && (openReport || focusedCard)" class="crumbs no-print" aria-label="Where you are">
+    <md-outlined-button id="back" @click="back">← Back</md-outlined-button>
+    <a href="#" @click.prevent="go({ tab: 'reports' })">Reports</a>
+    <template v-if="crumbCard">
+      <span aria-hidden="true">›</span>
+      <a v-if="openReport" href="#" @click.prevent="go({ tab: 'reports', log: crumbCard.id })">{{ crumbCard.title }}</a>
+      <span v-else aria-current="page">{{ crumbCard.title }}</span>
+    </template>
+    <template v-if="openReport">
+      <span aria-hidden="true">›</span>
+      <span aria-current="page">{{ openReport.template.name }}</span>
+    </template>
+  </nav>
+
   <section v-if="tab === 'reports' && openReport" id="report" class="card wide">
     <div class="card-actions no-print">
-      <md-outlined-button @click="go({ tab: 'reports' })">All reports</md-outlined-button>
       <md-outlined-button id="save-pdf" @click="savePdf">Save as PDF</md-outlined-button>
       <md-outlined-button id="make-template" @click="makeTemplate(openReport)">Make a template from it</md-outlined-button>
       <md-outlined-button @click="removeReport(openReport.id)">Delete</md-outlined-button>
       <span v-if="savedTo" class="hint small path">Saved to {{ savedTo }}</span>
     </div>
     <ReportViewer :report="openReport" />
+  </section>
+
+  <!-- One log -->
+  <section v-else-if="tab === 'reports' && focusedCard" id="log-view" class="card full">
+    <header class="log-head">
+      <div class="card-title">
+        <h2>{{ focusedCard.title }}</h2>
+        <span class="hint small">{{ cardWhen(focusedCard) }}{{ focusedCard.robot ? ` · ${focusedCard.robot}` : '' }}</span>
+      </div>
+      <md-outlined-button v-if="focusedCard.log" @click="openInSignals(focusedCard)">Open in Signals</md-outlined-button>
+      <md-filled-button v-if="missingFor(focusedCard).length" class="make-missing" :disabled="running.has(focusedCard.id)"
+        :title="`Runs: ${missingFor(focusedCard).map((t) => t.name).join(', ')}`"
+        @click="makeMissing(focusedCard)">{{ makeLabel(focusedCard) }}</md-filled-button>
+    </header>
+    <ReportFlags v-if="focusedCard.reports.length" :errors="focusedCard.errors" :warnings="focusedCard.warnings" :missing="focusedCard.missing" />
+
+    <h3>Reports</h3>
+    <p v-if="!focusedCard.reports.length" class="hint">No reports yet.</p>
+    <ul v-else class="log-reports">
+      <li v-for="r in focusedCard.reports" :key="r.id" class="clickable" @click="go({ tab: 'reports', report: r.id })">
+        <a href="#" :title="r.name" @click.prevent>{{ r.templateName }}</a>
+        <ReportFlags :errors="reportErrors(r)" :warnings="reportWarnings(r)" :missing="r.missing" />
+      </li>
+    </ul>
+
+    <template v-if="focusedCard.errors.length || focusedCard.warnings.length">
+      <h3>Errors and warnings</h3>
+      <ul class="problems">
+        <li v-for="p in [...focusedCard.errors, ...focusedCard.warnings]" :key="p.id">
+          <span class="dot" :style="{ background: flagColor(p.severity) }" aria-hidden="true"></span>
+          <span>{{ p.title }}</span>
+          <span class="hint small">{{ p.severity }} · {{ foundBy(focusedCard, p.id) }}</span>
+        </li>
+      </ul>
+    </template>
   </section>
 
   <!-- Reports -->
@@ -351,7 +443,7 @@ onUnmounted(() => clearInterval(statusTimer));
         </div>
       </template>
     </section>
-    <section class="card wide">
+    <section class="card full">
       <h2>Reports by log</h2>
       <div class="card-filter" role="group" aria-label="Which logs to show">
         <input id="report-search" v-model="cardFilter.query" class="search" type="search" placeholder="Find a log or report" aria-label="Find a log or report" />
@@ -367,37 +459,29 @@ onUnmounted(() => clearInterval(statusTimer));
       </p>
       <p v-else-if="shownCards.length === 0" class="hint">No logs match the filter.</p>
       <div v-else id="report-cards" class="log-cards">
-        <article v-for="card in shownCards.slice(0, cardLimit)" :key="card.id" class="log-card" :class="{ gone: !card.log }">
+        <article v-for="card in shownCards.slice(0, cardLimit)" :key="card.id" class="log-card clickable" :class="{ gone: !card.log }"
+          @click="go({ tab: 'reports', log: card.id })">
           <header>
             <div class="card-title">
-              <strong>{{ card.title }}</strong>
+              <a href="#" class="card-name" @click.prevent>{{ card.title }}</a>
               <span class="hint small">{{ cardWhen(card) }}{{ card.robot ? ` · ${card.robot}` : '' }}</span>
             </div>
             <!-- Always at the top right: the reports this log doesn't have yet. -->
             <md-outlined-button v-if="missingFor(card).length" class="make-missing"
-              :disabled="!!making"
+              :disabled="running.has(card.id)"
               :title="`Runs: ${missingFor(card).map((t) => t.name).join(', ')}`"
-              @click="makeMissing(card)">{{ makeLabel(card) }}</md-outlined-button>
+              @click.stop="makeMissing(card)">{{ makeLabel(card) }}</md-outlined-button>
           </header>
           <ul v-if="card.reports.length" class="card-reports">
             <li v-for="r in card.reports" :key="r.id">
-              <a href="#" :title="r.name" @click.prevent="go({ tab: 'reports', report: r.id })">{{ r.templateName }}</a>
+              <a href="#" :title="r.name" @click.stop.prevent="go({ tab: 'reports', report: r.id })">{{ r.templateName }}</a>
             </li>
           </ul>
           <p v-else class="hint small">
             No reports yet.
           </p>
-          <footer v-if="card.reports.length" class="flags">
-            <span v-if="card.errors.length" class="flag" :style="{ '--flag': flagColor('error') }" :title="problemList(card.errors)">
-              {{ card.errors.length }} error{{ card.errors.length === 1 ? '' : 's' }}
-            </span>
-            <span v-if="card.warnings.length" class="flag" :style="{ '--flag': flagColor('warning') }" :title="problemList(card.warnings)">
-              {{ card.warnings.length }} warning{{ card.warnings.length === 1 ? '' : 's' }}
-            </span>
-            <span v-if="card.missing" class="flag quiet" title="Signals its reports asked for that this log doesn't have">
-              {{ card.missing }} signal{{ card.missing === 1 ? '' : 's' }} missing
-            </span>
-            <span v-if="!card.errors.length && !card.warnings.length" class="flag quiet">No errors or warnings</span>
+          <footer v-if="card.reports.length">
+            <ReportFlags :errors="card.errors" :warnings="card.warnings" :missing="card.missing" />
           </footer>
         </article>
       </div>
@@ -626,10 +710,72 @@ select option {
   white-space: nowrap;
 }
 
+/* The list of logs and a log on its own use the page's whole width. */
+.card.full {
+  max-width: none;
+}
+
 .log-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card-name {
+  font-weight: 700;
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.log-head h2 {
+  margin: 0;
+}
+
+.log-reports,
+.problems {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.log-reports li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.problems li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }
 
 .log-card {
@@ -668,38 +814,14 @@ select option {
 
 .card-reports {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 4px 16px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 
-/* Errors and warnings found, at the card's foot: tinted with their colour,
-   and always named, so colour isn't all that tells them apart. */
-.flags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: auto;
-  padding-top: 4px;
-}
-
-.flag {
-  padding: 1px 8px;
-  border: 1px solid var(--flag, rgba(127, 127, 127, 0.6));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--flag, transparent) 18%, transparent);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: default;
-}
-
-.flag.quiet {
-  font-weight: 400;
-  opacity: 0.75;
-}
 
 .items {
   margin: 0;
