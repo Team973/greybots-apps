@@ -1,7 +1,7 @@
 // The post-match monitors and the vision summary, on made-up signals.
 
 import assert from 'node:assert/strict';
-import { monitorSettings, persistent, rateAt, runMonitors, valueAt, type Gates, type Series } from '@shared/monitors';
+import { moduleSpeed, monitorSettings, persistent, rateAt, runMonitors, valueAt, type Gates, type Series } from '@shared/monitors';
 import { matchKey } from '@shared/signal-match';
 import { allianceFrom, counterIncrease, counterState, visionBins, visionSummary, zoneAt } from '@shared/vision';
 
@@ -29,6 +29,17 @@ const run = (signals: Record<string, Series>, g = gates) => {
   return new Map(runMonitors(log.lookup, g, log.available).map((r) => [r.id, r]));
 };
 const R = '/Robot/robot';
+// A module's drive motor position (rotations) from its wheel's speed
+// (m/s; its size, as a module can drive either way), logged every 20 ms.
+const positionsOf = (speed: (t: number) => number): Series => {
+  const points: [number, number][] = [];
+  let rotations = 0;
+  for (let t = 0; t <= 20 + 1e-9; t += 0.02) {
+    points.push([t, rotations]);
+    rotations += (speed(t) * 0.02) / monitorSettings.slip.metresPerRotation;
+  }
+  return series(points);
+};
 
 // --- The engine ---
 const s = series([[1, 10], [2, 20]]);
@@ -90,24 +101,86 @@ assert.equal(persistent([[2, 5]], 0.5, on(1, 1.6)).length, 0);
   assert.equal(run(errors(series([[1, 1]]), series([[1, 1]]))).get('path-position')!.alarms.length, 0);
 }
 
+// --- Wheel slip and drag, by swerve kinematics ---
+{
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+  const [fl, fr, bl, br] = monitorSettings.slip.modules;
+  // Driving straight: every module the robot's speed, whichever way it faces.
+  assert.ok(near(moduleSpeed(2, 0, 0, 0, fl), 2) && near(moduleSpeed(2, 0, Math.PI / 2, 0, br), 2));
+  // Spinning in place: each module as fast as omega × its distance from the centre.
+  assert.ok(near(moduleSpeed(0, 0, 0, 3, fr), 3 * Math.hypot(...fr)));
+  // Driving forward while turning left: the right side faster.
+  assert.ok(moduleSpeed(2, 0, 0, 2, fr) > moduleSpeed(2, 0, 0, 2, fl));
+  assert.ok(near(moduleSpeed(2, 0, 0, 2, bl), moduleSpeed(2, 0, 0, 2, fl)));
+
+  // A robot's odometry and its four wheels' speeds, sampled as logged.
+  const drive = (pose: (t: number) => [number, number, number], wheels: (t: number, m: number) => number) => {
+    const out: Record<string, Series> = {};
+    const p = `${R}/drive/estimators/odometryOnly/pose`;
+    const xs: [number, number][] = [];
+    const ys: [number, number][] = [];
+    const rs: [number, number][] = [];
+    for (let t = 0; t <= 20; t += 0.2) {
+      const [x, y, r] = pose(t);
+      xs.push([t, x]);
+      ys.push([t, y]);
+      rs.push([t, Math.atan2(Math.sin(r), Math.cos(r))]);
+    }
+    Object.assign(out, { [`${p}/translation/x`]: series(xs), [`${p}/translation/y`]: series(ys), [`${p}/rotation/value`]: series(rs) });
+    for (const m of [0, 1, 2, 3]) {
+      // Signed speeds (a module driving backwards) turn the motor backwards.
+      const points: [number, number][] = [];
+      let rotations = 0;
+      for (let t = 0; t <= 20 + 1e-9; t += 0.02) {
+        points.push([t, rotations]);
+        rotations += (wheels(t, m) * 0.02) / monitorSettings.slip.metresPerRotation;
+      }
+      out[`${R}/drive/swerve/mod${m}/Drive Motor/positionRot`] = series(points);
+    }
+    return out;
+  };
+  const alarms = (signals: Record<string, Series>) => {
+    const r = run(signals, { whole: [0, 20], enabled: [[0, 20]], auto: [] });
+    return { slip: r.get('wheel-slip')!.alarms, drag: r.get('wheel-drag')!.alarms };
+  };
+  // Spinning in place at 3 rad/s, every wheel as fast as that makes it: fast
+  // wheels, a still robot, and nothing wrong.
+  const spin = 3 * Math.hypot(...fl);
+  const spinning = alarms(drive((t) => [5, 4, 3 * t], () => spin));
+  assert.equal(spinning.slip.length + spinning.drag.length, 0, 'spinning in place is not slip');
+  // Driving at 2 m/s, module 2 at 3.5 m/s from 5 to 7 s: it slips (and nothing drags).
+  const slipped = alarms(drive((t) => [2 * t, 4, 0], (t, m) => (m === 2 && t >= 5 && t <= 7 ? 3.5 : 2)));
+  assert.deepEqual(slipped.slip.map((a) => a.title), ['Module 2 wheel slipping']);
+  assert.equal(slipped.drag.length, 0);
+  // Module 1 at 0.5 m/s: it drags.
+  const dragged = alarms(drive((t) => [2 * t, 4, 0], (t, m) => (m === 1 && t >= 5 && t <= 7 ? 0.5 : 2)));
+  assert.deepEqual(dragged.drag.map((a) => a.title), ['Module 1 wheel dragging']);
+  assert.equal(dragged.slip.length, 0);
+  // Signed speeds (a module driving backwards) are its size.
+  assert.equal(alarms(drive((t) => [2 * t, 4, 0], (_, m) => (m === 3 ? -2 : 2))).slip.length, 0);
+}
+
 // --- Surfing ---
 {
   const wheels = (speeds: (t: number) => number[]) => {
     const out: Record<string, Series> = {};
-    for (const m of [0, 1, 2, 3]) {
-      const points: [number, number][] = [];
-      for (let t = 0; t <= 20; t += 0.02) points.push([t, speeds(t)[m]]);
-      out[`${R}/drive/swerve/mod${m}/drive/currentVelMPS`] = series(points);
-    }
+    for (const m of [0, 1, 2, 3]) out[`${R}/drive/swerve/mod${m}/Drive Motor/positionRot`] = positionsOf((t) => speeds(t)[m]);
     return out;
   };
   // Odometry: driving at 2 m/s along x. The fused pose: in the middle of
   // the field (the pile), or `pileX` metres from it.
   const steady = (value: number) => series([[0, value]]);
   const odometry = (prefix: string): Record<string, Series> => {
+    // Logged together, a few times a second, as a Pose2d's fields are.
     const x: [number, number][] = [];
-    for (let t = 0; t <= 20; t += 0.2) x.push([t, 2 * t]);
-    return { [`${prefix}/translation/x`]: series(x), [`${prefix}/translation/y`]: steady(4), [`${prefix}/rotation/value`]: steady(0) };
+    const y: [number, number][] = [];
+    const r: [number, number][] = [];
+    for (let t = 0; t <= 20; t += 0.2) {
+      x.push([t, 2 * t]);
+      y.push([t, 4]);
+      r.push([t, 0]);
+    }
+    return { [`${prefix}/translation/x`]: series(x), [`${prefix}/translation/y`]: series(y), [`${prefix}/rotation/value`]: series(r) };
   };
   const base = (pitchAt: [number, number], pileX = 0, wheelSpeeds: (t: number) => number[] = () => [2, 2, 2, 2]) => ({
     [`${R}/pigeon/Pitch`]: step(0, 12, ...pitchAt),

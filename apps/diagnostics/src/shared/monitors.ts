@@ -72,11 +72,38 @@ export const monitorSettings = {
     holdSeconds: 0.1,
     meters: 0.3, degrees: 10, persist: 0.5
   },
-  // Against odometry (the wheels and gyro alone: vision moves the fused
-  // pose in jumps). The pose is logged a few times a second, so its speed is
-  // taken between samples at least `minGap` apart (and no more than
-  // `maxGap`); faster than `fastestMps` is a reset, not motion.
-  slip: { pose: `${robot}/drive/estimators/odometryOnly/pose`, mps: 0.5, maxTurnRadPerSec: 0.5, movingMps: 0.5, minGap: 0.2, maxGap: 1, fastestMps: 6, persist: 0.5 },
+  // Wheel slip and drag: how far each module's wheel turned against how far
+  // swerve kinematics says it should have gone for how the robot moved:
+  // the robot's travel in its own frame, plus its turn about its centre at
+  // the module's place (so a robot spinning in place has wheels turning and
+  // no slip). Over the last `windowSeconds`, as average speeds: slip is a
+  // wheel faster than that by more than `mps`, drag slower.
+  //   The robot's motion is from odometry (the wheels and gyro alone: vision
+  // moves the fused pose in jumps), logged a few times a second; the wheels'
+  // travel from each drive motor's position, read at the same moments. By
+  // travel rather than speed: the speeds are logged as often as the pose,
+  // so between two samples a hard acceleration is missed, but what a
+  // position says it turned includes everything in between.
+  //   `metresPerRotation`: the drive motor's rotations to the wheel's metres
+  // (RobotInfo's DRIVE_GEAR_RATIO × π × WHEEL_DIAMETER_METERS; the logs agree
+  // to 1.5%). `modules`: each module's place from the robot's centre,
+  // metres, x forward and y left, in the order the robot code logs them
+  // (mod0 front left, mod1 front right, mod2 back left, mod3 back right;
+  // TRACKWIDTH_METERS 0.635 along x, WHEELBASE_METERS 0.4826 along y).
+  // Poses further apart than `maxGap`, or moving faster than `fastestMps`
+  // (a reset), aren't motion.
+  slip: {
+    pose: `${robot}/drive/estimators/odometryOnly/pose`,
+    position: (m: number) => `${robot}/drive/swerve/mod${m}/Drive Motor/positionRot`,
+    metresPerRotation: 0.1432664756446991 * Math.PI * 0.0975325866,
+    windowSeconds: 1,
+    mps: 0.5,
+    movingMps: 0.5,
+    maxGap: 0.5,
+    fastestMps: 6,
+    persist: 0.5,
+    modules: [[0.3175, 0.2413], [0.3175, -0.2413], [-0.3175, 0.2413], [-0.3175, -0.2413]] as [number, number][]
+  },
   // Each camera's own measurement (MegaTag2 for where, MegaTag1 for which
   // way) against the fused pose then. A measurement counts for
   // `freshSeconds`; (0, 0) is none.
@@ -93,8 +120,6 @@ export const monitorSettings = {
     persist: 0.15,
     pile: { x: [6.5, 10.0] as [number, number], y: [1.5, 6.5] as [number, number] },
     effectSeconds: 0.5,
-    // Modules this far apart from each other count as slip too.
-    spreadMps: 0.5,
     // Context recorded with each: roller bog, commanded spin, yaw kick.
     rollerSpeed: `${robot}/intake/currentVelocityRPS`,
     rollerTarget: `${robot}/intake/targetVelocityRPS`,
@@ -112,6 +137,7 @@ export const monitorCatalog: { id: string; name: string }[] = [
   { id: 'path-position', name: 'Path tracking (position)' },
   { id: 'path-heading', name: 'Path tracking (heading)' },
   { id: 'wheel-slip', name: 'Wheel slip' },
+  { id: 'wheel-drag', name: 'Wheel drag' },
   { id: 'vision-disagreement', name: 'Vision pose disagreement' },
   { id: 'surf', name: 'Surf detection' },
   { id: 'surf-near-miss', name: 'Surf near misses' }
@@ -140,6 +166,11 @@ export function valueAt(series: Series, t: number, hold = Infinity): number | nu
 // one at least `minGap` before it, or null without two such samples within
 // `maxGap`. `angle`: the change is wrapped to ±π.
 export function rateAt(series: Series, t: number, minGap: number, maxGap: number, angle = false): number | null {
+  return rateOver(series, t, minGap, maxGap, angle)?.rate ?? null;
+}
+
+// The same, with the stretch it was taken over.
+export function rateOver(series: Series, t: number, minGap: number, maxGap: number, angle = false): { rate: number; from: number; to: number } | null {
   const { times, values } = series;
   let low = 0;
   let high = times.length;
@@ -155,7 +186,92 @@ export function rateAt(series: Series, t: number, minGap: number, maxGap: number
   const gap = times[last] - times[first];
   if (gap < minGap || gap > maxGap) return null;
   const change = values[last] - values[first];
-  return (angle ? Math.atan2(Math.sin(change), Math.cos(change)) : change) / gap;
+  return { rate: (angle ? Math.atan2(Math.sin(change), Math.cos(change)) : change) / gap, from: times[first], to: times[last] };
+}
+
+// A module's speed as swerve kinematics has it: the robot moving at (vx,
+// vy) m/s on the field, facing `heading` rad and turning `omega` rad/s; the
+// module at (mx, my) from its centre, in its frame (x forward, y left).
+export function moduleSpeed(vx: number, vy: number, heading: number, omega: number, [mx, my]: [number, number]): number {
+  const c = Math.cos(heading);
+  const sn = Math.sin(heading);
+  // The robot's velocity in its own frame, plus omega × the module's place.
+  const rx = c * vx + sn * vy;
+  const ry = -sn * vx + c * vy;
+  return Math.hypot(rx - omega * my, ry + omega * mx);
+}
+
+// A series' value at t, between its samples on either side (no further
+// apart than `maxGap`), or null.
+function interpolate(series: Series, t: number, maxGap: number): number | null {
+  const { times, values } = series;
+  const n = times.length;
+  if (n === 0 || t < times[0] || t > times[n - 1]) return null;
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= t) lo = mid;
+    else hi = mid;
+  }
+  if (times[lo] === t || n === 1) return values[lo];
+  const span = times[hi] - times[lo];
+  if (span > maxGap || span <= 0) return null;
+  return values[lo] + ((values[hi] - values[lo]) * (t - times[lo])) / span;
+}
+
+// Each module's wheel against kinematics over the `window` seconds to t,
+// as average speeds (m/s): how far its wheel turned, and how far it should
+// have gone for how the robot moved (pose sample to pose sample, each
+// stretch in the robot's frame at its middle). Null where it can't be told
+// (no poses, a gap, a reset, a wheel's position missing).
+export function wheelGaps(pose: { x: Series; y: Series; r: Series }, positions: Series[], t: number, window: number = monitorSettings.slip.windowSeconds): { wheel: number; expected: number }[] | null {
+  const st = monitorSettings.slip;
+  const times = pose.x.times;
+  // The pose samples in [t - window, t].
+  let last = -1;
+  {
+    let lo = 0;
+    let hi = times.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (times[mid] <= t) lo = mid + 1;
+      else hi = mid;
+    }
+    last = lo - 1;
+  }
+  if (last < 1 || t - times[last] > st.maxGap) return null;
+  let first = last;
+  while (first > 0 && times[last] - times[first - 1] <= window + 1e-9) first -= 1;
+  const duration = times[last] - times[first];
+  if (first === last || duration < window * 0.6) return null;
+  const expected = [0, 0, 0, 0].slice(0, positions.length);
+  for (let i = first + 1; i <= last; i++) {
+    const dt = times[i] - times[i - 1];
+    if (dt <= 0 || dt > st.maxGap) return null;
+    const dx = pose.x.values[i] - pose.x.values[i - 1];
+    const dy = pose.y.values[i] - pose.y.values[i - 1];
+    if (Math.hypot(dx, dy) / dt > st.fastestMps) return null;
+    const dr = wrap(pose.r.values[i] - pose.r.values[i - 1]);
+    const heading = pose.r.values[i - 1] + dr / 2;
+    // moduleSpeed is linear in time: over dt, distances.
+    for (let m = 0; m < positions.length; m++) expected[m] += moduleSpeed(dx, dy, heading, dr, st.modules[m]);
+  }
+  const gaps: { wheel: number; expected: number }[] = [];
+  for (let m = 0; m < positions.length; m++) {
+    // Each stretch's turn, as a size: a module can drive backwards to turn less.
+    let turned = 0;
+    let before = interpolate(positions[m], times[first], st.maxGap);
+    if (before === null) return null;
+    for (let i = first + 1; i <= last; i++) {
+      const now = interpolate(positions[m], times[i], st.maxGap);
+      if (now === null) return null;
+      turned += Math.abs(now - before);
+      before = now;
+    }
+    gaps.push({ wheel: (turned * st.metresPerRotation) / duration, expected: expected[m] / duration });
+  }
+  return gaps;
 }
 
 export const median = (values: number[]) => {
@@ -302,34 +418,38 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
     }
   }
 
-  // Wheel slip: a module's speed unlike the robot's own (from the fused
-  // pose), while it isn't turning much.
+  // Wheel slip (a wheel faster than kinematics says, for how the robot
+  // moved) and drag (slower): see monitorSettings.slip.
   {
     const modules = [0, 1, 2, 3];
     const pose = s.slip.pose;
-    const wanted = [`${pose}/translation/x`, `${pose}/translation/y`, `${pose}/rotation/value`, ...modules.map((m) => s.swerve.velocity(m))];
-    const { result, found } = need('wheel-slip', 'Wheel slip', wanted);
-    if (result.checked) {
+    const wanted = [`${pose}/translation/x`, `${pose}/translation/y`, `${pose}/rotation/value`, ...modules.map((m) => s.slip.position(m))];
+    const slip = need('wheel-slip', 'Wheel slip', wanted);
+    const drag = need('wheel-drag', 'Wheel drag', wanted);
+    if (slip.result.checked) {
+      const found = slip.found;
       const [px, py, pr] = found.map((f) => f.series);
-      const motion = (t: number) => {
-        const vx = rateAt(px, t, s.slip.minGap, s.slip.maxGap);
-        const vy = rateAt(py, t, s.slip.minGap, s.slip.maxGap);
-        const turn = rateAt(pr, t, s.slip.minGap, s.slip.maxGap, true);
-        if (vx === null || vy === null || turn === null || Math.hypot(vx, vy) > s.slip.fastestMps) return null;
-        return { speed: Math.hypot(vx, vy), turn: Math.abs(turn) };
+      const wheels = found.slice(3).map((f) => f.series);
+      // Worked out once a step for every module, and used by both.
+      const cache = new Map<number, ReturnType<typeof wheelGaps>>();
+      const gapsAt = (t: number) => {
+        if (!cache.has(t)) cache.set(t, wheelGaps({ x: px, y: py, r: pr }, wheels, t));
+        return cache.get(t)!;
       };
       for (const m of modules) {
-        const alarms = persistent(gates.enabled, s.slip.persist, (t) => {
-          const robotMotion = motion(t);
-          const wheel = valueAt(found[3 + m].series, t);
-          if (!robotMotion || wheel === null || robotMotion.turn > s.slip.maxTurnRadPerSec) return null;
-          const gap = Math.abs(Math.abs(wheel) - robotMotion.speed);
-          const moving = Math.max(Math.abs(wheel), robotMotion.speed) > s.slip.movingMps;
-          return { on: moving && gap > s.slip.mps, value: gap, detail: `wheel ${fmt(Math.abs(wheel), 2)} m/s, robot ${fmt(robotMotion.speed, 2)} m/s` };
-        });
-        result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `Module ${m} wheel slipping`, detail: `${a.detail}, for ${seconds(a)}`, key: found[3 + m].key })));
+        for (const [result, sign, title] of [[slip.result, 1, 'wheel slipping'], [drag.result, -1, 'wheel dragging']] as const) {
+          const alarms = persistent(gates.enabled, s.slip.persist, (t) => {
+            const gap = gapsAt(t)?.[m];
+            if (!gap) return null;
+            const over = sign * (gap.wheel - gap.expected);
+            const moving = Math.max(gap.wheel, gap.expected) > s.slip.movingMps;
+            return { on: moving && over > s.slip.mps, value: over, detail: `wheel ${fmt(gap.wheel, 2)} m/s, ${fmt(gap.expected, 2)} m/s for how the robot moved (over ${fmt(s.slip.windowSeconds)} s)` };
+          });
+          result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `Module ${m} ${title}`, detail: `${a.detail}, for ${seconds(a)}`, key: found[3 + m].key })));
+        }
       }
-      result.alarms.sort((a, b) => a.start - b.start);
+      slip.result.alarms.sort((a, b) => a.start - b.start);
+      drag.result.alarms.sort((a, b) => a.start - b.start);
     }
   }
 
@@ -371,12 +491,12 @@ function surfMonitors(
   const fused = s.vision.fused;
   const odometry = s.slip.pose;
   const wanted = [s.surf.pitch, s.surf.roll, `${fused}/translation/x`, `${fused}/translation/y`,
-    `${odometry}/translation/x`, `${odometry}/translation/y`, ...[0, 1, 2, 3].map((m) => s.swerve.velocity(m))];
+    `${odometry}/translation/x`, `${odometry}/translation/y`, `${odometry}/rotation/value`, ...[0, 1, 2, 3].map((m) => s.slip.position(m))];
   const surfs = need('surf', 'Surf detection', wanted);
   const nearMisses: MonitorResult = { id: 'surf-near-miss', name: 'Surf near misses', checked: surfs.result.checked, missing: surfs.result.missing, alarms: [] };
   if (!surfs.result.checked) return [nearMisses];
-  const [pitch, roll, fx, fy, ox, oy] = surfs.found.slice(0, 6).map((f) => f.series);
-  const wheels = surfs.found.slice(6).map((f) => f.series);
+  const [pitch, roll, fx, fy, ox, oy, or] = surfs.found.slice(0, 7).map((f) => f.series);
+  const wheels = surfs.found.slice(7).map((f) => f.series);
   const pathX = lookup(s.path.x)?.series ?? null;
   const pathY = lookup(s.path.y)?.series ?? null;
   const optional = (key: string) => lookup(key)?.series ?? null;
@@ -390,17 +510,11 @@ function surfMonitors(
     const y = valueAt(fy, t);
     return x !== null && y !== null && x >= s.surf.pile.x[0] && x <= s.surf.pile.x[1] && y >= s.surf.pile.y[0] && y <= s.surf.pile.y[1];
   };
-  // Wheel slip at t: a module unlike odometry, or the modules unlike each other.
-  const slipping = (t: number) => {
-    const vx = rateAt(ox, t, s.slip.minGap, s.slip.maxGap);
-    const vy = rateAt(oy, t, s.slip.minGap, s.slip.maxGap);
-    const speeds = wheels.map((w) => valueAt(w, t)).filter((v): v is number => v !== null).map(Math.abs);
-    if (speeds.length < 2) return false;
-    if (Math.max(...speeds) - Math.min(...speeds) > s.surf.spreadMps) return true;
-    if (vx === null || vy === null) return false;
-    const robotSpeed = Math.hypot(vx, vy);
-    return robotSpeed <= s.slip.fastestMps && speeds.some((v) => Math.abs(v - robotSpeed) > s.slip.mps);
-  };
+  // Wheel slip at t, as the slip monitor has it (over the half second
+  // before): a wheel turning faster than kinematics says for how the robot
+  // moved (spinning free on the pile).
+  const slipping = (t: number) =>
+    wheelGaps({ x: ox, y: oy, r: or }, wheels, t, s.surf.effectSeconds)?.some((g) => g.wheel - g.expected > s.slip.mps) ?? false;
   // Path error over the bound, and rising.
   const pathGrowing = (t: number) => {
     if (!pathX || !pathY) return false;
