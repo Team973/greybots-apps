@@ -14,6 +14,7 @@ import type { PipelineRun, PipelineStatus } from './reports';
 import type { ReportExport, ReportImport } from './report-files';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
+import type { UsbExportSummary, UsbStatus } from './usb';
 
 export interface AppInfo {
   version: string;
@@ -193,6 +194,16 @@ export interface DiagnosticsApi {
   getImportStatus(): Promise<ImportStatus>;
   // A picker for logs and zip files, or for folders. [] if cancelled.
   chooseImport(folders: boolean): Promise<string[]>;
+  // USB drives plugged in, a copy to one, and the latest import from one.
+  getUsbStatus(): Promise<UsbStatus>;
+  // Copies the logs (ids, as getSignalLogs has them) into a
+  // GreybotsDiagnostics-logs folder in `destination`. Resolves when done, to
+  // what happened or why it didn't start.
+  exportToUsb(logIds: string[], destination: string): Promise<UsbExportSummary | string>;
+  // A folder picker for copying somewhere not listed. Null if cancelled.
+  chooseUsbFolder(): Promise<string | null>;
+  // Stops a copy to a drive part way; exportToUsb then resolves, cancelled.
+  cancelUsbExport(): Promise<void>;
   getSignalLogs(): Promise<SignalLogFile[]>;
   // Moves a log's files to the Recycle Bin and forgets its notes and
   // caches. Kept: Driver Station logs another log also has.
@@ -291,6 +302,10 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'importLogs',
   'getImportStatus',
   'chooseImport',
+  'getUsbStatus',
+  'exportToUsb',
+  'chooseUsbFolder',
+  'cancelUsbExport',
   'getSignalLogs',
   'deleteLog',
   'openSignalLog',

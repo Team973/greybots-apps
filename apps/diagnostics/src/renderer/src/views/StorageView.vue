@@ -3,17 +3,32 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import NumberInput from '@greybots/common/components/Number.vue';
+import Switch from '@greybots/common/components/Switch.vue';
 
 import type { ImportedFile, ImportStatus, ImportSummary, TeamSource } from '@shared/import';
-import type { AppInfo, OffloadedFiles, OffloadedSort, StorageInfo } from '@shared/ipc';
+import type { AppInfo, OffloadedFiles, OffloadedSort, SignalLogFile, StorageInfo } from '@shared/ipc';
+import { eventsIn } from '@shared/log-filter';
 import { describeMatch } from '@shared/offload';
+import {
+  defaultUsbExportFilter,
+  logsToExport,
+  runKinds,
+  usbExportFolder,
+  type RunKind,
+  type UsbExportFilter,
+  type UsbExportSummary,
+  type UsbStatus
+} from '@shared/usb';
 import { formatBytes, formatTime } from '@/format';
+import { useSettingsDraft } from '@/settings-draft';
 import { useSettingsStore } from '@/stores/settings-store';
 
-// What's on this computer: the data folder, logs brought in by hand, and
-// everything offloaded or imported.
+// What's on this computer: the data folder, logs brought in by hand or from
+// a USB drive, copying logs to a USB drive, and everything offloaded or
+// imported.
 
 const store = useSettingsStore();
+const { draft, edit } = useSettingsDraft();
 const appInfo = ref<AppInfo | null>(null);
 const storage = ref<StorageInfo | null>(null);
 const storageMessage = ref('');
@@ -53,7 +68,7 @@ async function importPaths(paths: string[]) {
   } finally {
     clearInterval(importTimer);
     importStatus.value = await window.diagnostics.getImportStatus();
-    await Promise.all([loadFiles(), loadStorage()]);
+    await Promise.all([loadFiles(), loadStorage(), loadLogs()]);
   }
 }
 
@@ -127,16 +142,133 @@ async function loadStorage() {
   storage.value = await window.diagnostics.getStorageInfo();
 }
 
+// --- USB drives ---
+// The main process watches for drives and imports from them on its own;
+// the page asks how that's going, and what's plugged in, this often, and
+// more often while logs are being copied, so the progress moves smoothly.
+
+const usbRefreshMs = 1500;
+const copyingRefreshMs = 300;
+const usb = ref<UsbStatus | null>(null);
+const logs = ref<SignalLogFile[]>([]);
+let usbTimer: ReturnType<typeof setTimeout> | undefined;
+let unmounted = false;
+
+// How fast the copy is going, in bytes a second: files done over the time
+// since copying started. Only ever measured, not estimated, so it doesn't
+// sink between one file finishing and the next.
+const copySpeed = ref<number | null>(null);
+
+function measureCopySpeed() {
+  const progress = usb.value?.exporting ? usb.value.progress : null;
+  const since = progress?.copyingSince ? Date.parse(progress.copyingSince) : NaN;
+  const seconds = (Date.now() - since) / 1000;
+  copySpeed.value = progress && progress.bytesCopied > 0 && seconds > 0 ? progress.bytesCopied / seconds : null;
+}
+
+// "about 2 min left", once there's a speed to go on.
+const copyTimeLeft = computed(() => {
+  const progress = usb.value?.progress;
+  if (!progress || !copySpeed.value || copySpeed.value < 1) return '';
+  const seconds = (progress.bytesTotal - progress.bytesDone) / copySpeed.value;
+  if (seconds < 60) return 'less than a minute left';
+  const minutes = Math.round(seconds / 60);
+  return minutes < 90 ? `about ${minutes} min left` : `about ${(minutes / 60).toFixed(1)} hours left`;
+});
+
+function scheduleUsb() {
+  if (unmounted) return;
+  usbTimer = setTimeout(async () => {
+    await refreshUsb().catch(() => {});
+    scheduleUsb();
+  }, usb.value?.exporting ? copyingRefreshMs : usbRefreshMs);
+}
+
+async function loadLogs() {
+  logs.value = await window.diagnostics.getSignalLogs();
+}
+
+async function refreshUsb() {
+  const wasImporting = importStatus.value?.running ?? false;
+  [usb.value, importStatus.value] = await Promise.all([window.diagnostics.getUsbStatus(), window.diagnostics.getImportStatus()]);
+  measureCopySpeed();
+  // An import (from a drive, most likely) just finished: what it brought in.
+  if (wasImporting && !importStatus.value.running) {
+    importResult.value = importStatus.value.last;
+    await Promise.all([loadFiles(), loadStorage(), loadLogs()]);
+  }
+}
+
+// Which logs to copy.
+const exportFilter = ref<UsbExportFilter>({ ...defaultUsbExportFilter, kinds: [...defaultUsbExportFilter.kinds] });
+const logEvents = computed(() => eventsIn(logs.value));
+const chosen = computed(() => logsToExport(logs.value, exportFilter.value));
+// A Driver Station log two logs share is counted twice, so "about".
+const chosenBytes = computed(() => chosen.value.reduce((total, log) => total + log.size, 0));
+
+function setKind(kind: RunKind, on: boolean) {
+  const kinds = exportFilter.value.kinds.filter((k) => k !== kind);
+  exportFilter.value = { ...exportFilter.value, kinds: on ? [...kinds, kind] : kinds };
+}
+
+// Where to: a drive plugged in, or a folder picked.
+const pickedFolder = ref('');
+const destination = ref('');
+const destinations = computed(() => [
+  ...(usb.value?.drives ?? []).map((drive) => ({ value: drive.root, label: `USB drive ${drive.label}` })),
+  ...(pickedFolder.value ? [{ value: pickedFolder.value, label: pickedFolder.value }] : [])
+]);
+// The first drive, until one's picked; a drive taken out isn't kept.
+watch(destinations, (list) => {
+  if (!list.some((d) => d.value === destination.value)) destination.value = list[0]?.value ?? '';
+});
+
+async function pickFolder() {
+  const folder = await window.diagnostics.chooseUsbFolder();
+  if (!folder) return;
+  pickedFolder.value = folder;
+  destination.value = folder;
+}
+
+const exportMessage = ref('');
+const exportResult = ref<UsbExportSummary | null>(null);
+
+const cancelling = ref(false);
+
+async function cancelCopy() {
+  cancelling.value = true;
+  await window.diagnostics.cancelUsbExport();
+}
+
+async function copyToUsb() {
+  exportMessage.value = '';
+  cancelling.value = false;
+  const copying = window.diagnostics.exportToUsb(chosen.value.map((log) => log.id), destination.value);
+  await refreshUsb();
+  const result = await copying;
+  if (typeof result === 'string') exportMessage.value = result;
+  else exportResult.value = result;
+  await refreshUsb();
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
 onMounted(async () => {
   await store.load();
   importTeam.value = store.settings.teamNumber;
   appInfo.value = await window.diagnostics.getAppInfo();
   importStatus.value = await window.diagnostics.getImportStatus();
   importResult.value = importStatus.value.last;
-  await Promise.all([loadStorage(), loadFiles()]);
+  await Promise.all([loadStorage(), loadFiles(), loadLogs(), refreshUsb()]);
+  exportResult.value = usb.value?.lastExport ?? null;
+  scheduleUsb();
 });
 
-onUnmounted(() => clearInterval(importTimer));
+onUnmounted(() => {
+  clearInterval(importTimer);
+  unmounted = true;
+  clearTimeout(usbTimer);
+});
 </script>
 
 <template>
@@ -207,7 +339,7 @@ onUnmounted(() => clearInterval(importTimer));
 
     <template v-if="importResult && !importStatus?.running">
       <p id="import-summary">
-        Import {{ formatTime(importResult.finishedAt) }}: {{ importCounts.copied }} imported, {{ importCounts.already }} already
+        Import<template v-if="importResult.source"> from {{ importResult.source }}</template> {{ formatTime(importResult.finishedAt) }}: {{ importCounts.copied }} imported, {{ importCounts.already }} already
         here<template v-if="importCounts.failed">, {{ importCounts.failed }} not imported</template>.
         <span v-if="importCounts.assumed" class="warning-inline">
           {{ importCounts.assumed }} didn't say which team's {{ importCounts.assumed === 1 ? 'it is' : 'they are' }}, so
@@ -237,6 +369,106 @@ onUnmounted(() => clearInterval(importTimer));
           </tbody>
         </table>
       </div>
+    </template>
+  </section>
+
+  <section id="usb-section" class="card">
+    <h2>USB drives</h2>
+    <p id="usb-drives" class="hint">
+      Plugged in: {{ usb?.drives.length ? usb.drives.map((d) => d.label).join(', ') : 'no USB drives' }}.
+    </p>
+
+    <div class="field-row">
+      <div>
+        Import logs from a USB drive when it's plugged in
+        <p class="hint">
+          From the drive's <span class="path">{{ usbExportFolder }}</span> folder (logs copied from this app) and its
+          <span class="path">logs</span> folder (a roboRIO's USB stick). Logs already here, however they got here, are
+          skipped, so only new ones are brought in. Logs that don't say which team's they are go under team
+          {{ draft.teamNumber }}.
+        </p>
+      </div>
+      <Switch id="usb-auto-import-switch" :model-value="draft.usbAutoImport"
+        @update:model-value="edit({ usbAutoImport: $event })"></Switch>
+    </div>
+    <p v-if="usb?.autoImport" id="usb-auto-import" :class="usb.autoImport.state === 'error' ? 'error-text' : 'hint'">
+      USB drive {{ usb.autoImport.drive }}, {{ formatTime(usb.autoImport.at) }}: {{ usb.autoImport.message }}
+      <template v-if="usb.autoImport.state === 'done'">The list is under Import logs above.</template>
+    </p>
+
+    <h3>Copy logs to a drive</h3>
+    <p class="hint">
+      Into a <span class="path">{{ usbExportFolder }}</span> folder on it, filed as they are here. Plugged into another
+      computer running this app, they're imported on their own. Logs already on the drive are skipped.
+    </p>
+    <div class="usb-filter" role="group" aria-label="Which logs to copy">
+      <label class="field">
+        Event
+        <select id="usb-event" v-model="exportFilter.event">
+          <option :value="null">All events, and logs not from a match</option>
+          <option v-for="event in logEvents" :key="event" :value="event">{{ event }}</option>
+        </select>
+      </label>
+      <fieldset class="kinds">
+        <legend>Runs</legend>
+        <label v-for="run in runKinds" :key="run.kind" class="check">
+          <input :id="`usb-kind-${run.kind}`" type="checkbox" :checked="exportFilter.kinds.includes(run.kind)"
+            @change="setKind(run.kind, ($event.target as HTMLInputElement).checked)" />
+          {{ run.label }}
+        </label>
+      </fieldset>
+      <div class="field">
+        Recorded in the last
+        <NumberInput id="usb-days" :model-value="exportFilter.days" label="Days"
+          @update:model-value="exportFilter = { ...exportFilter, days: Math.max(0, Math.trunc(Number($event) || 0)) }"></NumberInput>
+        <span class="hint">0 for any age.</span>
+      </div>
+    </div>
+    <p id="usb-export-count">
+      {{ plural(chosen.length, 'log') }}<template v-if="chosen.length">, about {{ formatBytes(chosenBytes) }}</template>
+      <span class="hint">(each with its Hoot and Driver Station logs)</span>
+    </p>
+
+    <div class="card-actions">
+      <select id="usb-destination" v-model="destination" aria-label="Copy to">
+        <option v-if="destinations.length === 0" value="" disabled>No USB drive plugged in</option>
+        <option v-for="d in destinations" :key="d.value" :value="d.value">{{ d.label }}</option>
+      </select>
+      <md-outlined-button id="usb-choose-folder" :disabled="usb?.exporting" @click="pickFolder">Choose a folder…</md-outlined-button>
+      <md-filled-button id="usb-copy" :disabled="usb?.exporting || chosen.length === 0 || !destination" @click="copyToUsb">
+        {{ usb?.exporting ? 'Copying…' : `Copy ${plural(chosen.length, 'log')}` }}
+      </md-filled-button>
+    </div>
+
+    <div v-if="usb?.exporting && usb.progress" id="usb-progress" class="progress">
+      <span>
+        Copying {{ usb.progress.filesDone }} of {{ usb.progress.filesTotal }} files
+        ({{ formatBytes(usb.progress.bytesDone) }} of {{ formatBytes(usb.progress.bytesTotal) }})<template
+          v-if="copySpeed">, {{ formatBytes(copySpeed) }}/s, {{ copyTimeLeft }}</template><template
+          v-else>, measuring speed…</template>
+      </span>
+      <progress :value="usb.progress.bytesDone" :max="Math.max(usb.progress.bytesTotal, 1)"></progress>
+      <span class="hint path">{{ usb.progress.current }}</span>
+      <div class="card-actions">
+        <md-outlined-button id="usb-cancel" :disabled="cancelling" @click="cancelCopy">
+          {{ cancelling ? 'Cancelling…' : 'Cancel' }}
+        </md-outlined-button>
+      </div>
+    </div>
+    <p v-if="exportMessage" class="error-text">{{ exportMessage }}</p>
+    <template v-if="exportResult && !usb?.exporting">
+      <p v-if="exportResult.cancelled" id="usb-export-cancelled" class="hint">
+        Cancelled. The files copied before then are on the drive; copying again carries on from there.
+      </p>
+      <p id="usb-export-summary">
+        {{ exportResult.cancelled ? 'Stopped' : 'Copied' }} {{ formatTime(exportResult.finishedAt) }} to <span class="path">{{ exportResult.destination }}</span>:
+        {{ plural(exportResult.copied, 'file') }} ({{ formatBytes(exportResult.bytes) }}), {{ exportResult.skipped }} already there<template
+          v-if="exportResult.failed.length">, {{ exportResult.failed.length }} not copied</template>.
+      </p>
+      <p v-if="exportResult.problem" class="error-text">{{ exportResult.problem }}</p>
+      <p v-for="failure in exportResult.failed" :key="failure.path" class="error-text small">
+        <span class="path">{{ failure.path }}</span>: {{ failure.message }}
+      </p>
     </template>
   </section>
 
@@ -342,6 +574,48 @@ progress {
 
 .sort[aria-pressed='true'] {
   text-decoration: underline;
+}
+
+.usb-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.kinds legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+  background: var(--tile-background-color);
+  border: 1px solid rgba(127, 127, 127, 0.6);
 }
 
 .pager {

@@ -73,7 +73,7 @@ async function walk(directory: string, depth: number, out: string[]) {
   }
 }
 
-async function candidatesIn(paths: string[], problems: string[]): Promise<Candidate[]> {
+async function candidatesIn(paths: string[], problems: string[], pathBase?: string): Promise<Candidate[]> {
   // Each file, with its path from what was dropped.
   const files: { path: string; shown: string }[] = [];
   for (const dropped of paths) {
@@ -85,7 +85,7 @@ async function candidatesIn(paths: string[], problems: string[]): Promise<Candid
     const inside: string[] = [];
     if (stat.isDirectory()) await walk(dropped, 0, inside);
     else inside.push(dropped);
-    for (const path of inside) files.push({ path, shown: relative(dirname(dropped), path).split(sep).join('/') });
+    for (const path of inside) files.push({ path, shown: relative(pathBase ?? dirname(dropped), path).split(sep).join('/') });
   }
 
   const found: Candidate[] = [];
@@ -211,6 +211,9 @@ export interface ImportOptions {
   // For logs that don't say which team's they are.
   fallbackTeam: number;
   onProgress(progress: ImportProgress): void;
+  // What a team in the path is looked for from, when not what was dropped
+  // (single files picked out of a USB drive's folders: the drive's root).
+  pathBase?: string;
 }
 
 // Hoot logs started within this long of each other are from one robot: its
@@ -225,7 +228,7 @@ interface Staged {
 
 export async function importLogs(dataDirectory: string, paths: string[], options: ImportOptions): Promise<{ files: ImportedFile[]; problems: string[] }> {
   const problems: string[] = [];
-  const candidates = await candidatesIn(paths, problems);
+  const candidates = await candidatesIn(paths, problems, options.pathBase);
   const canivores = await knownCanivores(dataDirectory);
   const index = await loadIndex(dataDirectory);
   const staging = join(dataDirectory, 'index', 'importing');

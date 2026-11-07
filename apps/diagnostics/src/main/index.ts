@@ -31,11 +31,25 @@ import {
   watchOwlet
 } from './signals-service';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
+import { cancelUsbExport, chooseUsbFolder, exportToUsb, usbStatus, watchUsbDrives } from './usb-service';
 
 let mainWindow: BrowserWindow | null = null;
 
 // The most values one readRecords sends.
 const maxRecords = 20000;
+
+// In development the app runs in the stock Electron binary, which would show
+// Electron's icon, so it's given the one the installers are built with
+// (build/, electron-builder's buildResources). A packaged app has it built in.
+const devIcon = app.isPackaged ? undefined : join(app.getAppPath(), 'build', 'icon.png');
+
+// Windows groups taskbar buttons, and picks their icon, by app ID. Without
+// one of its own, a development run is grouped under electron.exe and shows
+// Electron's icon whatever the window's is. The installed app uses its
+// installer's appId (electron-builder.yml), which its Start menu shortcut
+// has too, and which notifications need; a development run gets its own, so
+// the two aren't grouped together.
+if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'com.team973.diagnostics' : 'com.team973.diagnostics.dev');
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -47,6 +61,7 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#0d1117',
     title: 'Greybots Diagnostics',
+    icon: devIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // The window is a web page and is treated like one: no Node, and only
@@ -189,6 +204,18 @@ const handlers: DiagnosticsApi = {
   },
   async chooseImport(folders) {
     return chooseImport(folders);
+  },
+  async getUsbStatus() {
+    return usbStatus();
+  },
+  async exportToUsb(logIds, destination) {
+    return exportToUsb(Array.isArray(logIds) ? logIds.map(String) : [], String(destination ?? ''));
+  },
+  async chooseUsbFolder() {
+    return chooseUsbFolder();
+  },
+  async cancelUsbExport() {
+    cancelUsbExport();
   },
   async chooseDataDirectory() {
     const options: Electron.OpenDialogOptions = {
@@ -414,10 +441,13 @@ if (!app.requestSingleInstanceLock()) {
     // the app from opening: the Storage page reports it.
     await ensureStorageLayout(dataDirectory(await loadSettings())).catch((error) => console.error(error));
 
+    // macOS takes the dock's icon from the app, not the window.
+    if (devIcon && process.platform === 'darwin') app.dock?.setIcon(devIcon);
     createWindow();
     watchForRobot();
     upgradeStarters().catch((error) => console.error(error));
     watchOwlet();
+    watchUsbDrives();
     startCloudSync().catch((error) => console.error(error));
 
     // macOS: clicking the dock icon with no windows open makes one.
