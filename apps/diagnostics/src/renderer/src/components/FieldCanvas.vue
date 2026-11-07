@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { yawOf, type FieldRotation, type FieldStyle, type Pose } from '@shared/plots';
+import { binShares, binTop, heatDensity, type FieldHeat } from '@shared/field-heat';
 import { fieldFor } from '@/fields';
 
 // The field, and poses drawn on it: robots as squares the size of one, with
@@ -23,18 +24,23 @@ export interface CanvasItem {
   outline?: boolean;
 }
 
-// A heatmap on the field: squares `cell` metres across, each as solid as
-// its share (0 to 1), in one colour. Several overlaid are told apart by it.
+// A heatmap on the field, as a point cloud (field-heat.ts) in one colour:
+// the points pile up in bins a few pixels across, blurred a little, so
+// hotspots show where they're thick. Several overlaid are told apart by
+// colour, on one scale when `sharedScale` (the one with more is stronger).
 export interface HeatLayer {
   key: string;
   color: string;
-  cell: number;
-  cells: { col: number; row: number; share: number }[];
+  heat: FieldHeat;
 }
+// Bins this many pixels across, and the blur, in bins.
+const binPixels = 3;
+const blurBins = 2;
 
 const props = defineProps<{
   items: CanvasItem[];
   heat?: HeatLayer[];
+  sharedScale?: boolean;
   season: string;
   rotation: FieldRotation;
   robotSize: number;
@@ -62,6 +68,15 @@ const down = computed(() => (turned.value ? viewLength.value : viewWidth.value))
 const scale = computed(() => Math.min(width.value / across.value, (props.maxHeight ?? Infinity) / down.value));
 const drawWidth = computed(() => scale.value * across.value);
 const height = computed(() => scale.value * down.value);
+
+// The heatmaps' bins, worked out again only when the heatmaps or the
+// field's size change (not each frame of playback).
+const binMetres = computed(() => binPixels / scale.value);
+const heatBins = computed(() => {
+  const layers = (props.heat ?? []).map((layer) => ({ layer, bins: heatDensity(layer.heat, binMetres.value, blurBins) }));
+  const top = props.sharedScale ? Math.max(0, ...layers.map((l) => binTop(l.bins))) : undefined;
+  return layers.map(({ layer, bins }) => ({ color: layer.color, shares: binShares(bins, layer.heat.measure, top || undefined) }));
+});
 
 const image = new Image();
 const imageReady = ref(false);
@@ -102,16 +117,16 @@ function draw() {
     ctx.restore();
   }
 
-  // Heatmaps, under the robots: the faintest still seen, the strongest
-  // most of the way solid.
-  for (const layer of props.heat ?? []) {
-    ctx.fillStyle = layer.color;
-    const size = layer.cell * s;
-    for (const { col, row, share } of layer.cells) {
-      if (share <= 0) continue;
-      ctx.globalAlpha = 0.12 + 0.68 * share;
-      // The square's corner nearest the field's origin is at (col, row) cells; y is up.
-      ctx.fillRect(X(col * layer.cell), Y((row + 1) * layer.cell), size, size);
+  // Heatmaps, under the robots: hotspots most of the way solid, a lone
+  // point faint but there.
+  const size = binMetres.value;
+  for (const { color, shares } of heatBins.value) {
+    ctx.fillStyle = color;
+    for (const { col, row, share } of shares) {
+      if (share < 0.02) continue;
+      ctx.globalAlpha = 0.85 * share;
+      // The bin's corner nearest the field's origin is at (col, row) bins; y is up.
+      ctx.fillRect(X(col * size), Y((row + 1) * size), size * s + 0.5, size * s + 0.5);
     }
   }
   ctx.globalAlpha = 1;
@@ -193,7 +208,7 @@ function draw() {
   }
 }
 
-watch([() => props.items, () => props.heat, drawWidth, height, imageReady, () => props.rotation, () => props.robotSize], () => requestAnimationFrame(draw));
+watch([() => props.items, heatBins, drawWidth, height, imageReady, () => props.rotation, () => props.robotSize], () => requestAnimationFrame(draw));
 
 let observer: ResizeObserver | undefined;
 onMounted(() => {

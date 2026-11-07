@@ -13,7 +13,6 @@ import { eventColor, severityColor } from '@/review';
 import { allianceFrom, visionStates, zoneAt, zoneLabels, type Alliance, type VisionCamera, type VisionState, type VisionTrack } from '@shared/vision';
 import { defaultRobotSize, type Pose } from '@shared/plots';
 import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
-import { heatPeak, heatShares } from '@shared/field-heat';
 import { seasonFor } from '@/fields';
 
 // A report as it was made: its charts from the data kept with it, so it
@@ -371,17 +370,12 @@ const pinStyle = (bin: number, bins: number) => ({ left: `${(bin / bins) * 100}%
 const hiddenCameras = reactive<Record<string, boolean>>({});
 const heatKey = (i: number, name: string) => `${i}:${name}`;
 const visionHeat = computed(() => props.report.sections.map((section, i) => {
-  if (section.type !== 'vision' || !section.summary.cameras.some((c) => c.validHeat?.cells.length)) return null;
-  const shown = section.summary.cameras.map((camera, index) => ({ camera, index }))
-    .filter(({ camera }) => camera.validHeat && !hiddenCameras[heatKey(i, camera.name)]);
-  const top = Math.max(0, ...shown.map(({ camera }) => heatPeak(camera.validHeat!) ?? 0));
-  const layers: HeatLayer[] = shown.map(({ camera, index }) => ({
-    key: camera.name,
-    color: cameraColor(index),
-    cell: camera.validHeat!.cell,
-    cells: heatShares(camera.validHeat!, top || undefined)
-  }));
-  return { layers, top };
+  // Reports made with the earlier squares (no points) have none.
+  if (section.type !== 'vision' || !section.summary.cameras.some((c) => c.validHeat?.points?.length)) return null;
+  const layers: HeatLayer[] = section.summary.cameras.map((camera, index) => ({ camera, index }))
+    .filter(({ camera }) => camera.validHeat?.points && !hiddenCameras[heatKey(i, camera.name)])
+    .map(({ camera, index }) => ({ key: camera.name, color: cameraColor(index), heat: camera.validHeat! }));
+  return { layers };
 }));
 
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
@@ -641,15 +635,15 @@ const at = (t: number) => {
           <template v-if="visionHeat[i]">
             <h4 class="sub">Where each camera had valid targets</h4>
             <div class="vision-field">
-              <FieldCanvas :items="[]" :heat="visionHeat[i]!.layers" :season="seasonFor(section.recorded)" :rotation="0"
+              <FieldCanvas :items="[]" :heat="visionHeat[i]!.layers" shared-scale :season="seasonFor(section.recorded)" :rotation="0"
                 :robot-size="defaultRobotSize" :max-height="paper ? 260 : 360" />
               <div class="small">
                 <p class="hint">
-                  Frames each camera used, by where the robot was (half-metre squares), overlaid in its colour. The most solid square is
-                  {{ visionHeat[i]!.top }} frames; the rest by how many of that.
+                  A point for the frames each camera used, where the robot was when they came, in its colour: where they pile up, it saw
+                  targets most. On one scale, so a camera that used more is stronger.
                 </p>
                 <div class="heat-cameras">
-                  <button v-for="(camera, c) in section.summary.cameras.filter((cam) => cam.validHeat)" :key="camera.name" class="chip"
+                  <button v-for="camera in section.summary.cameras.filter((cam) => cam.validHeat?.points)" :key="camera.name" class="chip"
                     :aria-pressed="!hiddenCameras[heatKey(i, camera.name)]" :disabled="paper"
                     @click="hiddenCameras[heatKey(i, camera.name)] = !hiddenCameras[heatKey(i, camera.name)]">
                     <span class="swatch" :style="{ background: cameraColor(section.summary.cameras.indexOf(camera)) }"></span>

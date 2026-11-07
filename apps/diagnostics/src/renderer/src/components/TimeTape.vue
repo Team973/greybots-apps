@@ -105,13 +105,17 @@ function onWheel(event: WheelEvent) {
   const sideways = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
   const box = tape.value!.getBoundingClientRect();
   if (sideways) {
-    const delta = event.shiftKey ? event.deltaY || event.deltaX : event.deltaX;
+    const raw = event.shiftKey ? event.deltaY || event.deltaX : event.deltaX;
+    const delta = event.deltaMode === 1 ? raw * 16 : raw;
     const move = (delta / box.width) * viewLength.value;
     emit('zoom', clamp([props.view[0] + move, props.view[1] + move]), 'pan');
     return;
   }
+  // As the line chart zooms: by how far it scrolled, not a step per event
+  // (a trackpad sends many small ones). Lines, from a mouse wheel, as pixels.
   const at = tapeTime(event.clientX);
-  const factor = event.deltaY > 0 ? 1.25 : 1 / 1.25;
+  const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+  const factor = Math.pow(1.0015, delta);
   emit('zoom', clamp([at - (at - props.view[0]) * factor, at + (props.view[1] - at) * factor]), 'wheel');
 }
 const showAll = () => emit('zoom', [props.full[0], props.full[1]], 'all');

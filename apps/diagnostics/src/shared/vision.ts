@@ -84,22 +84,11 @@ export function counterIncrease(series: Series, a: number, b: number): number {
   return to >= from ? to - from : to;
 }
 
-// Where a camera's frames were used, from each of its valid counters, the
-// squares added together.
+// Where a camera's frames were used, from each of its valid counters: a
+// point for each rise, weighted by it.
 function validHeat(where: { times: ArrayLike<number>; x: ArrayLike<number>; y: ArrayLike<number> }, counters: Series[], spans: [number, number][]): FieldHeat {
-  const sums = new Map<string, { col: number; row: number; value: number }>();
-  let heat: FieldHeat | null = null;
-  for (const counter of counters) {
-    // The fused pose is logged a few times a second; a still robot's less.
-    heat = fieldHeat(where, counter, 'increase', undefined, spans, 5);
-    for (const c of heat.cells) {
-      const key = `${c.col},${c.row}`;
-      const at = sums.get(key) ?? { col: c.col, row: c.row, value: 0 };
-      at.value += c.value;
-      sums.set(key, at);
-    }
-  }
-  return { cell: heat?.cell ?? fieldHeat(where, null, 'time').cell, measure: 'increase', cells: [...sums.values()] };
+  // The fused pose is logged a few times a second; a still robot's less.
+  return { measure: 'increase', points: counters.flatMap((counter) => fieldHeat(where, counter, 'increase', spans, 5).points) };
 }
 
 // --- Where on the field ---

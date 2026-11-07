@@ -180,8 +180,8 @@ assert.deepEqual(visionBins([[10, 12.5]]), [[10, 11], [11, 12], [12, 12.5]], 'th
   // Kept for the charts and the field: the measurement, and the fused pose.
   assert.deepEqual(left.measured, { times: [1], x: [5.1], y: [3], heading: [null], meters: [0.1], degrees: [null] });
   assert.deepEqual(summary.fused, { times: [0], x: [5], y: [3], heading: [0] });
-  // Its 90 frames used, all with the fused pose at (5, 3): one square.
-  assert.deepEqual(left.validHeat, { cell: 0.5, measure: 'increase', cells: [{ col: 10, row: 6, value: 90 }] });
+  // Its 90 frames used, all with the fused pose at (5, 3): one point.
+  assert.deepEqual(left.validHeat, { measure: 'increase', points: [{ x: 5, y: 3, w: 90 }] });
 }
 
 // Where on the field: the alliance from where auto started, and zones and

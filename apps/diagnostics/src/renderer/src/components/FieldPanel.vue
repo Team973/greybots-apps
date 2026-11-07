@@ -18,7 +18,7 @@ import {
 import type { SignalInfo } from '@shared/signals';
 import ColorPicker from '@/components/ColorPicker.vue';
 import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
-import { defaultHeatCell, fieldHeat, heatMeasureLabels, heatPeak, heatShares, type HeatMeasure } from '@shared/field-heat';
+import { fieldHeat, heatMeasureLabels, heatTotal, type HeatMeasure } from '@shared/field-heat';
 import { fieldImages } from '@/fields';
 import { palette } from '@/palette';
 import { useRecords, useSeries } from '@/panel-data';
@@ -152,11 +152,11 @@ const heats = computed(() => new Map(props.panel.items.filter((item) => item.sty
   const signal = series && series.values instanceof Float64Array ? { times: series.times, values: series.values } : null;
   // Measuring a signal that isn't read (yet): nothing, rather than time.
   if (measure !== 'time' && !signal) return [item.key, null] as const;
-  return [item.key, fieldHeat(track, signal, measure, defaultHeatCell, [props.span])] as const;
+  return [item.key, fieldHeat(track, signal, measure, [props.span])] as const;
 })));
 const heatLayers = computed<HeatLayer[]>(() => props.panel.items.flatMap((item) => {
   const heat = heats.value.get(item.key);
-  return item.style === 'heat' && heat ? [{ key: item.key, color: colorOf(item.color), cell: heat.cell, cells: heatShares(heat) }] : [];
+  return item.style === 'heat' && heat ? [{ key: item.key, color: colorOf(item.color), heat }] : [];
 }));
 
 const canvasItems = computed<CanvasItem[]>(() => drawn.value.filter(({ item }) => item.style !== 'heat').map(({ item, poses, history }) => ({
@@ -170,14 +170,16 @@ const canvasItems = computed<CanvasItem[]>(() => drawn.value.filter(({ item }) =
 // Where the pointer is, in field metres.
 const pointer = ref<{ x: number; y: number } | null>(null);
 
-const peakText = (value: number, measure: HeatMeasure) =>
-  measure === 'time' ? `${value.toFixed(1)} s` : Math.abs(value) >= 100 ? value.toFixed(0) : value.toPrecision(3);
+const amount = (value: number) => (Math.abs(value) >= 100 ? value.toFixed(0) : value.toPrecision(3));
 const legend = computed(() => drawn.value.map(({ item, poses }) => {
   if (item.style === 'heat') {
     const heat = heats.value.get(item.key);
-    const peak = heat ? heatPeak(heat) : null;
-    const where = !heat ? (item.measure && item.measure !== 'time' && !item.value ? 'Pick a signal' : '—')
-      : peak === null ? 'Nowhere in the span' : `${heat.cells.length} squares, the most ${peakText(peak, heat.measure)}`;
+    const sum = heat ? heatTotal(heat) : null;
+    const where = !heat || !sum ? (item.measure && item.measure !== 'time' && !item.value ? 'Pick a signal' : '—')
+      : sum.points === 0 ? 'Nowhere in the span'
+        : heat.measure === 'time' ? `${sum.total.toFixed(1)} s, ${sum.points} points`
+          : heat.measure === 'mean' ? `${amount(sum.low!)} to ${amount(sum.high!)}, ${sum.points} points`
+            : `${amount(sum.total)} in all, ${sum.points} points`;
     return { key: item.key, color: colorOf(item.color), label: labelOf(item.key), where };
   }
   const pose = poses.length === 1 ? poses[0] : null;
@@ -277,8 +279,8 @@ defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
     </table>
     <p v-else class="hint small">Add a pose: a robot's pose estimate, a vision measurement, a trajectory.</p>
     <p v-if="panel.items.some((i) => i.style === 'heat')" class="hint small">
-      A heatmap is over the span shown, in half-metre squares: where the pose spent its time, a signal's average while it was there,
-      or how much a counter (a camera's frames used, say) went up while it was there.
+      A heatmap is a point for each sample over the span shown, where the pose was then; where they pile up it's hot. It shows where
+      the pose spent its time, a signal's average while it was there, or how much a counter (a camera's frames used, say) went up there.
     </p>
   </div>
 </template>
