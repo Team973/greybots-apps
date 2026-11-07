@@ -31,6 +31,8 @@ export interface MonitorAlarm {
   detail: string;
   // A signal to plot to see it.
   key: string | null;
+  // Shown as a warning, or only as information (a surf's near miss).
+  severity?: 'warning' | 'info';
 }
 
 export interface MonitorResult {
@@ -76,7 +78,28 @@ export const monitorSettings = {
   // Each camera's own measurement (MegaTag2 for where, MegaTag1 for which
   // way) against the fused pose then. A measurement counts for
   // `freshSeconds`; (0, 0) is none.
-  vision: { fused: `${robot}/drive/estimators/fused/pose`, meters: 0.5, degrees: 10, persist: 1, freshSeconds: 0.5 }
+  vision: { fused: `${robot}/drive/estimators/fused/pose`, meters: 0.5, degrees: 10, persist: 1, freshSeconds: 0.5 },
+  // Surfing: the robot riding up on the fuel pile. A tilt (pitch or roll)
+  // over `degrees` for `persist`, with the fused pose in the pile zone, then
+  // within `effectSeconds` wheel slip or growing path error. A tilt with
+  // neither is a near miss. The pile zone is a guess (the fuel in the middle
+  // of the field, the same for either alliance): set it to where the pile is.
+  surf: {
+    pitch: `${robot}/pigeon/Pitch`,
+    roll: `${robot}/pigeon/Roll`,
+    degrees: 8,
+    persist: 0.15,
+    pile: { x: [6.5, 10.0] as [number, number], y: [1.5, 6.5] as [number, number] },
+    effectSeconds: 0.5,
+    // Modules this far apart from each other count as slip too.
+    spreadMps: 0.5,
+    // Context recorded with each: roller bog, commanded spin, yaw kick.
+    rollerSpeed: `${robot}/intake/currentVelocityRPS`,
+    rollerTarget: `${robot}/intake/targetVelocityRPS`,
+    commandedOmega: `${robot}/drive/controller/chassis speeds/omega RadPS`,
+    yawRate: `${robot}/pigeon/Angular Velocity`,
+    kickDegPerSec: 150
+  }
 };
 
 // The monitors, for choosing them in a template.
@@ -87,7 +110,9 @@ export const monitorCatalog: { id: string; name: string }[] = [
   { id: 'path-position', name: 'Path tracking (position)' },
   { id: 'path-heading', name: 'Path tracking (heading)' },
   { id: 'wheel-slip', name: 'Wheel slip' },
-  { id: 'vision-disagreement', name: 'Vision pose disagreement' }
+  { id: 'vision-disagreement', name: 'Vision pose disagreement' },
+  { id: 'surf', name: 'Surf detection' },
+  { id: 'surf-near-miss', name: 'Surf near misses' }
 ];
 
 // --- Engine ---
@@ -329,7 +354,122 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
       result.alarms.sort((a, b) => a.start - b.start);
     }
   }
+  results.push(...surfMonitors(lookup, gates, need));
   return results;
+}
+
+// Surfing (see monitorSettings.surf): surfs, and near misses, each in auto
+// or teleop, with what explains them.
+function surfMonitors(
+  lookup: Lookup,
+  gates: Gates,
+  need: (id: string, name: string, wanted: string[]) => { result: MonitorResult; found: { key: string; series: Series }[] }
+): MonitorResult[] {
+  const s = monitorSettings;
+  const fused = s.vision.fused;
+  const odometry = s.slip.pose;
+  const wanted = [s.surf.pitch, s.surf.roll, `${fused}/translation/x`, `${fused}/translation/y`,
+    `${odometry}/translation/x`, `${odometry}/translation/y`, ...[0, 1, 2, 3].map((m) => s.swerve.velocity(m))];
+  const surfs = need('surf', 'Surf detection', wanted);
+  const nearMisses: MonitorResult = { id: 'surf-near-miss', name: 'Surf near misses', checked: surfs.result.checked, missing: surfs.result.missing, alarms: [] };
+  if (!surfs.result.checked) return [nearMisses];
+  const [pitch, roll, fx, fy, ox, oy] = surfs.found.slice(0, 6).map((f) => f.series);
+  const wheels = surfs.found.slice(6).map((f) => f.series);
+  const pathX = lookup(s.path.x)?.series ?? null;
+  const pathY = lookup(s.path.y)?.series ?? null;
+  const optional = (key: string) => lookup(key)?.series ?? null;
+  const rollerSpeed = optional(s.surf.rollerSpeed);
+  const rollerTarget = optional(s.surf.rollerTarget);
+  const omega = optional(s.surf.commandedOmega);
+  const yawRate = optional(s.surf.yawRate);
+
+  const inPile = (t: number) => {
+    const x = valueAt(fx, t);
+    const y = valueAt(fy, t);
+    return x !== null && y !== null && x >= s.surf.pile.x[0] && x <= s.surf.pile.x[1] && y >= s.surf.pile.y[0] && y <= s.surf.pile.y[1];
+  };
+  // Wheel slip at t: a module unlike odometry, or the modules unlike each other.
+  const slipping = (t: number) => {
+    const vx = rateAt(ox, t, s.slip.minGap, s.slip.maxGap);
+    const vy = rateAt(oy, t, s.slip.minGap, s.slip.maxGap);
+    const speeds = wheels.map((w) => valueAt(w, t)).filter((v): v is number => v !== null).map(Math.abs);
+    if (speeds.length < 2) return false;
+    if (Math.max(...speeds) - Math.min(...speeds) > s.surf.spreadMps) return true;
+    if (vx === null || vy === null) return false;
+    const robotSpeed = Math.hypot(vx, vy);
+    return robotSpeed <= s.slip.fastestMps && speeds.some((v) => Math.abs(v - robotSpeed) > s.slip.mps);
+  };
+  // Path error over the bound, and rising.
+  const pathGrowing = (t: number) => {
+    if (!pathX || !pathY) return false;
+    const now = [valueAt(pathX, t, s.path.holdSeconds), valueAt(pathY, t, s.path.holdSeconds)];
+    const before = [valueAt(pathX, t - 0.1, s.path.holdSeconds), valueAt(pathY, t - 0.1, s.path.holdSeconds)];
+    if (now.some((v) => v === null) || before.some((v) => v === null)) return false;
+    const error = Math.hypot(now[0]!, now[1]!);
+    return error > s.path.meters && error > Math.hypot(before[0]!, before[1]!);
+  };
+  const within = (spans: [number, number][], t: number) => spans.find(([a, b]) => t >= a && t <= b) ?? null;
+
+  const tilts = persistent(gates.enabled, s.surf.persist, (t) => {
+    const p = valueAt(pitch, t);
+    const r = valueAt(roll, t);
+    if (p === null || r === null) return null;
+    const tilt = Math.max(Math.abs(p), Math.abs(r));
+    return { on: tilt > s.surf.degrees, value: tilt, detail: `${Math.abs(p) >= Math.abs(r) ? 'pitch' : 'roll'} ${fmt(tilt)}°` };
+  });
+  for (const tilt of tilts) {
+    // Only in the pile: not crossing a field element, or being shoved.
+    if (!inPile(tilt.start)) continue;
+    const auto = within(gates.auto, tilt.start);
+    const when = auto ? `auto, ${fmt(tilt.start - auto[0])} s in` : 'teleop';
+    let slip = false;
+    let path = false;
+    for (let t = tilt.start; t <= tilt.start + s.surf.effectSeconds + 1e-9; t += s.stepSeconds) {
+      slip ||= slipping(t);
+      path ||= pathGrowing(t);
+    }
+    // What explains it: the rollers bogging, how hard it was spinning, and
+    // whether it was hit (yaw rate unlike what was commanded).
+    const context: string[] = [];
+    const rs = rollerSpeed ? valueAt(rollerSpeed, tilt.start) : null;
+    const rt = rollerTarget ? valueAt(rollerTarget, tilt.start) : null;
+    if (rs !== null && rt !== null && rt !== 0) context.push(`rollers ${fmt(Math.abs(rs))} of ${fmt(Math.abs(rt))} rot/s`);
+    if (omega) {
+      const [from, to] = auto ? [auto[0] + 1, auto[0] + 4] : [tilt.start - 1, tilt.start];
+      let spin = 0;
+      for (let t = from; t <= to; t += s.stepSeconds) spin = Math.max(spin, Math.abs(valueAt(omega, t) ?? 0));
+      context.push(`commanded spin up to ${Math.round(spin * 180 / Math.PI)}°/s`);
+    }
+    if (omega && yawRate) {
+      // The gap between how fast it turned and how fast it was told to. A
+      // command it can't reach (it often asks for far more than it turns)
+      // isn't a hit; turning more than asked, or the other way, is.
+      let kick = { gap: 0, measured: 0, commanded: 0 };
+      let hit = false;
+      for (let t = tilt.start - 0.5; t <= tilt.start + s.surf.effectSeconds; t += s.stepSeconds) {
+        const measured = valueAt(yawRate, t);
+        const radians = valueAt(omega, t);
+        if (measured === null || radians === null) continue;
+        const commanded = radians * 180 / Math.PI;
+        const gap = Math.abs(measured - commanded);
+        if (gap > kick.gap) kick = { gap, measured, commanded };
+        const beyond = Math.abs(measured) > Math.abs(commanded) || (Math.sign(measured) !== Math.sign(commanded) && Math.abs(measured) > 50);
+        if (gap > s.surf.kickDegPerSec && beyond) hit = true;
+      }
+      context.push(`yaw kick ${Math.round(kick.gap)}°/s (turned ${Math.round(kick.measured)}°/s, told ${Math.round(kick.commanded)}°/s)${hit ? ', hit?' : ''}`);
+    }
+    const effects = [slip ? 'wheel slip' : '', path ? 'path error growing' : ''].filter(Boolean);
+    const alarm: MonitorAlarm = {
+      start: tilt.start,
+      end: tilt.end,
+      title: effects.length ? `Surf (${auto ? 'auto' : 'teleop'})` : `Surf near miss (${auto ? 'auto' : 'teleop'})`,
+      detail: [`${tilt.detail} in the pile, ${when}`, effects.length ? effects.join(' and ') : 'no slip or path error', ...context].join('; '),
+      key: surfs.found[Math.abs(valueAt(pitch, tilt.start) ?? 0) >= Math.abs(valueAt(roll, tilt.start) ?? 0) ? 0 : 1].key,
+      severity: effects.length ? 'warning' : 'info'
+    };
+    (effects.length ? surfs.result.alarms : nearMisses.alarms).push(alarm);
+  }
+  return [nearMisses];
 }
 
 // How far a camera's latest measurement (if it's fresh, and not (0, 0))

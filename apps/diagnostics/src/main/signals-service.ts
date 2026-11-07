@@ -941,7 +941,7 @@ function monitorEvents(results: MonitorResult[]): LogEvent[] {
   return results.flatMap((result) => result.alarms.map((alarm): LogEvent => ({
     id: `monitor:${result.id}:${alarm.title}:${alarm.start.toFixed(2)}`,
     kind: 'monitor',
-    severity: 'warning',
+    severity: alarm.severity ?? 'warning',
     start: alarm.start,
     end: alarm.end,
     title: alarm.title,
