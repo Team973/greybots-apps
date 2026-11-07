@@ -28,10 +28,14 @@ assert.equal(phaseClock(phases, 20), '');
 assert.equal(faultTitle('TalonFX-59/Fault_SupplyCurrLimit'), 'TalonFX-59: supply current limit');
 assert.equal(faultTitle('TalonFX-60/Fault_RotorFault1'), 'TalonFX-60: rotor fault1');
 assert.equal(faultTitle('CANcoder-4/Fault_BadMagnet'), 'CANcoder-4: magnet out of range');
-assert.equal(faultSeverity('TalonFX-1/Fault_StatorCurrLimit'), 'info');
-assert.equal(faultSeverity('TalonFX-1/Fault_ForwardSoftLimit'), 'info');
-assert.equal(faultSeverity('TalonFX-1/Fault_DeviceTemp'), 'warning');
+assert.equal(faultTitle('TalonFX-59/StickyFault_BridgeBrownout'), 'TalonFX-59: bridge brownout (sticky)');
+// Every fault while it's happening is an error; sticky ones are warnings.
+assert.equal(faultSeverity('TalonFX-1/Fault_StatorCurrLimit'), 'error');
+assert.equal(faultSeverity('TalonFX-1/Fault_ForwardSoftLimit'), 'error');
+assert.equal(faultSeverity('TalonFX-1/Fault_DeviceTemp'), 'error');
 assert.equal(faultSeverity('TalonFX-1/Fault_BridgeBrownout'), 'error');
+assert.equal(faultSeverity('TalonFX-1/StickyFault_BridgeBrownout'), 'warning');
+assert.equal(faultSeverity('TalonFX-1/StickyFault_StatorCurrLimit'), 'warning');
 // Notes' files can't step out of notes/.
 assert.deepEqual(notesPathSegments('logs/frc973/2026-10-18/roborio/a.wpilog'), ['notes', 'frc973~2026-10-18~roborio~a.wpilog.json']);
 assert.equal(notesPathSegments('../../x')[1].includes('/'), false);

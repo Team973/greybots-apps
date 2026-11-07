@@ -825,9 +825,9 @@ interface FoundEvents {
 }
 
 // What's exported from each Hoot log to find events: every device's
-// faults (not the sticky ones: those stay set after the fault's gone), the
-// robot's mode, and whether the Driver Station and CAN bus were there.
-const hootEventSignal = /\/Fault_|^RobotMode$|^DS:IsDSAttached$|^DS:IsFMSAttached$|^CANBusIsUp$/;
+// faults and sticky faults (warnings: they stay set after the fault's gone),
+// the robot's mode, and whether the Driver Station and CAN bus were there.
+const hootEventSignal = /\/(Sticky)?Fault_|^RobotMode$|^DS:IsDSAttached$|^DS:IsFMSAttached$|^CANBusIsUp$/;
 
 async function scanHoots(session: Session, found: FoundEvents) {
   for (const placement of session.placements) {
@@ -847,7 +847,7 @@ async function scanHoots(session: Session, found: FoundEvents) {
     for (const { signal, series } of read) {
       if (!series) continue;
       const key = `${hoot.label}/${signal.name}`;
-      if (signal.name.includes('/Fault_')) {
+      if (/\/(Sticky)?Fault_/.test(signal.name)) {
         const spans = shifted(spansWhere(series, (v) => v > 0, end));
         found.hoot.push(...eventsFrom('fault', faultSeverity(signal.name), faultTitle(signal.name), spans, {
           key,

@@ -290,7 +290,7 @@ The Signals page is also where a log is reviewed (#94): what happened in it is f
 | Enable and mode | The Driver Station's own record (`DS:enabled`, AdvantageKit's `DriverStation/Enabled`, or a Driver Station log), else CTRE's `RobotMode` in a Hoot log, else robot code's own flags (`isAutoEnabled`, `isTeleopEnabled`) |
 | Brownouts | `.../BrownedOut` true; a Driver Station log's brownout flag |
 | CAN | `CANBus/ReceiveErrorCount` and `TransmitErrorCount` above 0; `OffCount` and `TxFullCount` going up; a Hoot log's `CANBusIsUp` false |
-| Device faults | Every CTRE device's `Fault_*` signals in the Hoot logs (not the sticky ones) |
+| Device faults | Every CTRE device's `Fault_*` signals in the Hoot logs, each an error while it's set; and its `StickyFault_*` signals, warnings (they stay set after the fault's gone, so say only that it happened) |
 | Loop overruns | "Loop time of … overrun" in the console |
 | Network | NetworkTables clients leaving (console); the Driver Station going away (`DS:IsDSAttached` in a Hoot log); a Driver Station log's robot lost (an error if it was enabled) and a poor link while enabled (half the packets lost, or a 100 ms trip) |
 | Alerts | WPILib Alerts (`Alerts/errors`, `warnings`, `infos`) and DogLog's faults, from when each appears until it goes |

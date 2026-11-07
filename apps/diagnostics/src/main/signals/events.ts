@@ -487,10 +487,13 @@ export function matchPhases(changes: ModeChange[], end: number, inMatch: boolean
 
 // --- Device faults, from Hoot logs ---
 
-// Faults that are a device doing as it was told (a current limit holding,
-// a limit switch) are worth seeing but aren't trouble.
-const routineFaults = /CurrLimit|StaticBrakeDisabled|(Forward|Reverse)(Hard|Soft)Limit$/;
-const warningFaults = /Unlicensed|DeviceTemp|ProcTemp|LoopTimeSlow|DataAcquiredLate|Saturated/;
+// A fault while it's happening is an error, whatever it is: something the
+// device did that the robot didn't ask for. Its sticky twin stays set after
+// it's gone (until cleared), so it says only that it happened at some point,
+// maybe before this log: a warning.
+const stickyFault = /(^|\/)StickyFault_/;
+
+export const isStickyFault = (name: string) => stickyFault.test(name);
 
 const faultWords: Record<string, string> = {
   ProcTemp: 'processor temperature',
@@ -505,13 +508,14 @@ const faultWords: Record<string, string> = {
 };
 
 export function faultSeverity(fault: string): EventSeverity {
-  return routineFaults.test(fault) ? 'info' : warningFaults.test(fault) ? 'warning' : 'error';
+  return isStickyFault(fault) ? 'warning' : 'error';
 }
 
-// `TalonFX-59/Fault_SupplyCurrLimit` -> "TalonFX-59: supply current limit".
+// `TalonFX-59/Fault_SupplyCurrLimit` -> "TalonFX-59: supply current limit";
+// `TalonFX-59/StickyFault_SupplyCurrLimit` -> "TalonFX-59: supply current limit (sticky)".
 export function faultTitle(name: string): string {
   const [device, field] = name.split('/');
-  const fault = field.replace(/^Fault_/, '');
+  const fault = field.replace(/^(Sticky)?Fault_/, '');
   const words = faultWords[fault] ?? fault.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').toLowerCase();
-  return `${device}: ${words}`;
+  return `${device}: ${words}${isStickyFault(name) ? ' (sticky)' : ''}`;
 }
