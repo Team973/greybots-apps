@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { mergeSpans, phaseClock, phaseAt } from '@shared/events';
-import { faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
+import { enabledSpans, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
 import { notesPathSegments } from '@shared/storage-layout';
 const series = (times: number[], values: number[] | string[]) => ({ key: 'k', kind: typeof values[0] === 'string' ? 'string' : 'number', times: Float64Array.from(times), values: typeof values[0] === 'string' ? values : Float64Array.from(values as number[]), downsampled: false, stats: null }) as never;
 
@@ -36,3 +36,16 @@ assert.equal(faultSeverity('TalonFX-1/Fault_BridgeBrownout'), 'error');
 assert.deepEqual(notesPathSegments('logs/frc973/2026-10-18/roborio/a.wpilog'), ['notes', 'frc973~2026-10-18~roborio~a.wpilog.json']);
 assert.equal(notesPathSegments('../../x')[1].includes('/'), false);
 assert.equal(notesPathSegments('..\\..\\x')[1].includes('\\'), false);
+
+// --- When the robot was enabled ---
+// Enabled in auto, a moment's drop, teleop; disabled; then test mode.
+const enables = enabledSpans([
+  { time: 0, mode: 'disabled' },
+  { time: 10, mode: 'auto' },
+  { time: 25, mode: 'disabled' },
+  { time: 26, mode: 'teleop' },
+  { time: 160, mode: 'disabled' },
+  { time: 300, mode: 'test' }
+], 330);
+assert.deepEqual(enables, [[10, 160], [300, 330]]);
+assert.deepEqual(enabledSpans([{ time: 0, mode: 'disabled' }], 100), []);

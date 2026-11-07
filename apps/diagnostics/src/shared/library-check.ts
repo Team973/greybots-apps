@@ -68,7 +68,7 @@ export function cleanViewBody(raw: Raw): ViewBody {
 
 function cleanScope(raw: unknown): ReportScope {
   if (!isObject(raw)) return { type: 'match' };
-  if (raw.type === 'auto' || raw.type === 'teleop') return { type: raw.type };
+  if (raw.type === 'auto' || raw.type === 'teleop' || raw.type === 'enabled') return { type: raw.type };
   if (raw.type === 'conditions') {
     const conditions = (Array.isArray(raw.conditions) ? raw.conditions : [])
       .filter(isObject)
@@ -158,17 +158,8 @@ export function cleanLibraryItem(raw: unknown, now = new Date().toISOString()): 
         onImport: raw.onImport === true,
         robots: strings(raw.robots, 50),
         matchTypes: strings(raw.matchTypes).filter((t): t is MatchType | 'none' => matchTypes.has(t)),
-        templateIds: strings(raw.templateIds, 50)
+        templateIds: strings(raw.templateIds, 50),
+        several: raw.several === 'newest' || raw.several === 'none' ? raw.several : 'all'
       };
-    case 'mapping': {
-      const fields: Record<string, string | null> = {};
-      if (isObject(raw.fields)) {
-        for (const [wanted, mapped] of Object.entries(raw.fields).slice(0, 2000)) {
-          if (typeof mapped === 'string' || mapped === null) fields[wanted.slice(0, 500)] = mapped === null ? null : mapped.slice(0, 500);
-        }
-      }
-      // A mapping is always for a robot.
-      return base.robot ? { ...base, kind: 'mapping', fields } : null;
-    }
   }
 }

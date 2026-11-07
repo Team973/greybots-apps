@@ -773,8 +773,8 @@ function currentView(span: ViewSpan): ViewBody {
   return plotStore.viewBody(span, eventFilter.value.kinds);
 }
 
-function applySavedView(view: SavedView, mapping: Record<string, string | null> | undefined) {
-  const missing = plotStore.applyView(view, (key) => matchKey(key, viewSignals.value, mapping).key);
+function applySavedView(view: SavedView) {
+  const missing = plotStore.applyView(view, (key) => matchKey(key, viewSignals.value).key);
   if (view.eventKinds) eventFilter.value = { ...eventFilter.value, kinds: view.eventKinds };
   // Its span, when this log has that phase.
   if (view.span.type === 'phase' && review.value && !isLive.value) {
@@ -785,7 +785,7 @@ function applySavedView(view: SavedView, mapping: Record<string, string | null> 
     plotStore.setView(null);
   }
   message.value = missing.length
-    ? `${view.name}: ${missing.length} of its signals aren't here (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''}). A robot mapping on the Reports page can say which they are.`
+    ? `${view.name}: ${missing.length} of its signals aren't here (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', …' : ''}).`
     : '';
 }
 

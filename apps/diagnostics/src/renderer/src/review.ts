@@ -12,6 +12,11 @@ const colors = {
   dark: { error: '#e66767', warning: '#e0a526', info: '#9aa0a8', note: '#9085e9' }
 };
 
+// An error's or warning's colour, for flags that aren't events (a report's).
+export function severityColor(severity: 'error' | 'warning', dark: boolean): string {
+  return (dark ? colors.dark : colors.light)[severity];
+}
+
 export function eventColor(event: LogEvent, dark: boolean): string {
   const set = dark ? colors.dark : colors.light;
   return event.kind === 'note' ? set.note : set[event.severity];

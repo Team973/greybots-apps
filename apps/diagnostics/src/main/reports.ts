@@ -12,6 +12,7 @@ import type { SignalLogFile } from '@shared/ipc';
 import {
   reportSummary,
   templateKeys,
+  theAutoReport,
   type Pipeline,
   type RenderedSection,
   type Report,
@@ -24,7 +25,9 @@ import {
   type ViewSpan
 } from '@shared/library';
 import { describeMatch } from '@shared/offload';
-import type { PipelineRun, PipelineStatus } from '@shared/reports';
+import { duplicateReports } from '@shared/report-cards';
+import { isReport, reportFileNames, type ReportExport, type ReportImport } from '@shared/report-files';
+import { cancelledMessage, type PipelineRun, type PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
 import { matchKey, type KeyMatch } from '@shared/signal-match';
 import { integrateProduct, pairedVoltage, type SignalInfo, type SignalSeries } from '@shared/signals';
@@ -32,7 +35,7 @@ import { reportPathSegments } from '@shared/storage-layout';
 import { getLibraryItem, listLibrary } from './library-store';
 import { loadNotes } from './notes-store';
 import { loadSettings } from './settings-store';
-import { hootStatus, openSignalLog, prepareSignals, readSignal, sessionEvents, signalLogs } from './signals-service';
+import { forgetFiles, hootStatus, openSignalLog, prepareSignals, readSignal, sessionEvents, signalLogs } from './signals-service';
 import { dataDirectory } from './storage';
 
 const reportPath = (settings: Settings, id: string) => join(dataDirectory(settings), ...reportPathSegments(id));
@@ -95,7 +98,6 @@ interface Context {
   logId: string;
   signals: Map<string, SignalInfo>;
   available: string[];
-  mapping: Record<string, string | null> | undefined;
   matches: Map<string, KeyMatch>;
   missing: Set<string>;
   whole: [number, number];
@@ -105,7 +107,7 @@ interface Context {
 function resolve(context: Context, wanted: string): string | null {
   let match = context.matches.get(wanted);
   if (!match) {
-    match = matchKey(wanted, context.available, context.mapping);
+    match = matchKey(wanted, context.available);
     context.matches.set(wanted, match);
   }
   if (!match.key) context.missing.add(wanted);
@@ -119,6 +121,12 @@ async function scopeSpans(context: Context, scope: ReportScope): Promise<[number
   switch (scope.type) {
     case 'match':
       return [matchSpan(phases, context.whole)];
+    case 'enabled': {
+      const spans = (context.review.enabled ?? []).map(([start, end]): [number, number] =>
+        [Math.max(start, context.whole[0]), Math.min(end, context.whole[1])]).filter(([start, end]) => end > start);
+      if (spans.length === 0) throw new Error('The robot was never enabled in this log.');
+      return spans;
+    }
     case 'auto':
     case 'teleop': {
       const spans = phaseSpans(phases, scope.type);
@@ -209,16 +217,33 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
 export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
 const isRoutine = (event: LogEvent) => event.severity === 'info' && !['mode', 'note', 'state', 'command'].includes(event.kind);
 
-async function waitForSession(settings: Settings, logId: string): Promise<SessionEvents> {
+// Cancelling: every report being run, or waiting to be, stops. Each report
+// notes this count when it starts and stops at its next step if it has
+// changed since; nothing of it is saved.
+let cancels = 0;
+export function cancelReports() {
+  cancels += 1;
+}
+function cancelCheck(): () => void {
+  const at = cancels;
+  return () => {
+    if (cancels !== at) throw new Error(cancelledMessage);
+  };
+}
+const isCancelled = (error: unknown) => (error as Error)?.message === cancelledMessage;
+
+async function waitForSession(settings: Settings, logId: string, stopIfCancelled: () => void): Promise<SessionEvents> {
   const until = Date.now() + waitForHootMs;
   // Hoot logs lined up first: until then the timeline and catalog aren't whole.
   while (Date.now() < until) {
+    stopIfCancelled();
     const status = await hootStatus(settings, logId);
     if (!status.hoots.some((h) => h.state === 'opening') && status.progress === null) break;
     await sleep(500);
   }
   let review = await sessionEvents(settings, logId);
   while (review.pending && Date.now() < until) {
+    stopIfCancelled();
     await sleep(1000);
     review = await sessionEvents(settings, logId);
   }
@@ -226,19 +251,19 @@ async function waitForSession(settings: Settings, logId: string): Promise<Sessio
 }
 
 export async function makeReport(settings: Settings, template: ReportTemplate, logId: string, by: string): Promise<Report> {
+  const stopIfCancelled = cancelCheck();
   const file = (await signalLogs(settings)).find((log) => log.id === logId);
   if (!file) throw new Error('That log is not in the data folder.');
-  const review = await waitForSession(settings, logId);
+  const review = await waitForSession(settings, logId, stopIfCancelled);
+  stopIfCancelled();
   const summary = await openSignalLog(settings, logId);
   const status = await hootStatus(settings, logId);
   const signals = new Map(summary.signals.map((s) => [s.key, s]));
-  const mapping = (await listLibrary(settings, 'mapping')).find((m) => m.robot === file.robot)?.fields;
   const context: Context = {
     settings,
     logId,
     signals,
     available: summary.signals.filter((s) => s.kind !== 'other' && s.count !== 0).map((s) => s.key),
-    mapping,
     matches: new Map(),
     missing: new Set(),
     whole: [status.start, status.end],
@@ -260,7 +285,9 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     }
   }
   // Hoot signals exported all at once, rather than one by one as read.
+  stopIfCancelled();
   await prepareSignals(settings, logId, [...wanted]);
+  stopIfCancelled();
 
   const spans = await scopeSpans(context, template.scope);
   const inSpans = (e: { start: number; end: number | null }) => spans.some(([s, end]) => e.start <= end && (e.end ?? e.start) >= s);
@@ -279,6 +306,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
 
   const sections: RenderedSection[] = [];
   for (const section of template.sections) {
+    stopIfCancelled();
     switch (section.type) {
       case 'heading':
       case 'text':
@@ -441,7 +469,15 @@ export async function listReports(settings: Settings): Promise<ReportSummary[]> 
     }
     if (known.summary) out.push(known.summary);
   }
-  return out.sort((a, b) => b.generated.localeCompare(a.generated));
+  // Only the newest report from each template for each log is kept: one
+  // run again (by hand, or after its log grew) replaces the one before.
+  const older = duplicateReports(out);
+  for (const report of older) {
+    await fs.rm(reportPath(settings, report.id), { force: true });
+    summaries.delete(reportPath(settings, report.id));
+  }
+  const gone = new Set(older.map((report) => report.id));
+  return out.filter((report) => !gone.has(report.id)).sort((a, b) => b.generated.localeCompare(a.generated));
 }
 
 export async function deleteReport(settings: Settings, id: string): Promise<void> {
@@ -459,7 +495,7 @@ export async function generateReport(settings: Settings, templateId: string, log
 
 // --- Pipelines ---
 
-const status: PipelineStatus = { running: false, current: null, recent: [] };
+const status: PipelineStatus = { running: false, current: null, done: 0, total: 0, recent: [] };
 const recentRuns = 30;
 
 export function pipelineStatus(): PipelineStatus {
@@ -475,47 +511,96 @@ export function pipelineApplies(pipeline: Pipeline, file: SignalLogFile, how: 'o
 
 let queue: Promise<unknown> = Promise.resolve();
 
-// Runs the pipelines that apply to each log, one report at a time. With
-// `only`, just that pipeline (run by hand, whatever its triggers say).
+// How many logs' reports are made at once. The main process keeps this
+// many logs open (signals-service), so they don't take turns loading.
+const logsAtOnce = 3;
+
+// Runs the pipelines that apply to each log: a log's reports all at once,
+// a few logs at once. With `only`, just that pipeline (run by hand,
+// whatever its triggers say).
 export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manual', only?: string): Promise<PipelineRun[]> {
   const next = queue.then(async () => {
     const settings = await loadSettings();
-    const pipelines = (await listLibrary(settings, 'pipeline')).filter((p) => !only || p.id === only);
-    const files = (await signalLogs(settings)).filter((log) => logIds.includes(log.id));
+    // The one auto report configuration (see theAutoReport), or the one asked for.
+    const all = await listLibrary(settings, 'pipeline');
+    const chosen = only ? all.find((p) => p.id === only) : theAutoReport(all);
+    const pipelines = chosen ? [chosen] : [];
+    let files = (await signalLogs(settings)).filter((log) => logIds.includes(log.id));
+    // Several new logs at once: all, the newest, or none, as it says. Run by
+    // hand, it runs on what it's asked to.
+    if (how !== 'manual' && chosen) {
+      const applies = files.filter((file) => pipelineApplies(chosen, file, how));
+      if (applies.length > 1 && chosen.several === 'none') files = [];
+      else if (applies.length > 1 && chosen.several === 'newest') files = [applies.reduce((a, b) => (b.recorded > a.recorded ? b : a))];
+    }
     const runs: PipelineRun[] = [];
+    const stopIfCancelled = cancelCheck();
+    const making = new Set<string>();
+    const showMaking = () => { status.current = making.size ? [...making].join('; ') : null; };
     status.running = true;
-    try {
-      for (const file of files) {
-        for (const pipeline of pipelines) {
-          if (!pipelineApplies(pipeline, file, how)) continue;
-          for (const templateId of pipeline.templateIds) {
-            const template = await getLibraryItem(settings, 'template', templateId);
-            const run: PipelineRun = {
-              at: new Date().toISOString(),
-              pipeline: pipeline.name,
-              template: template?.name ?? '(a template that is gone)',
-              logId: file.id,
-              logLabel: logLabel(file),
-              reportId: null,
-              problem: ''
-            };
-            status.current = `${pipeline.name}: ${run.template} for ${run.logLabel}`;
-            try {
-              if (!template) throw new Error('The template is gone.');
-              const report = await makeReport(settings, template, file.id, `Pipeline: ${pipeline.name}`);
-              await saveReport(settings, report);
-              run.reportId = report.id;
-            } catch (error) {
-              run.problem = (error as Error).message;
-            }
-            runs.push(run);
-            status.recent = [run, ...status.recent].slice(0, recentRuns);
-          }
-        }
+
+    const runOne = async (file: SignalLogFile, pipeline: Pipeline, templateId: string) => {
+      const template = await getLibraryItem(settings, 'template', templateId);
+      const run: PipelineRun = {
+        at: new Date().toISOString(),
+        pipeline: pipeline.name,
+        template: template?.name ?? '(a template that is gone)',
+        logId: file.id,
+        logLabel: logLabel(file),
+        reportId: null,
+        problem: ''
+      };
+      const what = `${pipeline.name}: ${run.template} for ${run.logLabel}`;
+      making.add(what);
+      showMaking();
+      try {
+        stopIfCancelled();
+        if (!template) throw new Error('The template is gone.');
+        const report = await makeReport(settings, template, file.id, `Auto report: ${pipeline.name}`);
+        await saveReport(settings, report);
+        run.reportId = report.id;
+      } catch (error) {
+        run.problem = (error as Error).message;
+      } finally {
+        making.delete(what);
+        showMaking();
+        status.done += 1;
       }
+      if (isCancelled({ message: run.problem })) return;
+      runs.push(run);
+      status.recent = [run, ...status.recent].slice(0, recentRuns);
+    };
+
+    // Every template runs (for any robot, or the log's): which ones isn't
+    // chosen. A log's reports together: they share its open session.
+    const templates = await listLibrary(settings, 'template');
+    const forLog = (file: SignalLogFile) => pipelines
+      .filter((pipeline) => pipelineApplies(pipeline, file, how))
+      .flatMap((pipeline) => templates
+        .filter((template) => !template.robot || template.robot === file.robot)
+        .map((template) => ({ pipeline, template })));
+    status.done = 0;
+    status.total = files.reduce((total, file) => total + forLog(file).length, 0);
+    const runLog = (file: SignalLogFile) => Promise.all(forLog(file).map(({ pipeline, template }) => runOne(file, pipeline, template.id)));
+
+    try {
+      let next = 0;
+      const worker = async () => {
+        while (next < files.length) {
+          try {
+            stopIfCancelled();
+          } catch {
+            return;
+          }
+          await runLog(files[next++]);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(logsAtOnce, files.length) }, worker));
     } finally {
       status.running = false;
       status.current = null;
+      status.done = 0;
+      status.total = 0;
     }
     return runs;
   });
@@ -528,13 +613,158 @@ export async function logIdsNow(settings: Settings): Promise<Set<string>> {
   return new Set((await signalLogs(settings).catch(() => [])).map((log) => log.id));
 }
 
-// After an offload or import: the new logs go through the pipelines, in
-// the background.
-export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import'): Promise<void> {
+// After a download or import, in the background: the new logs go through
+// the auto reports, and logs whose files were pulled again because they
+// grew (a log still being written when it was first pulled) have their
+// reports run again.
+export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import', changed: string[] = []): Promise<void> {
   const settings = await loadSettings();
+  if (changed.length > 0) {
+    forgetFiles(changed);
+    const grown = new Set(changed);
+    const files = (session: SignalLogFile) => [session.localPath, ...session.hoots.map((h) => h.localPath), ...session.dsLogs.flatMap((d) => [d.localPath, d.eventsPath])];
+    const logs = (await signalLogs(settings)).filter((log) => before.has(log.id) && files(log).some((path) => path !== null && grown.has(path)));
+    if (logs.length > 0) rerunReports(logs.map((log) => log.id)).catch(() => {});
+  }
   const added = [...(await logIdsNow(settings))].filter((id) => !before.has(id));
   if (added.length === 0) return;
-  const pipelines = await listLibrary(settings, 'pipeline');
-  if (!pipelines.some((p) => p.enabled && (how === 'offload' ? p.onOffload : p.onImport))) return;
+  const pipeline = theAutoReport(await listLibrary(settings, 'pipeline'));
+  if (!pipeline?.enabled || !(how === 'offload' ? pipeline.onOffload : pipeline.onImport)) return;
   runPipelines(added, how).catch(() => {});
+}
+
+// Runs each of these logs' reports again, from the template each was made
+// with (as it was then), after their logs grew. The new report replaces
+// the old (see listReports). In turn with the auto reports, a log's
+// reports at once and a few logs at once.
+export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
+  const next = queue.then(async () => {
+    const settings = await loadSettings();
+    const all = await listReports(settings);
+    const files = new Map((await signalLogs(settings)).map((log) => [log.id, log]));
+    const runs: PipelineRun[] = [];
+    const stopIfCancelled = cancelCheck();
+    status.running = true;
+    const ids = logIds.filter((id) => files.has(id));
+    status.done = 0;
+    status.total = all.filter((r) => ids.includes(r.logId)).length;
+    const runOne = async (summary: ReportSummary) => {
+      const file = files.get(summary.logId);
+      const run: PipelineRun = {
+        at: new Date().toISOString(),
+        pipeline: 'Run again (the log grew)',
+        template: summary.templateName,
+        logId: summary.logId,
+        logLabel: file ? logLabel(file) : summary.logLabel,
+        reportId: null,
+        problem: ''
+      };
+      status.current = `${run.template} for ${run.logLabel} (run again: the log grew)`;
+      try {
+        stopIfCancelled();
+        const old = await loadReport(settings, summary.id);
+        if (!old) throw new Error('The report is gone.');
+        const report = await makeReport(settings, old.template, summary.logId, old.by);
+        await saveReport(settings, report);
+        run.reportId = report.id;
+      } catch (error) {
+        run.problem = (error as Error).message;
+      } finally {
+        status.done += 1;
+      }
+      if (isCancelled({ message: run.problem })) return;
+      runs.push(run);
+      status.recent = [run, ...status.recent].slice(0, recentRuns);
+    };
+    try {
+      let at = 0;
+      const worker = async () => {
+        while (at < ids.length) {
+          try {
+            stopIfCancelled();
+          } catch {
+            return;
+          }
+          const id = ids[at++];
+          await Promise.all(all.filter((r) => r.logId === id).map(runOne));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(logsAtOnce, ids.length) }, worker));
+      // The old ones go now, not at the next look at the list.
+      await listReports(settings);
+    } finally {
+      status.running = false;
+      status.current = null;
+      status.done = 0;
+      status.total = 0;
+    }
+    return runs;
+  });
+  queue = next.catch(() => {});
+  return next;
+}
+
+// --- Exporting and importing reports ---
+
+// Every report (the newest of each, as listed), into a new folder in
+// `into`: a PDF of each, and each report's own JSON under reports/, as the
+// data folder keeps it, which Import reports reads back. One PDF at a time:
+// each is drawn in a window of its own.
+export async function exportReports(settings: Settings, into: string, pdfOf: (report: Report) => Promise<Buffer>): Promise<ReportExport> {
+  const reports = (await Promise.all((await listReports(settings)).map((summary) => loadReport(settings, summary.id))))
+    .filter((report): report is Report => report !== null);
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '');
+  const folder = join(into, `Diagnostics reports ${stamp}`);
+  await fs.mkdir(join(folder, 'reports'), { recursive: true });
+  const names = reportFileNames(reports);
+  const errors: string[] = [];
+  let count = 0;
+  for (const report of reports) {
+    try {
+      await fs.writeFile(join(folder, 'reports', `${report.id}.json`), JSON.stringify(report), 'utf-8');
+      await fs.writeFile(join(folder, names.get(report.id)!), await pdfOf(report));
+      count += 1;
+    } catch (error) {
+      errors.push(`${report.name}: ${(error as Error).message}`);
+    }
+  }
+  await fs.writeFile(join(folder, 'README.txt'), [
+    'Reports exported from Greybots Diagnostics.',
+    '',
+    'Each report is here as a PDF, to read or share, and its data is under',
+    'reports/ (one .json file each), as the app keeps it. To bring them into',
+    'Greybots Diagnostics on another computer: Reports > Import reports, and',
+    'pick the .json files in reports/.',
+    ''
+  ].join('\r\n'), 'utf-8');
+  return { folder, count, errors };
+}
+
+// Reports from .json files (an export's reports/, or another data folder's),
+// into this data folder. Each is checked first. One with the same id is
+// already here; a newer run of the same report replaces an older one (see
+// listReports).
+const maxReportBytes = 100 * 1024 * 1024;
+
+export async function importReports(settings: Settings, paths: string[]): Promise<ReportImport> {
+  const result: ReportImport = { imported: 0, already: 0, invalid: [] };
+  for (const path of paths) {
+    const name = path.split(/[\/]/).pop() ?? path;
+    try {
+      const stat = await fs.stat(path);
+      if (!stat.isFile() || stat.size > maxReportBytes) throw new Error('not a report');
+      const raw: unknown = JSON.parse(await fs.readFile(path, 'utf-8'));
+      if (!isReport(raw)) throw new Error('not a report');
+      if (await loadReport(settings, raw.id)) {
+        result.already += 1;
+        continue;
+      }
+      await saveReport(settings, raw);
+      result.imported += 1;
+    } catch {
+      result.invalid.push(name);
+    }
+  }
+  await listReports(settings);
+  return result;
 }

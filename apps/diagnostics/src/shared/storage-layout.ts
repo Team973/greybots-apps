@@ -34,11 +34,11 @@ export const storageFolders: StorageFolder[] = [
   },
   {
     name: 'library',
-    purpose: 'Saved views, report templates, pipelines and robot mappings.'
+    purpose: 'Saved views, report templates and auto reports.'
   },
   {
     name: 'reports',
-    purpose: 'Reports made from logs, by hand or by a pipeline.'
+    purpose: 'Reports made from logs, by hand or automatically.'
   },
   {
     name: 'models',
@@ -117,8 +117,8 @@ notes/<log>.json
     Notes people added to logs while reviewing them.
 
 library/<kind>/<id>.json
-    Saved views, report templates, pipelines and robot mappings
-    (<kind> is view, template, pipeline or mapping).
+    Saved views, report templates and auto reports
+    (<kind> is view, template or pipeline).
 
 reports/<id>.json
     Reports made from logs, by hand or by a pipeline.

@@ -1,6 +1,6 @@
 // What people make and keep to look at logs again and again (#148): saved
 // views of the chart, report templates, the pipelines that turn new logs
-// into reports, and mappings from one robot's signal names to another's.
+// into reports.
 // Kept in the data folder's library/, and synced with the team's cloud
 // copy when signed in. Reports made from them are kept in reports/.
 //
@@ -11,9 +11,11 @@ import type { MatchInfo, MatchType } from './offload';
 import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
 
-export type LibraryKind = 'view' | 'template' | 'pipeline' | 'mapping';
+export type LibraryKind = 'view' | 'template' | 'pipeline';
 
-export const libraryKinds: LibraryKind[] = ['view', 'template', 'pipeline', 'mapping'];
+// Robot mappings (a kind 'mapping') were dropped: ones still in a data
+// folder or the team's library are left there, and not read.
+export const libraryKinds: LibraryKind[] = ['view', 'template', 'pipeline'];
 
 // Where an item stands with the team's cloud copy.
 export interface CloudState {
@@ -86,6 +88,9 @@ export interface SavedView extends LibraryItemBase, ViewBody {
 // What part of a log a report is of.
 export type ReportScope =
   | { type: 'match' }
+  // Wherever the robot was enabled (auto, teleop or test): not the time
+  // it sat disabled on the field or in the pit.
+  | { type: 'enabled' }
   | { type: 'auto' }
   | { type: 'teleop' }
   // A test mode, or anything else: wherever these flags all hold.
@@ -138,39 +143,44 @@ export interface Pipeline extends LibraryItemBase {
   robots: string[];
   // Matches of these types only, or 'none' for logs that aren't a match (empty: any).
   matchTypes: (MatchType | 'none')[];
+  // Which templates it ran, before every template ran. Kept, not used.
   templateIds: string[];
+  // When a download or import brings several new logs at once (a backlog,
+  // say): reports on all of them, on just the newest, or none.
+  several: SeveralLogs;
 }
 
-// --- Mappings ---
+export type SeveralLogs = 'all' | 'newest' | 'none';
 
-// A robot's own names for the signals views and templates ask for: for
-// another team's robot, or a robot whose code names things differently.
-export interface SignalMapping extends LibraryItemBase {
-  kind: 'mapping';
-  // Which robot's data ("frc254"); also in `robot`.
-  // The signal asked for -> the robot's signal, or null when it has none
-  // (flagged: a report says it's missing rather than guessing).
-  fields: Record<string, string | null>;
+export const severalLogsLabels: Record<SeveralLogs, string> = {
+  all: 'Run on all of them',
+  newest: 'Run on the newest only',
+  none: "Don't run"
+};
+
+// There's one auto report configuration: the first one made. Libraries
+// from before kept any number; the others are left alone and not run.
+export function theAutoReport(pipelines: Pipeline[]): Pipeline | null {
+  return [...pipelines].sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id))[0] ?? null;
 }
 
-export type LibraryItem = SavedView | ReportTemplate | Pipeline | SignalMapping;
+export type LibraryItem = SavedView | ReportTemplate | Pipeline;
 
 export interface LibraryItemOf {
   view: SavedView;
   template: ReportTemplate;
   pipeline: Pipeline;
-  mapping: SignalMapping;
 }
 
 export const kindLabels: Record<LibraryKind, { one: string; many: string }> = {
   view: { one: 'view', many: 'views' },
   template: { one: 'report template', many: 'report templates' },
-  pipeline: { one: 'pipeline', many: 'pipelines' },
-  mapping: { one: 'robot mapping', many: 'robot mappings' }
+  pipeline: { one: 'auto report', many: 'auto reports' }
 };
 
 export const scopeLabels: Record<ReportScope['type'], string> = {
   match: 'The whole match (or log)',
+  enabled: 'While the robot is enabled',
   auto: 'Autonomous only',
   teleop: 'Teleop only',
   conditions: 'While chosen signals are true (a test mode)'
@@ -261,29 +271,50 @@ export interface Report {
   missing: string[];
 }
 
+// An error or warning a report found, as the list of reports shows it.
+export interface ReportProblem {
+  // The same each time the log is read, so the same problem found by two
+  // reports of one log is one problem.
+  id: string;
+  severity: 'error' | 'warning';
+  title: string;
+}
+
 // The list of reports, without their data.
 export interface ReportSummary {
   id: string;
+  // "Autonomous · mttd P5, Nov 6, 7:09 PM": its template's name and its log.
   name: string;
+  // Just its template's name ("Autonomous"), for where the log is shown already.
+  templateName: string;
   generated: string;
   by: string;
   templateId: string;
   logId: string;
   logLabel: string;
   robot: string;
+  match: MatchInfo | null;
   missing: number;
+  // The errors and warnings in its spans (none for reports made before
+  // they were kept).
+  problems: ReportProblem[];
 }
 
 export const reportSummary = (report: Report): ReportSummary => ({
   id: report.id,
   name: report.name,
+  templateName: report.template?.name || report.name,
   generated: report.generated,
   by: report.by,
   templateId: report.templateId,
   logId: report.logId,
   logLabel: report.logLabel,
   robot: report.robot,
-  missing: report.missing.length
+  match: report.match ?? null,
+  missing: report.missing.length,
+  problems: (report.problems ?? [])
+    .filter((event) => event.severity === 'error' || event.severity === 'warning')
+    .map((event) => ({ id: event.id, severity: event.severity as ReportProblem['severity'], title: event.title }))
 });
 
 // Every signal a template or view asks for.

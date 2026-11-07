@@ -2,17 +2,17 @@
 // they're kept, the starters, syncing with the team, and energy pies.
 
 import assert from 'node:assert/strict';
-import { matchKey, searchMatches, sharedTail, suggestKeys } from '@shared/signal-match';
+import { matchKey, searchMatches, sharedTail } from '@shared/signal-match';
 import { cleanLibraryItem } from '@shared/library-check';
 import { planSync } from '@shared/library-sync';
-import { starterLibrary } from '@shared/starters';
-import { templateKeys, type LibraryItem } from '@shared/library';
+import { outdatedStarter, starterLibrary, starterStamp } from '@shared/starters';
+import { templateKeys, theAutoReport, type LibraryItem, type Pipeline } from '@shared/library';
 import { integrateProduct } from '@shared/signals';
 
 // --- Matching ---
 const robot = ['/Robot/SystemStats/BatteryVoltage', '/Robot/drive/speedXMPS', '/Robot/shooter/state', '/Robot/intake/state', 'DS log/Battery voltage'];
 // Simulation's /Robot/robot/... finds the robot's /Robot/...
-assert.deepEqual(matchKey('/Robot/robot/drive/speedXMPS', robot), { key: '/Robot/drive/speedXMPS', how: 'suffix', flagged: false, ambiguous: [] });
+assert.deepEqual(matchKey('/Robot/robot/drive/speedXMPS', robot), { key: '/Robot/drive/speedXMPS', how: 'suffix', ambiguous: [] });
 assert.equal(matchKey('/Robot/SystemStats/BatteryVoltage', robot).how, 'exact');
 // One shared part isn't enough for a two-part name ("state" is everywhere)...
 assert.equal(matchKey('/Robot/robot/superstructure/state', robot).key, null);
@@ -20,21 +20,14 @@ assert.equal(matchKey('/Robot/robot/superstructure/state', robot).key, null);
 assert.deepEqual(matchKey('state', robot).ambiguous.sort(), ['/Robot/intake/state', '/Robot/shooter/state']);
 // A one-part name matches a single fit.
 assert.equal(matchKey('speedXMPS', robot).key, '/Robot/drive/speedXMPS');
-// A mapping wins, and can flag a signal as missing.
-assert.deepEqual(matchKey('/Robot/robot/shooter/velocity', robot, { '/Robot/robot/shooter/velocity': '/Robot/shooter/state' }).how, 'mapped');
-assert.deepEqual(matchKey('/Robot/SystemStats/BatteryVoltage', robot, { '/Robot/SystemStats/BatteryVoltage': null }), { key: null, how: null, flagged: true, ambiguous: [] });
-// A mapping to a signal this log hasn't falls back to the name.
-assert.equal(matchKey('/Robot/SystemStats/BatteryVoltage', robot, { '/Robot/SystemStats/BatteryVoltage': '/gone' }).how, 'exact');
 assert.equal(sharedTail('/A/b/C', 'x/B/c'), 2);
-// Suggestions: the path end counts most, then words.
-const other = [{ key: '/Robot/Power/BatteryVolts', unit: 'V' }, { key: '/Robot/Power/BatteryAmps', unit: 'A' }, { key: '/Robot/Drive/Vx' }];
-assert.equal(suggestKeys('/Robot/SystemStats/BatteryVoltage', other, { unit: 'V' })[0].key, '/Robot/Power/BatteryVolts');
 assert.equal(searchMatches('battery voltage', 'Pit', ['/Robot/robot/SystemStats/BatteryVoltage']), true);
 assert.equal(searchMatches('shooter', 'Pit', ['/Robot/SystemStats/BatteryVoltage']), false);
 
 // --- Items as kept ---
 assert.equal(cleanLibraryItem({ id: 'not a uuid!', kind: 'view' }), null);
-assert.equal(cleanLibraryItem({ id: '5f0c2a10-0001-4000-8000-000000000099', kind: 'mapping', fields: {} }), null, 'a mapping needs a robot');
+// Robot mappings are gone: one left in a data folder or the team's library isn't read.
+assert.equal(cleanLibraryItem({ id: '5f0c2a10-0001-4000-8000-000000000099', kind: 'mapping', robot: 'frc254', fields: {} }), null);
 const messy = cleanLibraryItem({
   id: '5f0c2a10-0001-4000-8000-000000000099', kind: 'template', name: '  ', extra: 'dropped',
   scope: { type: 'conditions', conditions: [{ key: 'isTestEnabled' }, { nope: 1 }] },
@@ -103,3 +96,31 @@ assert.equal(integrateProduct([0, 1], [2, 4], [0.5, 2], [10, 12], 0, 3), 10 + 40
 // A value from before the start holds into it.
 assert.equal(integrateProduct([-5], [3], [-1], [12], 0, 2), 72);
 assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
+
+// --- Auto reports: one configuration, and several new logs at once ---
+{
+  const raw = { id: '5f0c2a10-0003-4000-8000-0000000000aa', kind: 'pipeline', name: 'Auto', templateIds: ['t'] };
+  // Saved before the choice existed: runs on all of them, as it did.
+  assert.equal((cleanLibraryItem(raw) as Pipeline).several, 'all');
+  assert.equal((cleanLibraryItem({ ...raw, several: 'newest' }) as Pipeline).several, 'newest');
+  assert.equal((cleanLibraryItem({ ...raw, several: 'nonsense' }) as Pipeline).several, 'all');
+  const older = { ...(cleanLibraryItem({ ...raw, created: '2026-10-01T00:00:00.000Z' }) as Pipeline), id: 'b', name: 'First' };
+  const newer = { ...(cleanLibraryItem({ ...raw, created: '2026-11-01T00:00:00.000Z' }) as Pipeline), id: 'a', name: 'Second' };
+  // The one that runs is the first made.
+  assert.equal(theAutoReport([newer, older])?.name, 'First');
+  assert.equal(theAutoReport([]), null);
+}
+
+// --- Starters brought up to date, unless someone changed them ---
+{
+  const power = starterLibrary().find((item) => item.name === 'Power Analysis') as LibraryItem & { scope: { type: string } };
+  assert.equal(power.scope.type, 'enabled');
+  const keptAsAdded = { ...power, changed: starterStamp, scope: { type: 'match' } } as LibraryItem;
+  assert.equal(outdatedStarter(keptAsAdded, power), true);
+  // Someone changed it: theirs stays.
+  assert.equal(outdatedStarter({ ...keptAsAdded, changed: '2026-11-05T10:00:00.000Z' }, power), false);
+  // Up to date already.
+  assert.equal(outdatedStarter(power, power), false);
+  // The scope is kept as read.
+  assert.deepEqual((cleanLibraryItem({ ...power, scope: { type: 'enabled' } }) as { scope: unknown }).scope, { type: 'enabled' });
+}

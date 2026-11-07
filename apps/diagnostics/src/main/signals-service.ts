@@ -39,6 +39,7 @@ import {
   hasConsole,
   hasDriverStationEnable,
   hootModes,
+  enabledSpans,
   matchPhases,
   modeEvents,
   spansWhere,
@@ -275,7 +276,7 @@ export async function deleteLog(settings: Settings, id: string): Promise<{ remov
   const { remove, kept } = filesToDelete(log, all);
 
   // Let go of it first: nothing should be reading the files.
-  if (open?.id === id) open = null;
+  openSessions.delete(id);
   opening.delete(id);
   for (const hoot of log.hoots) hootLogs.delete(hoot.localPath);
 
@@ -374,12 +375,24 @@ const hootCacheOf = (directory: string, localPath: string) =>
 const hootLogs = new Map<string, HootLog>();
 let progress: HootProgress | null = null;
 
+// Files pulled again because they changed (a log that grew): what's held
+// of them in memory goes, so they're read afresh. Their Hoot exports on disk
+// are checked against the file's size and time when next opened.
+export function forgetFiles(localPaths: string[]) {
+  const changed = new Set(localPaths);
+  for (const path of changed) hootLogs.delete(path);
+  for (const [id, session] of openSessions) {
+    const files = [session.file.localPath, ...session.file.hoots.map((h) => h.localPath), ...session.file.dsLogs.map((d) => d.localPath)];
+    if (files.some((path) => path !== null && changed.has(path))) openSessions.delete(id);
+  }
+}
+
 // So Hoot logs that couldn't be read are tried again, with the licence or
 // owlet there is now. Those already being read are left alone: they may be
 // part way through an export.
 function forgetHootLogs() {
   for (const [path, hoot] of hootLogs) if (hoot.state !== 'ready') hootLogs.delete(path);
-  open = null;
+  openSessions.clear();
 }
 
 interface Placement {
@@ -413,9 +426,12 @@ interface Session {
   events?: FoundEvents;
 }
 
-// The session open for reading. One at a time: a data log is held in
-// memory whole, and a big one is tens of MB.
-let open: Session | null = null;
+// The sessions open for reading, most recently used last. A few at once, so
+// reports on several logs can be made side by side without each reloading
+// its log; not many, since a data log is held in memory whole and a big one
+// is tens of MB.
+const openSessions = new Map<string, Session>();
+const keptSessions = 3;
 
 async function fileVersion(path: string): Promise<string> {
   const stat = await fs.stat(path).catch(() => null);
@@ -440,7 +456,12 @@ async function openSessionOnce(settings: Settings, id: string): Promise<Session>
   const absolute = (localPath: string) => join(directory, ...localPath.split('/'));
 
   // The session already open, its data log unchanged: every read lands here.
-  if (open?.id === id && (!open.file.localPath || open.version === (await fileVersion(absolute(open.file.localPath))))) return open;
+  const kept = openSessions.get(id);
+  if (kept && (!kept.file.localPath || kept.version === (await fileVersion(absolute(kept.file.localPath))))) {
+    openSessions.delete(id);
+    openSessions.set(id, kept);
+    return kept;
+  }
 
   // Only logs in the data folder: the window names the session, and it
   // mustn't be able to have any file on the computer read.
@@ -450,7 +471,8 @@ async function openSessionOnce(settings: Settings, id: string): Promise<Session>
   let dataLog: LogSignalSource | null = null;
   if (file.localPath) {
     const bytes = await fs.readFile(absolute(file.localPath));
-    open = null;
+    // Its older version, if it changed, goes.
+    openSessions.delete(id);
     dataLog = new LogSignalSource(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   }
 
@@ -496,7 +518,9 @@ async function openSessionOnce(settings: Settings, id: string): Promise<Session>
     end: dataLog ? dataLog.lastTime - dataLog.firstTime : placements.length === 0 ? Math.max(0, ...dsLogs.map((ds) => ds.log.duration)) : 0
   };
   for (const placement of placements) placement.aligned = align(session, placement).catch(() => {});
-  open = session;
+  openSessions.delete(id);
+  openSessions.set(id, session);
+  while (openSessions.size > keptSessions) openSessions.delete(openSessions.keys().next().value!);
   return session;
 }
 
@@ -886,7 +910,7 @@ function findEvents(session: Session): FoundEvents {
 }
 
 export async function sessionEvents(settings: Settings, id: string): Promise<SessionEvents> {
-  if (isLiveId(id)) return { events: [], phases: [], notes: [], pending: '' };
+  if (isLiveId(id)) return { events: [], phases: [], enabled: [], notes: [], pending: '' };
   const session = await openSession(settings, id);
   const found = (session.events ??= findEvents(session));
   // While the Hoot logs are read, robot code's own flags stand in.
@@ -894,6 +918,7 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
   const inMatch = !!session.file.match || found.fmsAttached || session.dsLogs.some((ds) => ds.events.match);
   const inSpan = (event: LogEvent) => event.start <= session.end && (event.end ?? event.start) >= session.start;
   const phases: MatchPhase[] = modes ? matchPhases(modes.changes, session.end, inMatch) : [];
+  const enabled = modes ? enabledSpans(modes.changes, session.end) : [];
   const events = [
     ...(modes ? modeEvents(modes.changes, modes.key) : []).filter(inSpan),
     ...found.dataLog,
@@ -904,6 +929,7 @@ export async function sessionEvents(settings: Settings, id: string): Promise<Ses
   return {
     events,
     phases,
+    enabled,
     notes: await loadNotes(settings, id),
     pending: found.scanning ? 'Looking for device faults in the Hoot logs…' : ''
   };

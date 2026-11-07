@@ -203,7 +203,7 @@ export const usePlotStore = defineStore('plot', {
       };
     },
     // Puts a saved view on the chart, each signal found in this log by
-    // `find` (by name, path end, or the robot's mapping). Resolves to the
+    // `find` (by name, or the end of its path). Resolves to the
     // signals it couldn't find.
     applyView(body: ViewBody, find: (key: string) => string | null): string[] {
       const missing: string[] = [];

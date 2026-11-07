@@ -5,7 +5,7 @@
 // templates are Match Report (Pit Health, Battery Health and the
 // mechanisms together), Match Review, Autonomous and Power Analysis. Named as Team
 // 973's robot code logs things (DogLog under /Robot); other robots' signals
-// are found by the end of their path, or by a robot mapping. They have fixed
+// are found by the end of their path. They have fixed
 // ids, so adding them again changes nothing.
 //
 // Nothing here may touch Node or the DOM.
@@ -38,13 +38,24 @@ function body(traces: [string, Side, ViewTrace['kind']?][], span: ViewSpan = { t
   };
 }
 
+// When the starters were first made: a starter in a library still stamped
+// with this (and by "Starter") hasn't been changed by anyone.
+export const starterStamp = '2026-11-01T00:00:00.000Z';
+
+// Starters changed since, and when. A copy nobody has changed is brought up
+// to date (see upgradeStarters); a changed one is left as its owner made it.
+//   Power Analysis: over the time the robot is enabled, not the whole log.
+export const starterRevisions: Record<string, string> = {
+  '5f0c2a10-0002-4000-8000-000000000011': '2026-11-07T00:00:00.000Z'
+};
+
 const base = (id: string, kind: LibraryItem['kind'], name: string, description: string) => ({
   id,
   kind,
   name,
   description,
-  created: '2026-11-01T00:00:00.000Z',
-  changed: '2026-11-01T00:00:00.000Z',
+  created: starterStamp,
+  changed: starterRevisions[id] ?? starterStamp,
   createdBy: 'Starter',
   robot: null,
   cloud: null
@@ -210,7 +221,7 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
     chart('Match Review', 'Mechanisms in auto', { type: 'phase', phase: 'auto' }),
     problems('Errors and warnings in auto')
   ]],
-  ['5f0c2a10-0002-4000-8000-000000000011', 'Power Analysis', "Where the battery's energy goes over the match, in watt-hours: each motor's share, and each subsystem's. From the robot code's log (each motor's supply current times the battery's voltage), and from the Hoot logs alone (each TalonFX's own supply voltage and current).", { type: 'match' }, [
+  ['5f0c2a10-0002-4000-8000-000000000011', 'Power Analysis', "Where the battery's energy goes while the robot is enabled, in watt-hours: each motor's share, and each subsystem's. From the robot code's log (each motor's supply current times the battery's voltage), and from the Hoot logs alone (each TalonFX's own supply voltage and current).", { type: 'enabled' }, [
     { type: 'summary' },
     problems('Errors and warnings'),
     { type: 'heading', text: "From the robot code's log" },
@@ -224,14 +235,15 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
 
 const pipeline: Pipeline = {
   ...base('5f0c2a10-0003-4000-8000-000000000001', 'pipeline', 'After each qualification match',
-    'Match Review and Match Report for every qualification match downloaded. Off until someone turns it on.'),
+    'Every report template on every qualification match downloaded. Off until someone turns it on.'),
   kind: 'pipeline',
   enabled: false,
   onOffload: true,
   onImport: false,
   robots: [],
   matchTypes: ['qualification'],
-  templateIds: ['5f0c2a10-0002-4000-8000-000000000005', '5f0c2a10-0002-4000-8000-000000000010']
+  templateIds: ['5f0c2a10-0002-4000-8000-000000000005', '5f0c2a10-0002-4000-8000-000000000010'],
+  several: 'all'
 };
 
 export function starterLibrary(): LibraryItem[] {
@@ -240,4 +252,10 @@ export function starterLibrary(): LibraryItem[] {
     ...templates.map(([id, name, description, scope, sections]): ReportTemplate => ({ ...base(id, 'template', name, description), kind: 'template', scope, sections })),
     pipeline
   ];
+}
+
+// Whether a starter kept in a library should be replaced by the starter as
+// it is now: nobody has changed it, and the starter has changed since.
+export function outdatedStarter(kept: LibraryItem, starter: LibraryItem): boolean {
+  return kept.id === starter.id && kept.createdBy === 'Starter' && kept.changed === starterStamp && starter.changed !== starterStamp;
 }

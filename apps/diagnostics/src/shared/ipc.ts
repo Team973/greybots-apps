@@ -11,6 +11,7 @@ import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
 import type { RobotModel, SignalRecords } from './plots';
 import type { PipelineRun, PipelineStatus } from './reports';
+import type { ReportExport, ReportImport } from './report-files';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
 
@@ -246,6 +247,15 @@ export interface DiagnosticsApi {
   // Saves a report as a PDF, asking where: the whole report, laid out for
   // Letter paper. Resolves to where it was saved, or '' if cancelled.
   savePdf(reportId: string): Promise<string>;
+  // Every report, as PDFs and their JSON, into a new folder in one picked.
+  // Null if no folder was picked.
+  exportReports(): Promise<ReportExport | null>;
+  // Stops every report being run or waiting to be (auto reports too): each
+  // stops at its next step, and nothing of it is saved.
+  cancelReports(): Promise<void>;
+  // Reports from .json files picked (an export's, or another data folder's).
+  // Null if none were picked.
+  importReports(): Promise<ReportImport | null>;
   // The greybots-apps account the library's shared with the team through.
   getAccount(): Promise<AccountStatus>;
   signIn(email: string, password: string): Promise<AccountStatus>;
@@ -303,6 +313,9 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'runPipeline',
   'getPipelineStatus',
   'savePdf',
+  'exportReports',
+  'cancelReports',
+  'importReports',
   'getAccount',
   'signIn',
   'signOut',
