@@ -82,7 +82,7 @@ watch(() => route.query.report, async (id) => {
   openReport.value = typeof id === 'string' ? await window.diagnostics.getReport(id).catch(() => null) : null;
 }, { immediate: true });
 
-// Running one template on the logs picked from the list: a few logs at a
+// Running one template on the logs selected from the list: a few logs at a
 // time (the main process keeps three open). Logs that already have a report
 // from it are left out unless asked.
 const batchTemplate = ref('');
@@ -245,7 +245,7 @@ function selectAllShown(on: boolean) {
   }
   selected.value = next;
 }
-// The picked logs it would run on.
+// The selected logs it would run on.
 const batchTargets = computed(() => cards.value.filter((card) => card.log && selected.value.has(card.id) &&
   (batchAgain.value || !card.reports.some((r) => r.templateId === batchTemplate.value))));
 const batchLabel = computed(() => {
@@ -485,8 +485,8 @@ onUnmounted(() => clearInterval(statusTimer));
           <label class="chip"><input v-model="batchAgain" type="checkbox" /><span>Run again on logs that already have it</span></label>
         </div>
         <p class="hint small">
-          Pick the logs below: tick them, or narrow the list with the filter and pick every one shown.
-          {{ selected.size }} picked<template v-if="selected.size && batchTargets.length < selected.size">, {{ selected.size - batchTargets.length }} already have it</template>.
+          Select the logs below: tick them, or narrow the list with the filter and select all shown.
+          {{ selected.size }} selected<template v-if="selected.size && batchTargets.length < selected.size">, {{ selected.size - batchTargets.length }} already have it</template>.
         </p>
       </template>
     </section>
@@ -512,10 +512,16 @@ onUnmounted(() => clearInterval(statusTimer));
           <label class="chip"><input id="report-analyzed-only" v-model="cardFilter.analyzedOnly" type="checkbox" /><span>Only logs with reports</span></label>
         </span>
       </div>
-      <label v-if="selectable.length" class="pick-all">
-        <input type="checkbox" class="pick-box" :checked="allShownSelected" @change="selectAllShown(($event.target as HTMLInputElement).checked)" />
-        Pick all {{ selectable.length }} shown<template v-if="selected.size"> · {{ selected.size }} picked</template>
-      </label>
+      <div v-if="selectable.length || selected.size" class="select-row">
+        <label v-if="selectable.length" class="pick-all">
+          <input id="select-all-shown" type="checkbox" class="pick-box" :checked="allShownSelected" @change="selectAllShown(($event.target as HTMLInputElement).checked)" />
+          Select all {{ selectable.length }} shown
+        </label>
+        <template v-if="selected.size">
+          <span class="hint small">{{ selected.size }} selected</span>
+          <md-outlined-button id="deselect-all" class="small-button" @click="selected = new Set()">Deselect all</md-outlined-button>
+        </template>
+      </div>
       <p v-if="reports.length === 0 && cardFilter.analyzedOnly" class="hint">
         No reports yet. They're run here, or automatically when logs are downloaded or imported (Auto reports).
       </p>
@@ -524,7 +530,7 @@ onUnmounted(() => clearInterval(statusTimer));
         <article v-for="card in shownCards.slice(0, cardLimit)" :key="card.id" class="log-card clickable" :class="{ gone: !card.log }"
           @click="go({ tab: 'reports', log: card.id })">
           <header>
-            <input v-if="card.log" type="checkbox" class="pick-box" :checked="isSelected(card)" :aria-label="`Pick ${card.title}`"
+            <input v-if="card.log" type="checkbox" class="pick-box" :checked="isSelected(card)" :aria-label="`Select ${card.title}`"
               @click.stop @change="setSelected(card, ($event.target as HTMLInputElement).checked)" />
             <div class="card-title">
               <a href="#" class="card-name" @click.prevent>{{ card.title }}</a>
@@ -784,6 +790,17 @@ select option {
   margin: 2px 0 0;
   accent-color: var(--md-sys-color-primary);
   cursor: pointer;
+}
+
+.select-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.small-button {
+  --md-outlined-button-container-height: 32px;
 }
 
 .pick-all {
