@@ -23,8 +23,18 @@ export interface CanvasItem {
   outline?: boolean;
 }
 
+// A heatmap on the field: squares `cell` metres across, each as solid as
+// its share (0 to 1), in one colour. Several overlaid are told apart by it.
+export interface HeatLayer {
+  key: string;
+  color: string;
+  cell: number;
+  cells: { col: number; row: number; share: number }[];
+}
+
 const props = defineProps<{
   items: CanvasItem[];
+  heat?: HeatLayer[];
   season: string;
   rotation: FieldRotation;
   robotSize: number;
@@ -91,6 +101,20 @@ function draw() {
     ctx.drawImage(image, X(-f.left / pxPerMetreX), Y(f.bottom / pxPerMetreY), (image.width / pxPerMetreX) * s, (image.height / pxPerMetreY) * s);
     ctx.restore();
   }
+
+  // Heatmaps, under the robots: the faintest still seen, the strongest
+  // most of the way solid.
+  for (const layer of props.heat ?? []) {
+    ctx.fillStyle = layer.color;
+    const size = layer.cell * s;
+    for (const { col, row, share } of layer.cells) {
+      if (share <= 0) continue;
+      ctx.globalAlpha = 0.12 + 0.68 * share;
+      // The square's corner nearest the field's origin is at (col, row) cells; y is up.
+      ctx.fillRect(X(col * layer.cell), Y((row + 1) * layer.cell), size, size);
+    }
+  }
+  ctx.globalAlpha = 1;
 
   const robot = props.robotSize * s;
   for (const { color, style, opacity, poses, history, outline } of props.items) {
@@ -169,7 +193,7 @@ function draw() {
   }
 }
 
-watch([() => props.items, drawWidth, height, imageReady, () => props.rotation, () => props.robotSize], () => requestAnimationFrame(draw));
+watch([() => props.items, () => props.heat, drawWidth, height, imageReady, () => props.rotation, () => props.robotSize], () => requestAnimationFrame(draw));
 
 let observer: ResizeObserver | undefined;
 onMounted(() => {

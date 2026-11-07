@@ -4,6 +4,8 @@
 //
 // Nothing here may touch Node or the DOM.
 
+import type { HeatMeasure } from './field-heat';
+
 export type PanelType = 'field' | 'console' | 'pie' | 'robot3d';
 
 export const panelLabels: Record<PanelType, string> = {
@@ -17,8 +19,9 @@ export const panelLabels: Record<PanelType, string> = {
 export type PanelColor = number | string;
 
 // How a pose signal is drawn on the field: a robot (a square the size of
-// one, with its heading), a path through its poses (a trajectory), or dots.
-export type FieldStyle = 'robot' | 'path' | 'points';
+// one, with its heading), a path through its poses (a trajectory), dots, or
+// a heatmap of where it was over the span shown (see field-heat.ts).
+export type FieldStyle = 'robot' | 'path' | 'points' | 'heat';
 
 export interface FieldItem {
   key: string;
@@ -26,6 +29,10 @@ export interface FieldItem {
   color: PanelColor;
   // How solid a robot's fill is, 0 (just the border) to 1.
   opacity: number;
+  // A heatmap's: what it measures in each square, and of which signal
+  // (none for time spent there).
+  measure?: HeatMeasure;
+  value?: string;
 }
 
 export type FieldRotation = 0 | 90 | 180 | 270;
@@ -135,7 +142,7 @@ export function newPanel(type: PanelType, id: string, season: string): PlotPanel
 export function panelKeys(panel: PlotPanel): string[] {
   switch (panel.type) {
     case 'field':
-      return panel.items.map((item) => item.key);
+      return panel.items.flatMap((item) => (item.style === 'heat' && item.value ? [item.key, item.value] : [item.key]));
     case 'console':
       return panel.key ? [panel.key] : [];
     case 'pie':
@@ -410,9 +417,13 @@ export function cleanPanel(raw: unknown): PlotPanel | null {
             const i = item as Record<string, unknown>;
             return {
               key: text(i.key),
-              style: (['robot', 'path', 'points'] as const).find((s) => s === i.style) ?? 'robot',
+              style: (['robot', 'path', 'points', 'heat'] as const).find((s) => s === i.style) ?? 'robot',
               color: cleanColor(i.color),
-              opacity: typeof i.opacity === 'number' && i.opacity >= 0 && i.opacity <= 1 ? i.opacity : 1
+              opacity: typeof i.opacity === 'number' && i.opacity >= 0 && i.opacity <= 1 ? i.opacity : 1,
+              ...(i.style === 'heat' ? {
+                measure: (['time', 'mean', 'increase'] as const).find((m) => m === i.measure) ?? 'time',
+                ...(text(i.value) ? { value: text(i.value) } : {})
+              } : {})
             };
           })
       };
@@ -462,7 +473,7 @@ export function mapPanelKeys(panel: PlotPanel, find: (key: string) => string | n
   const map = (key: string) => (key ? find(key) ?? key : key);
   switch (panel.type) {
     case 'field':
-      return { ...panel, items: panel.items.map((item) => ({ ...item, key: map(item.key) })) };
+      return { ...panel, items: panel.items.map((item) => ({ ...item, key: map(item.key), ...(item.value ? { value: map(item.value) } : {}) })) };
     case 'console':
       return { ...panel, key: map(panel.key) };
     case 'pie':

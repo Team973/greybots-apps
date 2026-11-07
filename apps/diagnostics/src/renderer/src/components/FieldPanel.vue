@@ -17,10 +17,11 @@ import {
 } from '@shared/plots';
 import type { SignalInfo } from '@shared/signals';
 import ColorPicker from '@/components/ColorPicker.vue';
-import FieldCanvas, { type CanvasItem } from '@/components/FieldCanvas.vue';
+import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
+import { defaultHeatCell, fieldHeat, heatMeasureLabels, heatPeak, heatShares, type HeatMeasure } from '@shared/field-heat';
 import { fieldImages } from '@/fields';
 import { palette } from '@/palette';
-import { useRecords } from '@/panel-data';
+import { useRecords, useSeries } from '@/panel-data';
 
 // Poses on the field (#144): robots as squares the size of one, with their
 // heading, where they've been behind them; trajectories as paths. At the
@@ -87,8 +88,11 @@ function rotate() {
 // moment shown (with its trail behind), so it's read around that moment:
 // a read over a long span keeps only its latest values (see poseWindow).
 const session = computed(() => props.session);
-const pathKeys = computed(() => props.panel.items.filter((item) => item.style === 'path').map((item) => item.key));
-const momentKeys = computed(() => props.panel.items.filter((item) => item.style !== 'path').map((item) => item.key));
+// Heatmaps are over the span shown too, with the signal each measures.
+const overSpan = (item: FieldItem) => item.style === 'path' || item.style === 'heat';
+const pathKeys = computed(() => props.panel.items.filter(overSpan).map((item) => item.key));
+const momentKeys = computed(() => props.panel.items.filter((item) => !overSpan(item)).map((item) => item.key));
+const valueKeys = computed(() => props.panel.items.filter((item) => item.style === 'heat' && item.measure !== 'time' && item.value).map((item) => item.value!));
 const pathSpan = computed<[number, number]>(() => [props.span[0], props.span[1]]);
 const momentSpan = computed<[number, number]>(() => {
   const [from, to] = poseWindow(props.time);
@@ -97,7 +101,8 @@ const momentSpan = computed<[number, number]>(() => {
 const paths = useRecords(session, pathKeys, pathSpan);
 // Read again when the span shown moves too: following live, that is new data.
 const moments = useRecords(session, momentKeys, momentSpan, undefined, () => props.span[1]);
-const error = computed(() => [...new Set([paths.error.value, moments.error.value].filter(Boolean))].join(' '));
+const values = useSeries(session, valueKeys, pathSpan);
+const error = computed(() => [...new Set([paths.error.value, moments.error.value, values.error.value].filter(Boolean))].join(' '));
 
 interface Drawn {
   item: FieldItem;
@@ -109,7 +114,7 @@ interface Drawn {
 }
 
 const drawn = computed<Drawn[]>(() => props.panel.items.map((item) => {
-  const found = (item.style === 'path' ? paths : moments).records.value.get(item.key);
+  const found = (overSpan(item) ? paths : moments).records.value.get(item.key);
   if (!found) return { item, type: '', poses: [], history: [] };
   const poses = posesFrom(recordAt(found, props.time), found.type);
   let history: Pose[] = [];
@@ -129,7 +134,32 @@ const drawn = computed<Drawn[]>(() => props.panel.items.map((item) => {
 // --- Drawing ---
 
 const fieldCanvas = ref<InstanceType<typeof FieldCanvas> | null>(null);
-const canvasItems = computed<CanvasItem[]>(() => drawn.value.map(({ item, poses, history }) => ({
+// Each heatmap: where its pose was over the span shown, and what it
+// measures there (field-heat.ts).
+const heats = computed(() => new Map(props.panel.items.filter((item) => item.style === 'heat').map((item) => {
+  const found = paths.records.value.get(item.key);
+  const measure: HeatMeasure = item.measure ?? 'time';
+  if (!found) return [item.key, null] as const;
+  const track = { times: [] as number[], x: [] as number[], y: [] as number[] };
+  for (let i = 0; i < found.times.length; i++) {
+    const pose = posesFrom(found.values[i], found.type)[0];
+    if (!pose) continue;
+    track.times.push(found.times[i]);
+    track.x.push(pose.x);
+    track.y.push(pose.y);
+  }
+  const series = measure !== 'time' && item.value ? values.series.value.get(item.value) : null;
+  const signal = series && series.values instanceof Float64Array ? { times: series.times, values: series.values } : null;
+  // Measuring a signal that isn't read (yet): nothing, rather than time.
+  if (measure !== 'time' && !signal) return [item.key, null] as const;
+  return [item.key, fieldHeat(track, signal, measure, defaultHeatCell, [props.span])] as const;
+})));
+const heatLayers = computed<HeatLayer[]>(() => props.panel.items.flatMap((item) => {
+  const heat = heats.value.get(item.key);
+  return item.style === 'heat' && heat ? [{ key: item.key, color: colorOf(item.color), cell: heat.cell, cells: heatShares(heat) }] : [];
+}));
+
+const canvasItems = computed<CanvasItem[]>(() => drawn.value.filter(({ item }) => item.style !== 'heat').map(({ item, poses, history }) => ({
   key: item.key,
   color: colorOf(item.color),
   style: item.style,
@@ -140,7 +170,16 @@ const canvasItems = computed<CanvasItem[]>(() => drawn.value.map(({ item, poses,
 // Where the pointer is, in field metres.
 const pointer = ref<{ x: number; y: number } | null>(null);
 
+const peakText = (value: number, measure: HeatMeasure) =>
+  measure === 'time' ? `${value.toFixed(1)} s` : Math.abs(value) >= 100 ? value.toFixed(0) : value.toPrecision(3);
 const legend = computed(() => drawn.value.map(({ item, poses }) => {
+  if (item.style === 'heat') {
+    const heat = heats.value.get(item.key);
+    const peak = heat ? heatPeak(heat) : null;
+    const where = !heat ? (item.measure && item.measure !== 'time' && !item.value ? 'Pick a signal' : '—')
+      : peak === null ? 'Nowhere in the span' : `${heat.cells.length} squares, the most ${peakText(peak, heat.measure)}`;
+    return { key: item.key, color: colorOf(item.color), label: labelOf(item.key), where };
+  }
   const pose = poses.length === 1 ? poses[0] : null;
   const where = pose
     ? `${pose.x.toFixed(2)}, ${pose.y.toFixed(2)} m${pose.heading ? `, ${((yawOf(pose) * 180) / Math.PI).toFixed(0)}°` : ''}`
@@ -151,8 +190,12 @@ const legend = computed(() => drawn.value.map(({ item, poses }) => {
 const styles: { id: FieldStyle; label: string }[] = [
   { id: 'robot', label: 'Robot' },
   { id: 'path', label: 'Path' },
-  { id: 'points', label: 'Dots' }
+  { id: 'points', label: 'Dots' },
+  { id: 'heat', label: 'Heatmap' }
 ];
+const measures = Object.entries(heatMeasureLabels) as [HeatMeasure, string][];
+// What a heatmap can measure: any number.
+const numbers = computed(() => props.signals.filter((s) => s.kind === 'number' && s.count !== 0));
 const trails = [0, 1, 2, 5, 10, 30];
 
 // The field as a picture, for copying.
@@ -194,7 +237,7 @@ defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
       <span v-if="pointer" class="hint small">{{ pointer.x.toFixed(2) }}, {{ pointer.y.toFixed(2) }} m</span>
     </div>
 
-    <FieldCanvas ref="fieldCanvas" :items="canvasItems" :season="panel.season" :rotation="panel.rotation" :robot-size="panel.robotSize"
+    <FieldCanvas ref="fieldCanvas" :items="canvasItems" :heat="heatLayers" :season="panel.season" :rotation="panel.rotation" :robot-size="panel.robotSize"
       :max-height="maxHeight" @pointer="pointer = $event" />
     <p v-if="error" class="error-text small">{{ error }}</p>
 
@@ -215,6 +258,17 @@ defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
             <input type="range" min="0" max="1" step="0.05" :value="panel.items[i].opacity" :aria-label="`Opacity of ${row.key}`"
               title="How solid the robot is" @input="updateItem(i, { opacity: Number(($event.target as HTMLInputElement).value) })" />
           </td>
+          <td v-else-if="panel.items[i].style === 'heat'" class="heat-settings">
+            <select :value="panel.items[i].measure ?? 'time'" :aria-label="`What the heatmap of ${row.key} measures`"
+              @change="updateItem(i, { measure: ($event.target as HTMLSelectElement).value as HeatMeasure })">
+              <option v-for="[id, label] in measures" :key="id" :value="id">{{ label }}</option>
+            </select>
+            <select v-if="(panel.items[i].measure ?? 'time') !== 'time'" :value="panel.items[i].value ?? ''" :aria-label="`The signal the heatmap of ${row.key} measures`"
+              @change="updateItem(i, { value: ($event.target as HTMLSelectElement).value || undefined })">
+              <option value="">Pick a signal (or click one in the list)…</option>
+              <option v-for="s in numbers" :key="s.key" :value="s.key">{{ labelOf(s.key) }}</option>
+            </select>
+          </td>
           <td v-else></td>
           <td class="number small">{{ row.where }}</td>
           <td><button class="remove" :aria-label="`Remove ${row.key}`" @click="removeItem(i)">✕</button></td>
@@ -222,6 +276,10 @@ defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
       </tbody>
     </table>
     <p v-else class="hint small">Add a pose: a robot's pose estimate, a vision measurement, a trajectory.</p>
+    <p v-if="panel.items.some((i) => i.style === 'heat')" class="hint small">
+      A heatmap is over the span shown, in half-metre squares: where the pose spent its time, a signal's average while it was there,
+      or how much a counter (a camera's frames used, say) went up while it was there.
+    </p>
   </div>
 </template>
 
@@ -255,6 +313,16 @@ defineExpose({ image: () => fieldCanvas.value?.image() ?? null });
 
 .items input[type='range'] {
   width: 70px;
+}
+
+.heat-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.heat-settings select {
+  max-width: 220px;
 }
 
 .swatch-cell {

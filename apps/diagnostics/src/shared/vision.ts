@@ -6,6 +6,7 @@
 //
 // Nothing here may touch Node or the DOM.
 
+import { fieldHeat, type FieldHeat } from './field-heat';
 import { measurementGap, monitorSettings, valueAt, visionCameras, type Lookup, type Series } from './monitors';
 
 export type VisionState = 'valid' | 'thrown' | 'noTargets' | 'noData';
@@ -47,6 +48,9 @@ export interface VisionCamera {
   // where it gave one; radians), and how far that was from the fused pose.
   // Not in reports made before these were kept.
   measured?: VisionTrack & { meters: number[]; degrees: (number | null)[] };
+  // Where on the field it had valid targets: its frames used, by where the
+  // fused pose was when they came. Not in reports made before this.
+  validHeat?: FieldHeat;
 }
 
 // Poses over time, rounded to a millimetre and a thousandth of a radian.
@@ -78,6 +82,24 @@ export function counterIncrease(series: Series, a: number, b: number): number {
   const from = at(a);
   const to = at(b);
   return to >= from ? to - from : to;
+}
+
+// Where a camera's frames were used, from each of its valid counters, the
+// squares added together.
+function validHeat(where: { times: ArrayLike<number>; x: ArrayLike<number>; y: ArrayLike<number> }, counters: Series[], spans: [number, number][]): FieldHeat {
+  const sums = new Map<string, { col: number; row: number; value: number }>();
+  let heat: FieldHeat | null = null;
+  for (const counter of counters) {
+    // The fused pose is logged a few times a second; a still robot's less.
+    heat = fieldHeat(where, counter, 'increase', undefined, spans, 5);
+    for (const c of heat.cells) {
+      const key = `${c.col},${c.row}`;
+      const at = sums.get(key) ?? { col: c.col, row: c.row, value: 0 };
+      at.value += c.value;
+      sums.set(key, at);
+    }
+  }
+  return { cell: heat?.cell ?? fieldHeat(where, null, 'time').cell, measure: 'increase', cells: [...sums.values()] };
 }
 
 // --- Where on the field ---
@@ -127,6 +149,8 @@ export function visionSummary(lookup: Lookup, available: readonly string[], span
   const fx = lookup(`${fused}/translation/x`)?.series;
   const fy = lookup(`${fused}/translation/y`)?.series;
   const fr = lookup(`${fused}/rotation/value`)?.series;
+  // The fused pose as a track, for the cameras' heatmaps.
+  const where = fx && fy ? { times: fx.times, x: fx.values, y: Array.from(fx.times, (t) => valueAt(fy, t) ?? 0) } : null;
   const cameras = visionCameras(available).map((camera): VisionCamera => {
     const prefix = `${camera.provider}/perf/`;
     const counters = available
@@ -183,7 +207,8 @@ export function visionSummary(lookup: Lookup, available: readonly string[], span
       usedShare: withTargets > 0 ? totals.valid / withTargets : null,
       bins: binCounts,
       pose: { measurements, meanMeters: measurements ? sum / measurements : null, maxMeters, maxDegrees },
-      measured
+      measured,
+      ...(where ? { validHeat: validHeat(where, counters.filter((c) => c.state === 'valid').map((c) => c.series), spans) } : {})
     };
   });
   const track: VisionTrack = { times: [], x: [], y: [], heading: [] };

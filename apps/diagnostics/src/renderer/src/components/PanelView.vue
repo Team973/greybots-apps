@@ -106,7 +106,15 @@ function add(signal: SignalInfo) {
     case 'field': {
       // A pose's field (its x, say) stands for the pose.
       const pose = signal.parent ? byKey.value.get(signal.parent) : signal;
-      if (!pose || !isPoseType(pose.type)) message.value = 'The field shows poses: Pose2d, Pose3d, and lists of them.';
+      // A number, with a heatmap on the field: what the heatmap measures (the
+      // one still without a signal, or the last).
+      const heats = panel.items.filter((i) => i.style === 'heat');
+      if (signal.kind === 'number' && !(pose && isPoseType(pose.type)) && heats.length) {
+        const target = heats.find((i) => !i.value) ?? heats[heats.length - 1];
+        update({ ...panel, items: panel.items.map((i) => (i === target ? { ...i, value: signal.key, measure: i.measure && i.measure !== 'time' ? i.measure : 'mean' } : i)) });
+        return;
+      }
+      if (!pose || !isPoseType(pose.type)) message.value = 'The field shows poses: Pose2d, Pose3d, and lists of them. With a heatmap on it, a number is what the heatmap measures.';
       else if (!panel.items.some((i) => i.key === pose.key) && panel.items.length < maxFieldItems) {
         const used = new Set(panel.items.map((i) => i.color));
         const color = [...Array(maxFieldItems).keys()].find((slot) => !used.has(slot)) ?? 0;

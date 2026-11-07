@@ -12,7 +12,8 @@ import { colorFor, palette } from '@/palette';
 import { eventColor, severityColor } from '@/review';
 import { allianceFrom, visionStates, zoneAt, zoneLabels, type Alliance, type VisionCamera, type VisionState, type VisionTrack } from '@shared/vision';
 import { defaultRobotSize, type Pose } from '@shared/plots';
-import FieldCanvas, { type CanvasItem } from '@/components/FieldCanvas.vue';
+import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
+import { heatPeak, heatShares } from '@shared/field-heat';
 import { seasonFor } from '@/fields';
 
 // A report as it was made: its charts from the data kept with it, so it
@@ -363,6 +364,26 @@ function pinnedBin(i: number, section: VisionSection): number | null {
 }
 const pinStyle = (bin: number, bins: number) => ({ left: `${(bin / bins) * 100}%`, width: `${100 / bins}%` });
 
+// --- Where each camera had valid targets ---
+// Each camera's frames used, by where the robot was, overlaid on one field
+// in the camera's colour, on one scale (so a camera that used more shows
+// stronger). Each can be hidden, to see the others under it.
+const hiddenCameras = reactive<Record<string, boolean>>({});
+const heatKey = (i: number, name: string) => `${i}:${name}`;
+const visionHeat = computed(() => props.report.sections.map((section, i) => {
+  if (section.type !== 'vision' || !section.summary.cameras.some((c) => c.validHeat?.cells.length)) return null;
+  const shown = section.summary.cameras.map((camera, index) => ({ camera, index }))
+    .filter(({ camera }) => camera.validHeat && !hiddenCameras[heatKey(i, camera.name)]);
+  const top = Math.max(0, ...shown.map(({ camera }) => heatPeak(camera.validHeat!) ?? 0));
+  const layers: HeatLayer[] = shown.map(({ camera, index }) => ({
+    key: camera.name,
+    color: cameraColor(index),
+    cell: camera.validHeat!.cell,
+    cells: heatShares(camera.validHeat!, top || undefined)
+  }));
+  return { layers, top };
+}));
+
 const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
 const meters = (value: number | null) => (value === null ? '—' : `${value.toFixed(2)} m`);
 
@@ -617,6 +638,27 @@ const at = (t: number) => {
               </div>
             </template>
           </div>
+          <template v-if="visionHeat[i]">
+            <h4 class="sub">Where each camera had valid targets</h4>
+            <div class="vision-field">
+              <FieldCanvas :items="[]" :heat="visionHeat[i]!.layers" :season="seasonFor(section.recorded)" :rotation="0"
+                :robot-size="defaultRobotSize" :max-height="paper ? 260 : 360" />
+              <div class="small">
+                <p class="hint">
+                  Frames each camera used, by where the robot was (half-metre squares), overlaid in its colour. The most solid square is
+                  {{ visionHeat[i]!.top }} frames; the rest by how many of that.
+                </p>
+                <div class="heat-cameras">
+                  <button v-for="(camera, c) in section.summary.cameras.filter((cam) => cam.validHeat)" :key="camera.name" class="chip"
+                    :aria-pressed="!hiddenCameras[heatKey(i, camera.name)]" :disabled="paper"
+                    @click="hiddenCameras[heatKey(i, camera.name)] = !hiddenCameras[heatKey(i, camera.name)]">
+                    <span class="swatch" :style="{ background: cameraColor(section.summary.cameras.indexOf(camera)) }"></span>
+                    {{ camera.name }} · {{ camera.totals.valid }} used
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
           <template v-if="visionCharts[i]">
             <h4 class="sub">Distance from the fused pose</h4>
             <PlotChart :lines="visionCharts[i]!.distance" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
@@ -878,6 +920,30 @@ h4 {
   grid-template-columns: 1fr;
 }
 
+.heat-cameras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.heat-cameras .chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.heat-cameras .chip[aria-pressed='false'] {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.heat-cameras .swatch,
 .vision-field .swatch {
   display: inline-block;
   width: 10px;
