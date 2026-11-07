@@ -51,8 +51,8 @@ const viewIds = new Set(starters.filter((s) => s.kind === 'view').map((s) => s.i
 for (const t of starters) {
   if (t.kind !== 'template') continue;
   for (const s of t.sections) if (s.type === 'chart') assert.ok(s.viewId && viewIds.has(s.viewId), `${t.name}: ${s.title}`);
-  // Monitors and vision sections find their own signals.
-  assert.ok(templateKeys(t.sections, t.scope).length > 0 || t.sections.some((s) => s.type === 'monitors' || s.type === 'vision'), t.name);
+  // Monitors, vision and device sections find their own signals.
+  assert.ok(templateKeys(t.sections, t.scope).length > 0 || t.sections.some((s) => s.type === 'monitors' || s.type === 'vision' || s.type === 'devices'), t.name);
 }
 const pipeline = starters.find((s) => s.kind === 'pipeline')!;
 assert.equal(pipeline.kind === 'pipeline' && pipeline.enabled, false, 'the starter pipeline starts off');

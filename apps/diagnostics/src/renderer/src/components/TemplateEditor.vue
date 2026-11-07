@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import { deviceLines, parseDeviceLines } from '@shared/devices';
 import { eventKinds, type EventKind } from '@shared/events';
 import { monitorCatalog } from '@shared/monitors';
 import {
@@ -48,6 +49,7 @@ function newSection(type: ReportSectionType): ReportSection {
     case 'events': return { type, title: 'Errors and warnings', kinds: [], problemsOnly: true };
     case 'monitors': return { type, title: 'Monitors', ids: [] };
     case 'vision': return { type, title: 'Vision system' };
+    case 'devices': return { type, title: 'Device health', devices: [] };
   }
 }
 
@@ -204,6 +206,16 @@ const canSave = () => draft.value.name.trim() !== '';
           </label>
         </div>
         <p class="hint small">None ticked runs every monitor. Their bounds are in the code (monitorSettings, src/shared/monitors.ts).</p>
+      </template>
+      <template v-else-if="section.type === 'devices'">
+        <input v-model="section.title" aria-label="Device health title" maxlength="120" />
+        <textarea :value="deviceLines(section.devices)" rows="8" aria-label="Devices, one per line"
+          placeholder="TalonFX-2, Module 0 drive, canivore"
+          @change="section.devices = parseDeviceLines(($event.target as HTMLTextAreaElement).value)"></textarea>
+        <p class="hint small">
+          A device a line: its name in the Hoot logs, what it is, and its bus (rio or canivore). Each must be in its bus's Hoot log and logging
+          all through the span, with no fault while it's on: any of those is an error (current limits and sticky faults are information).
+        </p>
       </template>
       <template v-else-if="section.type === 'vision'">
         <input v-model="section.title" aria-label="Vision title" maxlength="120" />

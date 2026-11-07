@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { checkDevices, deviceProblems, loggingSignal, type DeviceFound, type DeviceHealth, type DeviceSpec, type HootFound } from '@shared/devices';
 import { phaseLabels, type LogEvent, type MatchPhase, type SessionEvents } from '@shared/events';
 import type { SignalLogFile } from '@shared/ipc';
 import {
@@ -291,6 +292,19 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
       if (voltage) wanted.add(voltage);
     }
   }
+  // Device Health: which Hoot log each device listed is in, and its logging
+  // signal, exported with the rest. Not looked up as a signal asked for: a
+  // device missing is an error of its own, not a signal missing.
+  const allKeys = summary.signals.map((s) => s.key);
+  const deviceSpecs = template.sections.flatMap((s) => (s.type === 'devices' ? s.devices : []));
+  const deviceHoot = new Map<string, string | null>();
+  for (const spec of deviceSpecs) {
+    if (deviceHoot.has(spec.device)) continue;
+    const hoot = status.hoots.find((h) => allKeys.some((k) => k.startsWith(`${h.label}/${spec.device}/`)))?.label ?? null;
+    deviceHoot.set(spec.device, hoot);
+    const key = hoot ? `${hoot}/${loggingSignal(spec.device)}` : '';
+    if (key && allKeys.includes(key)) wanted.add(key);
+  }
   // Hoot signals exported all at once, rather than one by one as read.
   stopIfCancelled();
   await prepareSignals(settings, logId, [...wanted]);
@@ -311,7 +325,26 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
   }));
   const events = [...review.events, ...notes].filter(inSpans).sort((a, b) => a.start - b.start);
   const monitors = (review.monitors ?? []).map((result) => ({ ...result, alarms: result.alarms.filter(inSpans) }));
-  const problems = reportProblems(template.sections, events, monitors);
+  // Each device's logging and faults, for every Device Health section.
+  const deviceFound = new Map<string, DeviceFound>();
+  for (const spec of deviceSpecs) {
+    if (deviceFound.has(spec.device)) continue;
+    const hoot = deviceHoot.get(spec.device) ?? null;
+    const key = hoot ? `${hoot}/${loggingSignal(spec.device)}` : '';
+    const series = key && allKeys.includes(key)
+      ? await readSignal(settings, logId, key, { start: spans[0][0], end: spans[spans.length - 1][1] }).catch(() => null)
+      : null;
+    const faults = hoot ? events.filter((e) => e.kind === 'fault' && (e.key ?? '').startsWith(`${hoot}/${spec.device}/`)) : [];
+    deviceFound.set(spec.device, { hoot, times: series ? series.times : null, faults });
+  }
+  const found = (device: string): DeviceFound => deviceFound.get(device) ?? { hoot: null, times: null, faults: [] };
+  const hootsFound: HootFound[] = status.hoots.map((h) => ({ bus: h.bus, label: h.label, name: h.localPath.split('/').pop() ?? h.localPath, state: h.state, message: h.message }));
+  const deviceHealth = (specs: DeviceSpec[]): DeviceHealth =>
+    checkDevices(specs, file.localPath ? file.localPath.split('/').pop() ?? file.localPath : null, hootsFound, found, spans);
+  const devicesProblems = template.sections.flatMap((s) => (s.type === 'devices' ? deviceProblems(deviceHealth(s.devices), spans, found) : []));
+  const problems = [...reportProblems(template.sections, events, monitors), ...devicesProblems]
+    .filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i)
+    .sort((a, b) => a.start - b.start);
   const listsEvents = template.sections.some((s) => s.type === 'events');
 
   const sections: RenderedSection[] = [];
@@ -439,6 +472,9 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         sections.push({ type: 'vision', title: section.title, summary: visionSummary(lookup, keys, spans), alarms, recorded: file.recorded });
         break;
       }
+      case 'devices':
+        sections.push({ type: 'devices', title: section.title, health: deviceHealth(section.devices) });
+        break;
     }
   }
 

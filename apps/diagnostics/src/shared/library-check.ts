@@ -95,6 +95,16 @@ function cleanSection(raw: Raw): ReportSection | null {
       return { type: 'monitors', title: text(raw.title), ids: strings(raw.ids, 40) };
     case 'vision':
       return { type: 'vision', title: text(raw.title) };
+    case 'devices':
+      return {
+        type: 'devices',
+        title: text(raw.title),
+        devices: (Array.isArray(raw.devices) ? raw.devices : [])
+          .filter(isObject)
+          .filter((d) => typeof d.device === 'string' && /^[A-Za-z0-9]+-\d{1,3}$/.test(d.device))
+          .slice(0, 100)
+          .map((d) => ({ device: d.device as string, label: text(d.label), bus: d.bus === 'rio' ? 'rio' as const : 'canivore' as const }))
+      };
     default:
       return null;
   }

@@ -10,6 +10,7 @@
 //
 // Nothing here may touch Node or the DOM.
 
+import type { DeviceSpec } from './devices';
 import type { EventKind } from './events';
 import type { LibraryItem, Pipeline, ReportSection, ReportTemplate, SavedView, ViewBody, ViewSpan, ViewTrace } from './library';
 import type { PiePanel } from './plots';
@@ -52,13 +53,13 @@ export const starterStamp = '2026-11-01T00:00:00.000Z';
 export const starterRevisions: Record<string, string> = {
   '5f0c2a10-0002-4000-8000-000000000011': '2026-11-09T00:00:00.000Z',
   '5f0c2a10-0002-4000-8000-000000000009': '2026-11-08T00:00:00.000Z',
-  '5f0c2a10-0002-4000-8000-000000000010': '2026-11-10T00:00:00.000Z'
+  '5f0c2a10-0002-4000-8000-000000000010': '2026-11-11T00:00:00.000Z'
 };
 
 // Starters added since the first ones: put in a library once by
 // themselves (see upgradeStarters), and not again if someone deletes them.
-//   The Path Tracking view, and the Vision System template.
-export const newStarters: string[] = ['5f0c2a10-0001-4000-8000-000000000010', '5f0c2a10-0002-4000-8000-000000000012'];
+//   The Path Tracking view, and the Vision System and Device Health templates.
+export const newStarters: string[] = ['5f0c2a10-0001-4000-8000-000000000010', '5f0c2a10-0002-4000-8000-000000000012', '5f0c2a10-0002-4000-8000-000000000013'];
 
 const base = (id: string, kind: LibraryItem['kind'], name: string, description: string) => ({
   id,
@@ -180,6 +181,19 @@ const talons: Record<string, number> = {
 };
 const talonCurrent = (name: string) => `TalonFX-${talons[name]}/SupplyCurrent`;
 
+// Every CAN device on the robot, for Device Health: the TalonFXs above (the
+// intake rollers' on the roboRIO's bus, the rest on the CANivore), each swerve
+// module's CANcoder (by CAN id, after its module's motors: 4 after module 0's
+// 2 and 3), and the Pigeon. As in mttd Q9's Hoot logs.
+const robotDevices: DeviceSpec[] = [
+  ...Object.entries(talons).map(([label, id]): DeviceSpec => ({ device: `TalonFX-${id}`, label, bus: id >= 60 ? 'rio' : 'canivore' })),
+  { device: 'CANcoder-4', label: 'Module 0 encoder', bus: 'canivore' },
+  { device: 'CANcoder-7', label: 'Module 2 encoder', bus: 'canivore' },
+  { device: 'CANcoder-10', label: 'Module 1 encoder', bus: 'canivore' },
+  { device: 'CANcoder-13', label: 'Module 3 encoder', bus: 'canivore' },
+  { device: 'Pigeon2-1', label: 'Pigeon (heading)', bus: 'canivore' }
+];
+
 const subsystems: [string, string[]][] = [
   ['Drive motors', ['Module 0 drive', 'Module 1 drive', 'Module 2 drive', 'Module 3 drive']],
   ['Angle motors', ['Module 0 angle', 'Module 1 angle', 'Module 2 angle', 'Module 3 angle']],
@@ -227,7 +241,9 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
     // The Pigeon (heading) and the CANivore (the drive's and Pigeon's bus):
     // any fault on either is an error.
     { type: 'events', title: 'Pigeon and CANivore', kinds: ['fault', 'can'], problemsOnly: true, topic: 'pigeon-canivore' },
-    { type: 'stats', title: 'Pigeon and CANivore health', keys: [`${robot}/canivoreUtilization`, `${robot}/canivoreTXFullCount`, 'Pigeon2-1/SupplyVoltage', 'Pigeon2-1/Temperature'] },
+    // The Pigeon there, logging and without faults: missing is an error, not a signal missing.
+    { type: 'devices', title: 'Pigeon', devices: robotDevices.filter((d) => d.device.startsWith('Pigeon2-')) },
+    { type: 'stats', title: 'CANivore', keys: [`${robot}/canivoreUtilization`, `${robot}/canivoreTXFullCount`] },
     chart('Pit Health', 'Battery and CAN'),
     { type: 'stats', title: 'Health', keys: [`${stats}/BatteryVoltage`, `${stats}/BatteryCurrent`, `${stats}/CANBus/Utilization`, `${robot}/canivoreUtilization`, `${stats}/CPUTempCelcius`] },
     chart('Battery Health', 'The battery: voltage against current drawn'),
@@ -258,6 +274,10 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
     { type: 'summary' },
     { type: 'vision', title: 'Cameras' },
     { type: 'monitors', title: 'Disagreeing with the fused pose', ids: ['vision-disagreement'] }
+  ]],
+  ['5f0c2a10-0002-4000-8000-000000000013', 'Device Health', "Is every CAN device there, logging and healthy? Each must be in its bus's Hoot log, logging all match, with no fault while it's on: any of those, or a log missing, is an error.", { type: 'match' }, [
+    { type: 'summary' },
+    { type: 'devices', title: 'Devices', devices: robotDevices }
   ]],
   ['5f0c2a10-0002-4000-8000-000000000011', 'Power Analysis', "Where the battery's energy goes while the robot is enabled, in watt-hours: each motor's share, and each subsystem's. From the robot code's log (each motor's supply current times the battery's voltage), and from the Hoot logs alone (each TalonFX's own supply voltage and current).", { type: 'enabled' }, [
     { type: 'summary' },

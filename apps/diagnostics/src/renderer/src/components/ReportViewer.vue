@@ -10,6 +10,7 @@ import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChar
 import { formatTime } from '@/format';
 import { colorFor, palette } from '@/palette';
 import { eventColor, severityColor } from '@/review';
+import { busLabels, maxGapSeconds, type DeviceStatus } from '@shared/devices';
 import { allianceFrom, visionStates, zoneAt, zoneLabels, type Alliance, type VisionCamera, type VisionState, type VisionTrack } from '@shared/vision';
 import { defaultRobotSize, type Pose } from '@shared/plots';
 import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
@@ -119,6 +120,8 @@ const number = (value: number | null, unit: string) => {
   return unit ? `${text} ${unit}` : text;
 };
 // --- Monitors and vision ---
+// A device's or log's status: red, amber, or (fine) green.
+const statusColor = (status: DeviceStatus) => (status === 'ok' ? (dark.value ? '#4cc38a' : '#2e9e5b') : severityColor(status, dark.value));
 const alarmColor = (severity: 'warning' | 'info' | undefined) => severityColor(severity ?? 'warning', dark.value);
 const stateColors: Record<VisionState, string> = { valid: '#2e9e5b', thrown: '#d03b3a', noTargets: '#8a8f98', noData: '#c98500' };
 // A heatmap cell: its state's share of the bin's frames, as how solid it is.
@@ -544,6 +547,52 @@ const at = (t: number) => {
         </table>
       </section>
 
+      <section v-else-if="section.type === 'devices'" class="devices-section">
+        <h4>{{ section.title }}</h4>
+        <table class="plain devices">
+          <thead><tr><th>Log</th><th>File</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr v-for="log in section.health.logs" :key="`${log.label}-${log.file}`">
+              <td>{{ log.label }}</td>
+              <td class="small">{{ log.file ?? '—' }}</td>
+              <td class="small">
+                <span class="mark" :style="{ background: statusColor(log.status) }"></span>{{ log.problem || 'OK' }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint small">
+          {{ section.health.devices.filter((d) => d.status === 'ok').length }} of {{ section.health.devices.length }} devices healthy.
+          Logging: samples a second of each one's supply voltage, and the longest without one (over {{ maxGapSeconds }} s is not logging).
+        </p>
+        <table class="plain devices">
+          <thead>
+            <tr><th>Device</th><th>Status</th><th class="number">Rate</th><th class="number">Longest gap</th><th>Faults</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="device in section.health.devices" :key="device.device" :class="device.status">
+              <td>
+                <span class="mark" :style="{ background: statusColor(device.status) }"></span>{{ device.label }}
+                <span class="hint small">{{ device.device }} · {{ busLabels[device.bus] }}</span>
+              </td>
+              <td class="small">{{ device.problems.filter((p) => !p.startsWith('Fault:')).join(' ') || (device.faults.length ? 'Faulted' : 'OK') }}</td>
+              <td class="number small">{{ device.hoot && device.samples ? `${device.rate.toFixed(device.rate < 10 ? 1 : 0)}/s` : '—' }}</td>
+              <td class="number small">{{ device.longestGap === null ? '—' : `${device.longestGap.toFixed(2)} s` }}</td>
+              <td class="small">
+                <div v-for="fault in device.faults" :key="fault.title" class="fault">
+                  <span class="mark" :style="{ background: statusColor('error') }"></span>{{ fault.title }}
+                  <span class="hint">{{ fault.count > 1 ? `${fault.count} times, ` : '' }}{{ fault.seconds.toFixed(fault.seconds < 10 ? 2 : 0) }} s</span>
+                </div>
+                <div v-for="fault in device.limits" :key="fault.title" class="fault hint">
+                  {{ fault.title }}: {{ fault.count }} time{{ fault.count === 1 ? '' : 's' }}, {{ fault.seconds.toFixed(fault.seconds < 10 ? 2 : 0) }} s
+                </div>
+                <div v-if="device.sticky.length" class="fault hint">Sticky: {{ device.sticky.join(', ') }}</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <section v-else-if="section.type === 'vision'" class="vision-section">
         <h4>{{ section.title }}</h4>
         <p v-if="section.summary.cameras.length === 0" class="hint small">This log has no cameras' counters.</p>
@@ -801,7 +850,16 @@ h4 {
   padding-left: 16px;
 }
 
-.monitors .mark {
+.devices td {
+  vertical-align: top;
+}
+
+.devices .fault + .fault {
+  margin-top: 2px;
+}
+
+.monitors .mark,
+.devices .mark {
   display: inline-block;
   width: 8px;
   height: 8px;
