@@ -132,7 +132,9 @@ function cellStyle(camera: VisionCamera, bin: number, state: VisionState) {
 // across every camera's rows, and all of that column's counts in one
 // readout beside it (as the charts' hover readout is).
 const heatTipWidth = 260;
-const heat = ref<{ section: number; bin: number; left: number; width: number; tipLeft: number } | null>(null);
+// The readout sits beside the pointer: below it in the heatmap's top half,
+// above it in the bottom half (the bands), so it's always in sight.
+const heat = ref<{ section: number; bin: number; left: number; width: number; tipLeft: number; tipY: { top?: string; bottom?: string } } | null>(null);
 function heatHover(index: number, bins: number, event: PointerEvent) {
   const map = event.currentTarget as HTMLElement;
   const row = map.querySelector('.heat-row');
@@ -147,7 +149,9 @@ function heatHover(index: number, bins: number, event: PointerEvent) {
   const width = rows.width / bins;
   const left = rows.left - box.left + bin * width;
   const right = left + width + 10;
-  heat.value = { section: index, bin, left, width, tipLeft: right + heatTipWidth > box.width ? Math.max(0, left - 10 - heatTipWidth) : right };
+  const y = event.clientY - box.top;
+  const tipY = y > box.height / 2 ? { bottom: `${Math.max(0, box.height - y - 12)}px` } : { top: `${Math.max(0, y - 12)}px` };
+  heat.value = { section: index, bin, left, width, tipLeft: right + heatTipWidth > box.width ? Math.max(0, left - 10 - heatTipWidth) : right, tipY };
 }
 const binTotal = (camera: VisionCamera, bin: number) => {
   const c = camera.bins[bin];
@@ -586,13 +590,22 @@ const at = (t: number) => {
             </div>
             <template v-if="heat && heat.section === i">
               <div class="heat-column" :style="{ left: `${heat.left}px`, width: `${heat.width}px` }"></div>
-              <div class="tooltip heat-tip" :style="{ left: `${heat.tipLeft}px`, width: `${heatTipWidth}px` }">
+              <div class="tooltip heat-tip" :style="{ left: `${heat.tipLeft}px`, width: `${heatTipWidth}px`, ...heat.tipY }">
                 <div class="tooltip-time"><span>{{ binTime(section.summary.bins[heat.bin]) }}</span></div>
-                <div v-if="visionBands[i]" class="tooltip-row">
-                  <span class="swatch" :style="{ background: visionBands[i]!.phases[heat.bin].color }"></span>
-                  <span class="tooltip-label">{{ visionBands[i]!.phases[heat.bin].label }}</span>
-                  <span v-if="visionBands[i]!.zones[heat.bin]" class="tooltip-value">{{ visionBands[i]!.zones[heat.bin]!.label }}</span>
-                </div>
+                <!-- The bands under the cameras, as they're named there. -->
+                <template v-if="visionBands[i]">
+                  <div class="tooltip-camera">Context</div>
+                  <div class="tooltip-row">
+                    <span class="swatch" :style="{ background: visionBands[i]!.phases[heat.bin].color }"></span>
+                    <span class="tooltip-label">Match</span>
+                    <span class="tooltip-value">{{ visionBands[i]!.phases[heat.bin].label }}</span>
+                  </div>
+                  <div v-if="visionBands[i]!.alliance" class="tooltip-row">
+                    <span class="swatch" :style="{ background: visionBands[i]!.zones[heat.bin]?.color ?? 'transparent' }"></span>
+                    <span class="tooltip-label">Field zone</span>
+                    <span class="tooltip-value">{{ visionBands[i]!.zones[heat.bin]?.label ?? 'No pose' }}</span>
+                  </div>
+                </template>
                 <template v-for="camera in section.summary.cameras" :key="camera.name">
                   <div class="tooltip-camera">{{ camera.name }}<span v-if="binTotal(camera, heat.bin) === 0" class="hint"> · nothing counted</span></div>
                   <div v-for="state in visionStates" :key="state.state" class="tooltip-row">
@@ -805,7 +818,6 @@ h4 {
 
 .heat-tip {
   position: absolute;
-  top: 0;
   z-index: 1;
   box-sizing: border-box;
   pointer-events: none;
