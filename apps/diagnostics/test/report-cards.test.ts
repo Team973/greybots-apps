@@ -6,7 +6,7 @@ import type { SignalLogFile } from '@shared/ipc';
 import { reportSummary, type Report, type ReportSummary } from '@shared/library';
 import type { MatchInfo } from '@shared/offload';
 import { isReport, reportFileNames } from '@shared/report-files';
-import { defaultCardFilter, duplicateReports, filterCards, logCards, missingTemplates } from '@shared/report-cards';
+import { defaultCardFilter, duplicateReports, filterCards, groupProblems, logCards, missingTemplates } from '@shared/report-cards';
 
 function log(id: string, match: MatchInfo | null, recorded: string): SignalLogFile {
   return { id, localPath: id, name: id, robot: 'frc973', size: 1, recorded, match, hoots: [], dsLogs: [] };
@@ -129,4 +129,18 @@ assert.deepEqual(reportSummary({ ...full, problems: undefined }).problems, []);
   assert.equal(isReport({ ...good, template: null }), false);
   assert.equal(isReport([]), false);
   assert.equal(isReport(null), false);
+}
+
+// The same problem found again and again: once, with how many times.
+{
+  const problem = (id: string, title: string, severity: 'error' | 'warning' = 'warning') => ({ id, title, severity });
+  assert.deepEqual(groupProblems([
+    problem('a', 'Module 2 wheel slipping'), problem('b', 'TalonFX-60: undervoltage', 'error'), problem('c', 'Module 2 wheel slipping'),
+    problem('d', 'Module 2 wheel slipping'), problem('e', 'TalonFX-60: undervoltage')
+  ]), [
+    { title: 'Module 2 wheel slipping', severity: 'warning', count: 3, ids: ['a', 'c', 'd'] },
+    { title: 'TalonFX-60: undervoltage', severity: 'error', count: 1, ids: ['b'] },
+    // The same title as a warning is told apart from the error.
+    { title: 'TalonFX-60: undervoltage', severity: 'warning', count: 1, ids: ['e'] }
+  ]);
 }

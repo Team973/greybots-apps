@@ -106,3 +106,26 @@ export function duplicateReports(reports: ReportSummary[]): ReportSummary[] {
   }
   return older;
 }
+
+// The same error or warning found more than once (a fault each time it
+// came back, a monitor's alarm each time it held): one entry, with how
+// many times, in the order each was first found. A report itself lists
+// each, with its time.
+export interface ProblemGroup {
+  title: string;
+  severity: 'error' | 'warning';
+  count: number;
+  ids: string[];
+}
+export function groupProblems(problems: ReportProblem[]): ProblemGroup[] {
+  const groups = new Map<string, ProblemGroup>();
+  for (const p of problems) {
+    const key = `${p.severity}
+${p.title}`;
+    const group = groups.get(key) ?? { title: p.title, severity: p.severity, count: 0, ids: [] };
+    group.count += 1;
+    group.ids.push(p.id);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
