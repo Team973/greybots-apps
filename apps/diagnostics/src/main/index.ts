@@ -31,6 +31,7 @@ import {
   watchOwlet
 } from './signals-service';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
+import { cancelUsbExport, chooseUsbFolder, exportToUsb, usbStatus, watchUsbDrives } from './usb-service';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -203,6 +204,18 @@ const handlers: DiagnosticsApi = {
   },
   async chooseImport(folders) {
     return chooseImport(folders);
+  },
+  async getUsbStatus() {
+    return usbStatus();
+  },
+  async exportToUsb(logIds, destination) {
+    return exportToUsb(Array.isArray(logIds) ? logIds.map(String) : [], String(destination ?? ''));
+  },
+  async chooseUsbFolder() {
+    return chooseUsbFolder();
+  },
+  async cancelUsbExport() {
+    cancelUsbExport();
   },
   async chooseDataDirectory() {
     const options: Electron.OpenDialogOptions = {
@@ -434,6 +447,7 @@ if (!app.requestSingleInstanceLock()) {
     watchForRobot();
     upgradeStarters().catch((error) => console.error(error));
     watchOwlet();
+    watchUsbDrives();
     startCloudSync().catch((error) => console.error(error));
 
     // macOS: clicking the dock icon with no windows open makes one.

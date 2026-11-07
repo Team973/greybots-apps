@@ -29,6 +29,8 @@ export interface ImportProgress {
 
 export interface ImportSummary {
   startedAt: string;
+  // Where from, when not picked or dropped ("USB drive E: (KINGSTON)").
+  source?: string;
   finishedAt: string;
   files: ImportedFile[];
   // Things dropped that couldn't be looked in (a damaged zip, ...).

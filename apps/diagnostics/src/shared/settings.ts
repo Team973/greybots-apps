@@ -21,6 +21,9 @@ export interface Settings {
   // Only logs recorded in this many days are pulled; 0 pulls everything. A
   // robot can hold gigabytes of old logs, which shouldn't hold up today's.
   offloadDays: number;
+  // Whether to import logs from a USB drive as soon as it's plugged in (its
+  // GreybotsDiagnostics-logs or logs folder; see usb.ts).
+  usbAutoImport: boolean;
   // Whether the person accepted CTRE's licence, which owlet (the tool that
   // reads Hoot logs) comes under. Owlet isn't downloaded until they do.
   ctreLicenseAccepted: boolean;
@@ -38,6 +41,7 @@ export const defaultSettings: Settings = {
   mdnsEnabled: true,
   autoOffload: true,
   offloadDays: 7,
+  usbAutoImport: true,
   ctreLicenseAccepted: false,
   dataDirectory: '',
   shortcuts: { ...defaultShortcuts }
@@ -91,6 +95,7 @@ export function normalizeSettings(raw: unknown): Settings {
     offloadDays: typeof input.offloadDays === 'number' && Number.isFinite(input.offloadDays)
       ? Math.trunc(input.offloadDays)
       : defaultSettings.offloadDays,
+    usbAutoImport: typeof input.usbAutoImport === 'boolean' ? input.usbAutoImport : defaultSettings.usbAutoImport,
     dataDirectory: typeof input.dataDirectory === 'string' ? input.dataDirectory.trim() : defaultSettings.dataDirectory,
     shortcuts: normalizeShortcuts(input.shortcuts)
   };

@@ -15,7 +15,7 @@ export function importStatus(): ImportStatus {
 }
 
 // Resolves when it's done, to what happened (or why it didn't start).
-export async function runImport(paths: string[], fallbackTeam: number): Promise<ImportSummary | string> {
+export async function runImport(paths: string[], fallbackTeam: number, options: { pathBase?: string; source?: string } = {}): Promise<ImportSummary | string> {
   if (status.running) return 'An import is already running.';
   if (!Number.isInteger(fallbackTeam) || fallbackTeam < 1 || fallbackTeam > 99999) return 'Enter a team number from 1 to 99999.';
   if (paths.length === 0) return 'Nothing to import.';
@@ -28,12 +28,13 @@ export async function runImport(paths: string[], fallbackTeam: number): Promise<
     const before = await logIdsNow(settings);
     const { files, problems } = await importLogs(directory, paths, {
       fallbackTeam,
+      pathBase: options.pathBase,
       onProgress: (progress) => { status.progress = progress; }
     });
     if (files.length === 0 && problems.length === 0) {
       problems.push(`No logs found. Logs are ${importExtensions.join(', ')} files, or zip files of them.`);
     }
-    status.last = { startedAt, finishedAt: new Date().toISOString(), files, problems };
+    status.last = { startedAt, ...(options.source ? { source: options.source } : {}), finishedAt: new Date().toISOString(), files, problems };
     afterNewLogs(before, 'import').catch(() => {});
     return status.last;
   } finally {
