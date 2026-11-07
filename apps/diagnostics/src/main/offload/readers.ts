@@ -17,8 +17,11 @@ export interface FoundFile {
 // know which it has.
 export interface FileReader {
   // Files with one of `extensions`, in `directory` or up to `depth` folders
-  // below it. A folder that isn't there has no files.
-  find(directory: string, extensions: string[], depth: number): Promise<FoundFile[]>;
+  // below it, handed to `onFiles` a folder at a time as each is listed
+  // (several are listed at once), so they can be pulled while the rest are
+  // still being listed. A folder that isn't there has no files. Resolves
+  // once every folder is listed and handled.
+  walk(directory: string, extensions: string[], depth: number, onFiles: OnFiles): Promise<void>;
   // The folder's real path, links followed, or null if it isn't there.
   realpath(directory: string): Promise<string | null>;
   // The bytes from `start` up to (not including) `end`.
@@ -30,6 +33,54 @@ export interface FileReader {
 
 function matches(name: string, extensions: string[]): boolean {
   return extensions.includes(extname(name).toLowerCase());
+}
+
+// A folder's files (and how many folders have been listed), as listed.
+export type OnFiles = (files: FoundFile[]) => void | Promise<void>;
+
+// One folder's contents: the folders in it and the files wanted.
+interface Listing {
+  folders: string[];
+  files: FoundFile[];
+}
+
+// How many folders are listed at once. Over SFTP each listing is a round
+// trip to the robot; one at a time, a robot with a folder per Hoot session
+// spent seconds just listing.
+const listingsInFlight = 6;
+
+// Lists `root` and the folders below it, `depth` levels down, several at
+// once, handing each folder's files on as it's listed.
+function walkTree(root: string, depth: number, list: (folder: string) => Promise<Listing>, onFiles: OnFiles): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const waiting: { folder: string; depth: number }[] = [{ folder: root, depth }];
+    let running = 0;
+    let failed = false;
+    const pump = () => {
+      if (failed) return;
+      if (waiting.length === 0 && running === 0) {
+        resolve();
+        return;
+      }
+      while (running < listingsInFlight && waiting.length > 0) {
+        const next = waiting.shift()!;
+        running += 1;
+        list(next.folder)
+          .then(async ({ folders, files }) => {
+            if (next.depth > 0) waiting.push(...folders.map((folder) => ({ folder, depth: next.depth - 1 })));
+            await onFiles(files);
+          })
+          .then(() => {
+            running -= 1;
+            pump();
+          }, (error) => {
+            failed = true;
+            reject(error);
+          });
+      }
+    };
+    pump();
+  });
 }
 
 const sshTimeoutMs = 5000;
@@ -76,25 +127,26 @@ export class SftpReader implements FileReader {
     });
   }
 
-  async find(directory: string, extensions: string[], depth: number): Promise<FoundFile[]> {
-    let entries;
-    try {
-      entries = await this.readdir(directory);
-    } catch (error) {
-      if (!this.connected) throw error;
-      return [];
-    }
-
-    const found: FoundFile[] = [];
-    for (const entry of entries) {
-      const path = posix.join(directory, entry.filename);
-      if (entry.attrs.isDirectory()) {
-        if (depth > 0) found.push(...(await this.find(path, extensions, depth - 1)));
-      } else if (entry.attrs.isFile() && matches(entry.filename, extensions)) {
-        found.push({ path, name: entry.filename, size: entry.attrs.size, modified: new Date(entry.attrs.mtime * 1000) });
+  walk(directory: string, extensions: string[], depth: number, onFiles: OnFiles): Promise<void> {
+    return walkTree(directory, depth, async (folder) => {
+      let entries;
+      try {
+        entries = await this.readdir(folder);
+      } catch (error) {
+        if (!this.connected) throw error;
+        return { folders: [], files: [] };
       }
-    }
-    return found;
+      const listing: Listing = { folders: [], files: [] };
+      for (const entry of entries) {
+        const path = posix.join(folder, entry.filename);
+        if (entry.attrs.isDirectory()) listing.folders.push(path);
+        else if (entry.attrs.isFile() && matches(entry.filename, extensions)) {
+          // The listing has each file's size and time: no call per file.
+          listing.files.push({ path, name: entry.filename, size: entry.attrs.size, modified: new Date(entry.attrs.mtime * 1000) });
+        }
+      }
+      return listing;
+    }, onFiles);
   }
 
   realpath(directory: string): Promise<string | null> {
@@ -160,25 +212,24 @@ export class SftpReader implements FileReader {
 export class LocalReader implements FileReader {
   readonly connected = true;
 
-  async find(directory: string, extensions: string[], depth: number): Promise<FoundFile[]> {
-    let entries;
-    try {
-      entries = await fs.readdir(directory, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-
-    const found: FoundFile[] = [];
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (depth > 0) found.push(...(await this.find(path, extensions, depth - 1)));
-      } else if (entry.isFile() && matches(entry.name, extensions)) {
-        const stat = await fs.stat(path);
-        found.push({ path, name: entry.name, size: stat.size, modified: stat.mtime });
+  walk(directory: string, extensions: string[], depth: number, onFiles: OnFiles): Promise<void> {
+    return walkTree(directory, depth, async (folder) => {
+      let entries;
+      try {
+        entries = await fs.readdir(folder, { withFileTypes: true });
+      } catch {
+        return { folders: [], files: [] };
       }
-    }
-    return found;
+      const folders = entries.filter((entry) => entry.isDirectory()).map((entry) => join(folder, entry.name));
+      const wanted = entries.filter((entry) => entry.isFile() && matches(entry.name, extensions));
+      // Every file's size and time at once, not one after another.
+      const files = (await Promise.all(wanted.map(async (entry) => {
+        const path = join(folder, entry.name);
+        const stat = await fs.stat(path).catch(() => null);
+        return stat ? { path, name: entry.name, size: stat.size, modified: stat.mtime } : null;
+      }))).filter((file): file is FoundFile => file !== null);
+      return { folders, files };
+    }, onFiles);
   }
 
   realpath(directory: string): Promise<string | null> {

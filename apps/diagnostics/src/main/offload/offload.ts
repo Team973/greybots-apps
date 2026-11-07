@@ -1,5 +1,5 @@
 import { createWriteStream, promises as fs } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -101,21 +101,44 @@ interface Download {
   location: RobotLogLocation;
   localPath: string;
   key: string;
+  // The location's place in the job's order: earlier ones are pulled first.
+  order: number;
+}
+
+// The index of what's been pulled, and its writer, shared by jobs that run
+// at once (the robot and Driver Station logs) so neither writes over the
+// other's entries.
+export interface IndexStore {
+  index: OffloadIndex;
+  writer: ReturnType<typeof indexWriter>;
+}
+
+export async function openIndexStore(dataDirectory: string): Promise<IndexStore> {
+  const index = await loadIndex(dataDirectory);
+  return { index, writer: indexWriter(dataDirectory, index) };
+}
+
+// How deep a file is below `root`: 0 for a file in it.
+function depthBelow(root: string, path: string): number {
+  return path.slice(root.length).split(/[\\/]/).filter(Boolean).length - 1;
 }
 
 // Pulls every log from the job's locations that isn't already in the data
-// folder, several at once. A file is pulled again if it has changed size or
-// time since (a log that was still being written). A download that is cut
-// off carries on from where it stopped next time, if the file hasn't changed.
+// folder, several at once, starting as soon as the first are found: folders
+// are listed (several at once) while files are pulled, rather than every
+// folder first. A file is pulled again if it has changed size or time since
+// (a log that was still being written). A download that is cut off carries
+// on from where it stopped next time, if the file hasn't changed.
 export async function offloadLogs(
   dataDirectory: string,
   job: OffloadJob,
   onProgress: (progress: OffloadProgress) => void,
-  now = new Date()
+  now = new Date(),
+  store?: IndexStore
 ): Promise<OffloadResult> {
   const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [] };
-  const index = await loadIndex(dataDirectory);
-  const writer = indexWriter(dataDirectory, index);
+  const own = !store;
+  const { index, writer } = store ?? (await openIndexStore(dataDirectory));
   const absolute = (localPath: string) => join(dataDirectory, ...localPath.split('/'));
 
   const record = ({ file, location, localPath, key }: Download) => {
@@ -133,67 +156,143 @@ export async function offloadLogs(
     writer.changed();
   };
 
-  // Everything there is, by location in the job's order, then newest first:
-  // the match that just finished is the one wanted soonest.
-  const found: { file: FoundFile; location: RobotLogLocation; order: number }[] = [];
-  for (const [order, location] of job.locations.entries()) {
-    // /u is a link to the USB drive, so the same folder can be listed twice.
-    const seen = new Set<string>();
-    for (const directory of location.directories) {
-      const real = await job.reader.realpath(directory);
-      if (real === null || seen.has(real)) continue;
-      seen.add(real);
-      for (const file of await job.reader.find(directory, location.extensions, location.depth)) {
-        if (!isUnnamedLog(file.name)) found.push({ file, location, order });
-      }
-    }
-  }
-  found.sort((a, b) => a.order - b.order || b.file.modified.getTime() - a.file.modified.getTime());
-
-  // What isn't here yet.
-  const downloads: Download[] = [];
-  const claimed = new Set<string>();
-  for (const { file, location } of found) {
-    // A file that changes over days (the robot program log) gets a copy per
-    // day, each with its own entry in the index.
-    const recorded = recordedTime(file, now);
-    if (job.since && recorded < job.since) {
-      result.tooOld += 1;
-      continue;
-    }
-    const localPath = logPathSegments(job.robot, recorded, location.source, file.name).join('/');
-    const download = { file, location, localPath, key: indexKey(job.origin, file.path, localPath) };
-    const known = index.files[download.key];
-
-    if (claimed.has(localPath)) {
-      // Two files with the same name, from the same day and source. Pulled
-      // at once they'd write over each other.
-      result.errors.push(`${file.path}: another file has the same name; not pulled.`);
-      continue;
-    }
-    claimed.add(localPath);
-
-    const onDisk = await sizeOf(absolute(localPath));
-    if (onDisk === file.size && (!known || (known.size === file.size && known.modified === file.modified.toISOString()))) {
-      // Already here. Without an index entry (a lost index), it's taken to
-      // be the same file, since logs never change once finished.
-      if (!known) record(download);
-      result.skipped += 1;
-    } else {
-      downloads.push(download);
-    }
-  }
-
   const progress: OffloadProgress = {
     label: job.label,
+    searching: true,
+    foldersListed: 0,
+    filesFound: 0,
     filesDone: 0,
-    filesTotal: downloads.length,
+    filesTotal: 0,
     bytesDone: 0,
-    bytesTotal: downloads.reduce((total, { file }) => total + file.size, 0),
+    bytesTotal: 0,
     active: []
   };
   const report = () => onProgress({ ...progress, active: [...progress.active] });
   report();
+
+  // --- What to pull, as it's found ---
+
+  // Pulled in the job's location order, newest first within each, among
+  // what's been found so far: the match that just finished is the one wanted
+  // soonest, and data logs shouldn't wait behind Hoot logs.
+  const queue: Download[] = [];
+  let searching = true;
+  let waiting: (() => void)[] = [];
+  const wake = () => {
+    const ready = waiting;
+    waiting = [];
+    for (const resolve of ready) resolve();
+  };
+  const enqueue = (download: Download) => {
+    const at = queue.findIndex((other) => other.order > download.order ||
+      (other.order === download.order && other.file.modified.getTime() < download.file.modified.getTime()));
+    queue.splice(at === -1 ? queue.length : at, 0, download);
+    progress.filesTotal += 1;
+    progress.bytesTotal += download.file.size;
+  };
+  // The next file to pull, waiting for the search if there's none yet; null
+  // once the search is over and nothing is left.
+  const take = async (): Promise<Download | null> => {
+    for (;;) {
+      if (queue.length > 0) return queue.shift()!;
+      if (!searching) return null;
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    }
+  };
+
+  // Each folder once, for every location that lists it (the logs folders
+  // hold data logs and Hoot logs both), and a file goes with the first
+  // location, in the job's order, that wants it.
+  const roots = new Map<string, { extensions: Set<string>; depth: number }>();
+  for (const location of job.locations) {
+    for (const directory of location.directories) {
+      const root = roots.get(directory) ?? { extensions: new Set<string>(), depth: 0 };
+      for (const extension of location.extensions) root.extensions.add(extension);
+      root.depth = Math.max(root.depth, location.depth);
+      roots.set(directory, root);
+    }
+  }
+  const locationOf = (root: string, file: FoundFile) => {
+    const extension = extname(file.name).toLowerCase();
+    const depth = depthBelow(root, file.path);
+    for (const [order, location] of job.locations.entries()) {
+      if (location.directories.includes(root) && location.extensions.includes(extension) && depth <= location.depth) return { location, order };
+    }
+    return null;
+  };
+
+  const claimed = new Set<string>();
+  const handle = async (root: string, files: FoundFile[]) => {
+    progress.foldersListed += 1;
+    const candidates: Download[] = [];
+    for (const file of files) {
+      if (isUnnamedLog(file.name)) continue;
+      const where = locationOf(root, file);
+      if (!where) continue;
+      progress.filesFound += 1;
+      // A file that changes over days (the robot program log) gets a copy per
+      // day, each with its own entry in the index.
+      const recorded = recordedTime(file, now);
+      if (job.since && recorded < job.since) {
+        result.tooOld += 1;
+        continue;
+      }
+      const localPath = logPathSegments(job.robot, recorded, where.location.source, file.name).join('/');
+      if (claimed.has(localPath)) {
+        // Two files with the same name, from the same day and source. Pulled
+        // at once they'd write over each other.
+        result.errors.push(`${file.path}: another file has the same name; not pulled.`);
+        continue;
+      }
+      claimed.add(localPath);
+      candidates.push({ file, location: where.location, localPath, key: indexKey(job.origin, file.path, localPath), order: where.order });
+    }
+
+    // What isn't here yet. Every file's size on disk at once.
+    const onDisk = await Promise.all(candidates.map((download) => sizeOf(absolute(download.localPath))));
+    candidates.forEach((download, i) => {
+      const known = index.files[download.key];
+      if (onDisk[i] === download.file.size && (!known || (known.size === download.file.size && known.modified === download.file.modified.toISOString()))) {
+        // Already here. Without an index entry (a lost index), it's taken to
+        // be the same file, since logs never change once finished.
+        if (!known) record(download);
+        result.skipped += 1;
+      } else {
+        enqueue(download);
+      }
+    });
+    report();
+    wake();
+  };
+
+  let lostConnection = false;
+  const search = (async () => {
+    try {
+      // /u is a link to the USB drive, so the same folder can be there twice.
+      const directories = [...roots.keys()];
+      const reals = await Promise.all(directories.map((directory) => job.reader.realpath(directory)));
+      const seen = new Set<string>();
+      const walks: Promise<void>[] = [];
+      directories.forEach((directory, i) => {
+        const real = reals[i];
+        if (real === null || seen.has(real)) return;
+        seen.add(real);
+        const root = roots.get(directory)!;
+        walks.push(job.reader.walk(directory, [...root.extensions], root.depth, (files) => handle(directory, files)));
+      });
+      await Promise.all(walks);
+    } catch (error) {
+      if (job.reader.connected) result.errors.push(`Looking for logs: ${(error as Error).message}`);
+      else lostConnection = true;
+    } finally {
+      searching = false;
+      progress.searching = false;
+      report();
+      wake();
+    }
+  })();
+
+  // --- Pulling ---
 
   const pull = async (download: Download) => {
     const { file, key } = download;
@@ -233,21 +332,24 @@ export async function offloadLogs(
     if (written !== file.size) throw new Error(`got ${written ?? 0} of ${file.size} bytes`);
 
     await fs.rename(part, target);
+    // The robot's time for the file, not when it was pulled: logs with no time
+    // in their name are ordered by it.
+    await fs.utimes(target, file.modified, file.modified).catch(() => undefined);
     delete index.partials[key];
     record(download);
     result.copied += 1;
   };
 
-  // A few workers taking the next file off the list until it's empty.
-  let next = 0;
-  let lostConnection = false;
+  // A few workers taking the next file as it's found, until the search is
+  // over and nothing is left.
   const worker = async () => {
-    while (next < downloads.length) {
+    for (;;) {
+      const download = await take();
+      if (!download) return;
       if (!job.reader.connected) {
         lostConnection = true;
         return;
       }
-      const download = downloads[next++];
       progress.active.push(download.file.name);
       report();
       try {
@@ -262,9 +364,9 @@ export async function offloadLogs(
       }
     }
   };
-  await Promise.all(Array.from({ length: parallelFiles }, worker));
+  await Promise.all([search, ...Array.from({ length: parallelFiles }, worker)]);
 
   if (lostConnection) result.errors.push('Lost the connection to the robot.');
-  await writer.flush();
+  if (own) await writer.flush();
   return result;
 }

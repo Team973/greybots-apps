@@ -10,6 +10,7 @@ import {
   isSinglePoseType,
   modelFile,
   posesFrom,
+  poseWindow,
   recordAt,
   type ModelRotation,
   type Pose,
@@ -54,8 +55,10 @@ const model = computed(() => props.models.find((m) => m.id === props.panel.model
 // --- Reading ---
 
 const keys = computed(() => [props.panel.poseKey, props.panel.componentsKey].filter(Boolean));
-const readSpan = computed<[number, number]>(() => [Math.min(props.span[0], props.time), Math.max(props.span[1], props.time)]);
-const { records, error } = useRecords(computed(() => props.session), keys, readSpan);
+// Only the moment shown is drawn, so read around it (see poseWindow). Read
+// again when the span shown moves too: following live, that is new data.
+const readSpan = computed<[number, number]>(() => poseWindow(props.time));
+const { records, error } = useRecords(computed(() => props.session), keys, readSpan, undefined, () => props.span[1]);
 
 const robotPose = computed<Pose | null>(() => {
   const found = records.value.get(props.panel.poseKey);

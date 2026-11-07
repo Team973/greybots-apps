@@ -6,6 +6,7 @@ import {
   isSinglePoseType,
   maxFieldItems,
   posesFrom,
+  poseWindow,
   recordAt,
   yawOf,
   type FieldItem,
@@ -81,13 +82,21 @@ function rotate() {
 
 // --- Reading ---
 
-// Enough to draw trails behind the moment shown, and paths over the span.
-const readSpan = computed<[number, number]>(() => [
-  Math.min(props.span[0], props.time - props.panel.trail),
-  Math.max(props.span[1], props.time)
-]);
-const keys = computed(() => props.panel.items.map((item) => item.key));
-const { records, error } = useRecords(computed(() => props.session), keys, readSpan);
+// Paths are drawn over the span shown. Everything else is drawn at the
+// moment shown (with its trail behind), so it's read around that moment:
+// a read over a long span keeps only its latest values (see poseWindow).
+const session = computed(() => props.session);
+const pathKeys = computed(() => props.panel.items.filter((item) => item.style === 'path').map((item) => item.key));
+const momentKeys = computed(() => props.panel.items.filter((item) => item.style !== 'path').map((item) => item.key));
+const pathSpan = computed<[number, number]>(() => [props.span[0], props.span[1]]);
+const momentSpan = computed<[number, number]>(() => {
+  const [from, to] = poseWindow(props.time);
+  return [Math.min(from, props.time - props.panel.trail), to];
+});
+const paths = useRecords(session, pathKeys, pathSpan);
+// Read again when the span shown moves too: following live, that is new data.
+const moments = useRecords(session, momentKeys, momentSpan, undefined, () => props.span[1]);
+const error = computed(() => [...new Set([paths.error.value, moments.error.value].filter(Boolean))].join(' '));
 
 interface Drawn {
   item: FieldItem;
@@ -99,7 +108,7 @@ interface Drawn {
 }
 
 const drawn = computed<Drawn[]>(() => props.panel.items.map((item) => {
-  const found = records.value.get(item.key);
+  const found = (item.style === 'path' ? paths : moments).records.value.get(item.key);
   if (!found) return { item, type: '', poses: [], history: [] };
   const poses = posesFrom(recordAt(found, props.time), found.type);
   let history: Pose[] = [];

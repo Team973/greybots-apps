@@ -189,6 +189,9 @@ export interface DiagnosticsApi {
   // A picker for logs and zip files, or for folders. [] if cancelled.
   chooseImport(folders: boolean): Promise<string[]>;
   getSignalLogs(): Promise<SignalLogFile[]>;
+  // Moves a log's files to the Recycle Bin and forgets its notes and
+  // caches. Kept: Driver Station logs another log also has.
+  deleteLog(id: string): Promise<{ removed: string[]; kept: string[] }>;
   // Opens a session for reading signals; rejects if it can't be read. A
   // live session's id (live.ts) connects to the robot or a simulator.
   openSignalLog(id: string): Promise<SignalLogSummary>;
@@ -274,6 +277,7 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getImportStatus',
   'chooseImport',
   'getSignalLogs',
+  'deleteLog',
   'openSignalLog',
   'readSignal',
   'readValues',

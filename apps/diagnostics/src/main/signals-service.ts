@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -7,8 +7,10 @@ import type { LogEvent, MatchPhase, SessionEvents } from '@shared/events';
 import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogStatus, type HootProgress, type OwletStatus } from '@shared/hoot';
 import type { DsAlignment, DsLogStatus, HootSessionStatus, SessionDsLog, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
+import { filesToDelete } from '@shared/log-filter';
+import { notesPathSegments } from '@shared/storage-layout';
 import type { SignalRecords } from '@shared/plots';
-import { parseLogName, type MatchInfo } from '@shared/offload';
+import { parseLogName, trustedTime, type MatchInfo } from '@shared/offload';
 import type { Settings } from '@shared/settings';
 import {
   groupSignals,
@@ -25,7 +27,7 @@ import { exportedName, HootLog } from './hoot/hoot-log';
 import { hootCompliancy, Owlet } from './hoot/owlet';
 import { openLive, readLive, readLiveRecords } from './live-service';
 import { loadNotes } from './notes-store';
-import { loadIndex } from './offload/offload-index';
+import { loadIndex, storeIndex } from './offload/offload-index';
 import { loadSettings, storeSettings } from './settings-store';
 import {
   dataLogEvents,
@@ -133,16 +135,23 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
   });
 
   const hoots = (await findFiles(logsDirectory, ['logs'], 0, '.hoot')).map(({ path, size, modified }) => {
+    const localPath = path.join('/');
     const name = path[path.length - 1];
     const bus = hootBus(name);
+    const named = hootStartTime(name);
+    const known = offloaded.get(localPath);
     return {
-      localPath: path.join('/'),
+      localPath,
       name,
       robot: robotOf(path),
       size,
       bus,
       label: `Hoot ${hootBusLabel(bus)}`,
-      start: hootStartTime(name) ?? modified,
+      // For pairing with a data log, as the names line up with it.
+      start: named ?? modified,
+      // For ordering, and grouping Hoot logs on their own: the name's time
+      // can be the robot's unset clock (see trustedTime).
+      recorded: trustedTime(named, known ? new Date(known.modified) : null, modified),
       match: parseLogName(name).match
     };
   });
@@ -225,10 +234,12 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
 
   // Hoot logs with no data log: one session per robot and start time
   // (the rio and CANivore logs of one run start together).
-  alone.sort((a, b) => a.start.getTime() - b.start.getTime());
+  // By when they were recorded: Hoot logs from different days can have the
+  // same (unset-clock) name time.
+  alone.sort((a, b) => a.recorded.getTime() - b.recorded.getTime());
   const groups: (typeof alone)[] = [];
   for (const hoot of alone) {
-    const group = groups.find((g) => g[0].robot === hoot.robot && Math.abs(g[0].start.getTime() - hoot.start.getTime()) <= pairingWindowMs);
+    const group = groups.find((g) => g[0].robot === hoot.robot && Math.abs(g[0].recorded.getTime() - hoot.recorded.getTime()) <= pairingWindowMs);
     if (group) group.push(hoot);
     else groups.push([hoot]);
   }
@@ -239,7 +250,7 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
       name: group[0].name,
       robot: group[0].robot,
       size: group.reduce((total, hoot) => total + hoot.size, 0),
-      recorded: group[0].start.toISOString(),
+      recorded: group[0].recorded.toISOString(),
       match: group.find((hoot) => hoot.match)?.match ?? null,
       hoots: group.map(({ localPath, name, bus, label, size }) => ({ localPath, name, bus, label, size })),
       dsLogs: []
@@ -248,6 +259,55 @@ export async function signalLogs(settings: Settings): Promise<SignalLogFile[]> {
 
   sessions.sort((a, b) => b.recorded.localeCompare(a.recorded));
   return sessions;
+}
+
+// Deletes a log from the data folder: its files go to the Recycle Bin (or
+// the Trash), and its notes, cached Hoot exports and index entries go too.
+// Nothing remembers it, so if it's still on the robot the next download
+// brings it back. A Driver Station log another log also has is kept.
+export async function deleteLog(settings: Settings, id: string): Promise<{ removed: string[]; kept: string[] }> {
+  if (isLiveId(id)) throw new Error('A live session has nothing to delete.');
+  const all = await signalLogs(settings);
+  const log = all.find((l) => l.id === id);
+  if (!log) throw new Error('That log is not in the data folder.');
+  const directory = dataDirectory(settings);
+  const absolute = (localPath: string) => join(directory, ...localPath.split('/'));
+  const { remove, kept } = filesToDelete(log, all);
+
+  // Let go of it first: nothing should be reading the files.
+  if (open?.id === id) open = null;
+  opening.delete(id);
+  for (const hoot of log.hoots) hootLogs.delete(hoot.localPath);
+
+  const removed: string[] = [];
+  for (const localPath of remove) {
+    const path = absolute(localPath);
+    if (!(await fs.stat(path).catch(() => null))) continue;
+    await shell.trashItem(path);
+    dsHeads.delete(path);
+    removed.push(localPath);
+  }
+
+  await fs.rm(join(directory, ...notesPathSegments(id)), { force: true });
+  for (const hoot of log.hoots) await fs.rm(hootCacheOf(directory, hoot.localPath), { recursive: true, force: true });
+
+  const gone = new Set(remove);
+  const index = await loadIndex(directory);
+  let changed = false;
+  for (const [key, file] of Object.entries(index.files)) {
+    if (gone.has(file.localPath)) {
+      delete index.files[key];
+      changed = true;
+    }
+  }
+  for (const key of Object.keys(index.partials)) {
+    if (gone.has(key.slice(key.lastIndexOf('|') + 1))) {
+      delete index.partials[key];
+      changed = true;
+    }
+  }
+  if (changed) await storeIndex(directory, index);
+  return { removed, kept };
 }
 
 // --- Owlet ---
@@ -302,6 +362,12 @@ export function watchOwlet() {
 }
 
 // --- Sessions ---
+
+// Where a Hoot log's scan and exports are kept. Short on purpose: owlet
+// can't write past Windows' 260-character path limit, and Hoot log names
+// are long.
+const hootCacheOf = (directory: string, localPath: string) =>
+  join(directory, 'results', 'hoot', createHash('sha1').update(localPath).digest('hex').slice(0, 16));
 
 // Hoot logs, by path: their scans and exports are worth keeping across
 // sessions (the same log can be looked at again).
@@ -392,9 +458,7 @@ async function openSessionOnce(settings: Settings, id: string): Promise<Session>
   for (const entry of file.hoots) {
     let hoot = hootLogs.get(entry.localPath);
     if (!hoot) {
-      // Short on purpose: owlet can't write past Windows' 260-character path
-      // limit, and Hoot log names are long.
-      const cache = join(directory, 'results', 'hoot', createHash('sha1').update(entry.localPath).digest('hex').slice(0, 16));
+      const cache = hootCacheOf(directory, entry.localPath);
       hoot = new HootLog(owlet(), entry.localPath, absolute(entry.localPath), cache, (percent, signals) => {
         progress = percent === null ? null : { label: hoot!.label, signals, percent };
       });

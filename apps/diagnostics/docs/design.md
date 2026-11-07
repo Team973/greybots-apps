@@ -45,7 +45,7 @@ Electron is pinned to an exact version in `package.json` because electron-builde
 
 ## Robot connection settings
 
-Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Offload page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
+Kept in `settings.json` in the app's per-user folder (`%APPDATA%\Greybots Diagnostics`, `~/.config/Greybots Diagnostics`, `~/Library/Application Support/Greybots Diagnostics`). How to reach the robot (team number, a set address, mDNS) is edited on the Download page, the rest on the Settings page. The type and its validation are in `src/shared/settings.ts`.
 
 Both pages save each change as it's made (`src/renderer/src/settings-draft.ts`): a switch or a choice at once, a text or number box once typing pauses (600 ms). A change with something wrong with it shows why and isn't saved until it's put right; the top of the page says which.
 
@@ -63,7 +63,7 @@ Both pages save each change as it's made (`src/renderer/src/settings-draft.ts`):
 
 In team mode the robot is looked for at `10.TE.AM.2` (973 → `10.9.73.2`), at `roboRIO-<team>-FRC.local` when mDNS is on, and at the USB address `172.22.11.2` (`src/shared/robot-address.ts`).
 
-**Check connection** on the Offload page tries a TCP connection from the main process to each address on the NetworkTables port (5810) and the SSH port (22). It only says whether something answered; it doesn't speak either protocol yet.
+**Check connection** on the Download page tries a TCP connection from the main process to each address on the NetworkTables port (5810) and the SSH port (22). It only says whether something answered; it doesn't speak either protocol yet.
 
 ## Local storage layout
 
@@ -97,15 +97,24 @@ The folder is self-contained: copying it backs it up or moves it to another comp
 
 - **Signals** (what the app opens on): logs and live signals, plotted, with a field, the console, pies and the robot in 3D in tabs beside the chart; saved views.
 - **Reports:** reports, report templates, pipelines, and robot mappings.
-- **Offload:** the robot's connection (how to reach it, where it's looked for, Check connection) and offloading from it.
-- **Storage:** the data folder, importing logs, and every log here: offloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
-- **Settings:** automatic offload and how far back, the data folder, keyboard shortcuts, CTRE's licence, and the team account.
+- **Download** (`/download`; it was called Offload, and `/offload` still goes there): the robot's connection (how to reach it, where it's looked for, Check connection) and downloading its logs.
+- **Storage:** the data folder, importing logs, and every log here: downloaded or imported, 10 to a page, sorted by when it last changed or by match (event, then practice, qualification and elimination, then number), either way.
+- **Settings:** automatic download and how far back, the data folder, keyboard shortcuts, CTRE's licence, and the team account.
 
-## Log offload
+## Log download
 
-The Offload page shows offload status. The work is done in the main process (`src/main/offload-service.ts`, `src/main/offload/`).
+The Download page shows how a download is going. It was called Offload; the code, settings (`autoOffload`, `offloadDays`), pipelines' `onOffload` and `index/offloaded.json` keep that name, so nothing saved needed changing. The work is done in the main process (`src/main/offload-service.ts`, `src/main/offload/`).
 
-**Finding the robot.** Every 10 seconds the app checks the SSH port at each robot address (the same addresses as Check connection). When the robot appears, and `autoOffload` is on, it offloads. It offloads once per appearance: a robot that stays connected isn't offloaded from again until it goes away and comes back, or someone presses **Offload now**.
+**Finding the robot.** Every 10 seconds the app checks the SSH port at each robot address (the same addresses as Check connection). When the robot appears, and `autoOffload` is on, it downloads. It downloads once per appearance: a robot that stays connected isn't downloaded from again until it goes away and comes back, or someone presses **Download now**. Every address is tried at once, and the robot is taken to be at USB as soon as USB answers, without waiting for the radio's address and mDNS name to time out (`find-robot.ts`). **Download now** just after the robot was found (within 10 s) goes straight to where it was found.
+
+**Starting straight away.** Downloading used to list every folder on the robot (one at a time), check every file against the data folder, and only then start pulling; a robot with a folder per Hoot session took a long time to start, with nothing on the page meanwhile. Now:
+
+- Folders are listed six at a time, and each folder's files are checked and queued as soon as it's listed. Four workers pull from the queue as files arrive, so the first file starts while the rest are still being listed.
+- The logs folders are listed once for data logs and Hoot logs together (they used to be listed once for each).
+- Files already here are checked all at once rather than one after another.
+- Driver Station logs (on this computer) are pulled alongside the robot's, not after. Both share one index, so neither writes over the other's entries.
+- The scan of the data folder for pipelines (which logs are new) runs while the robot is found, not before.
+- The page shows each stage: the addresses being tried, logging in, then for each part (the robot, Driver Station logs) the folders looked in, logs found and how many are new, while files are already being pulled. It asks for the status four times a second while a download runs.
 
 **What is pulled.** From the roboRIO, over SFTP as `lvuser` (no password), with [ssh2](https://github.com/mscdex/ssh2):
 
@@ -119,13 +128,13 @@ On Windows, Driver Station logs (`.dslog`, `.dsevents`) are also copied from `C:
 
 Data logs still named `FRC_TBD_…` are skipped. WPILib renames a log once the Driver Station sets the robot's clock, so such a file is either still being written (and would be pulled again under its new name) or from a boot that never saw a Driver Station, with no times or match in it.
 
-**Filing.** A file goes under the day it was recorded: from a data log's name (`FRC_20260315_142201_…`, in UTC), otherwise from its time on the robot. A roboRIO that hasn't been given the time by a Driver Station has a clock in 1970, so times before 2020 are taken as unknown and the file goes under the day it was offloaded. The robot's name is `frc<team>` in team mode and the address in manual mode.
+**Filing.** A file goes under the day it was recorded: from a data log's name (`FRC_20260315_142201_…`, in UTC), otherwise from its time on the robot. A roboRIO that hasn't been given the time by a Driver Station has a clock in 1970, so times before 2020 are taken as unknown and the file goes under the day it was downloaded. The robot's name is `frc<team>` in team mode and the address in manual mode.
 
 **Matches.** Once FMS has told the robot which match it is, WPILib adds it to the data log's name (`…_CASJ_Q42.wpilog`). That event and match are recorded in the index. Associating other files (Driver Station and Hoot logs) with a match is still to come.
 
 **Not pulling twice.** `index/offloaded.json` has one entry per offloaded copy: where it came from, its size and time there, and where it was put. A file is skipped when it's already on disk at the same size and time. A file that changed (still being written last time, or the program log on a new day) is pulled again; if it now belongs to a different day it gets a new copy, and the old one is kept. If the index is lost, files already in `logs/` are recognized by their size and not pulled again.
 
-**Order and age.** Data logs are pulled first, then the robot program log, then Hoot logs; newest first within each. A robot can hold gigabytes of logs (team 973's held 6.4 GB in 230 files in October 2026, mostly Hoot logs of 100-250 MB each), so the small files with the most in them shouldn't wait behind those. Logs recorded more than `offloadDays` ago aren't pulled at all, so an old backlog doesn't hold up today's matches.
+**Order and age.** Of what's been found so far, data logs are pulled first, then the robot program log, then Hoot logs; newest first within each. A robot can hold gigabytes of logs (team 973's held 6.4 GB in 230 files in October 2026, mostly Hoot logs of 100-250 MB each), so the small files with the most in them shouldn't wait behind those. Logs recorded more than `offloadDays` ago aren't pulled at all, so an old backlog doesn't hold up today's matches.
 
 **Speed.** Four files are pulled at once. Over the radio, round trips are what's slow rather than bandwidth. ssh2's own read stream waits for each 32 KB chunk before asking for the next, so the app keeps 32 reads in flight per file instead (as ssh2's `fastGet` does) and puts the chunks back in order. The index is written at most once a second while files come in, and again at the end.
 
@@ -154,6 +163,9 @@ One signal layer serves log review, live view, and automated tests (#92), so a d
 
 **The Signals page.** The chart is the main part, with the log's signals beside it.
 
+- **Picking a log:** newest first, by when each was recorded: the time in its name, unless that's days away from the file's time on the robot (kept in the offload index), as when a Hoot log is named with the roboRIO's unset clock (`2024-12-18`). Then the robot's time (`trustedTime`, `src/shared/offload.ts`). Downloaded files keep the robot's time as their own.
+- **Filtering the list:** an **Event** (from the match in each log's name, e.g. MTTD) and **Real matches only** (practice, qualification and playoff matches: logs FMS named; Driver Station logs on their own don't say, so they're left out). Kept between visits. The open log stays in the list either way. `src/shared/log-filter.ts`.
+- **Deleting a log** (🗑 beside the list, after asking): its data log, Hoot logs and Driver Station logs go to the Recycle Bin (the Trash), and its notes, cached Hoot exports and index entries are removed. A Driver Station log another log also has is kept. Nothing remembers what was deleted, so a log still on the robot comes back with the next download.
 - **The signal list** is one tree of the signals' own paths. A folder holding only one folder is shown as one (`Robot / robot`), each folder shows how many signals it holds, and the filter opens everything that matches. The top level starts open.
 - **Adding signals:** drag a signal onto the chart. While dragging, there's a drop zone for each axis (L1, L2, … and R1, …), for a new left or right axis, and for the top and bottom bands (only the bands, for text). The zone under the pointer is highlighted. Clicking a signal adds it to L1.
 - **Axes:** L1 is next to the plot and L2 outside it, and the same on the right. Each axis fits the values of its signals in the span shown, and is labelled with their units. An axis with nothing left on it goes away.
@@ -247,7 +259,7 @@ The Signals page's list starts with two live sessions: **the robot**, and **a si
 
 The Signals page's chart has tabs (#144): the line chart's, then one for each other plot open, in the same space. **+** at the end opens another (up to six): a 2D field, the console, a pie chart, or the robot in 3D; ✕ on its tab closes it. The line chart's tab is always there. Each plot shows the moment the chart does (the pin, the playhead while playing back, or now when following live) over the span it shows, so the zoom buttons and playing back work on every tab. The tabs are kept with the chart (through other pages and restarts) and in saved views; a view saved before them leaves the plots as they are. Each has its settings, and a signal dragged from the list onto one is added to it. `src/shared/plots.ts`, `src/renderer/src/components/PlotTabs.vue`, `PanelView.vue` and `*Panel.vue`.
 
-**Whole values.** A line needs numbers, but a pose is a struct and a trajectory a list of them. `readRecords` sends a signal's values whole (structs as their fields, arrays as lists) over a span, with the one holding at its start, at most 20,000 (the latest kept). Data logs and live sessions have them; Hoot and Driver Station signals don't. Poses are read from WPILib's `Pose2d`, `Pose3d`, `Translation2d`, `Translation3d` and lists of them, and Field2d's `double[]` (x, y, degrees for each).
+**Whole values.** A line needs numbers, but a pose is a struct and a trajectory a list of them. `readRecords` sends a signal's values whole (structs as their fields, arrays as lists) over a span, with the one holding at its start, at most 20,000 (the latest kept). A plot that shows the moment (the 3D robot, and the field's robots, points and trails) reads a window around it instead of the whole span (`poseWindow`): over a long span the 20,000 kept are only the latest, so playing a long log from the start used to show no robot. The window moves 30 s at a time, so playing back reads again every 30 s rather than every frame, and it is read again as the span moves while following live. Paths are still read over the span. Data logs and live sessions have them; Hoot and Driver Station signals don't. Poses are read from WPILib's `Pose2d`, `Pose3d`, `Translation2d`, `Translation3d` and lists of them, and Field2d's `double[]` (x, y, degrees for each).
 
 **2D field.** WPILib's field images, by season (2022 to 2026; the season's picked from when the log was recorded), with where each field is in its image and its size from WPILib's JSON. WPILib's images are drawn from the red end, so they're turned 180° to put each element where WPILib's coordinates (and its AprilTag layouts) have it: the blue wall at x = 0. **Turn** turns the whole view 90° at a time. Each pose is drawn as a **robot** (a square of the robot's size with a coloured border, a fill as solid as chosen, and a mark at the front, with a trail of where it's been), a **path** (a trajectory's poses; for one pose, where it went over the span), or **dots**. Pointing at the field says where that is in metres.
 

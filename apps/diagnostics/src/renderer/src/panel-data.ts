@@ -53,10 +53,11 @@ function useReads<T>(
   return { data, error };
 }
 
-// Every value of each signal over the span, whole.
-export function useRecords(session: Ref<string>, keys: Ref<string[]>, span: Ref<[number, number]>, max = 20000) {
+// Every value of each signal over the span, whole. `also`: anything else
+// that, changed, means reading again (e.g. new live data in the span).
+export function useRecords(session: Ref<string>, keys: Ref<string[]>, span: Ref<[number, number]>, max = 20000, also?: () => unknown) {
   const { data, error } = useReads<SignalRecords>(session, keys, span, (id, key, [start, end]) =>
-    window.diagnostics.readRecords(id, key, { start, end }, max));
+    window.diagnostics.readRecords(id, key, { start, end }, max), also);
   return { records: data, error };
 }
 

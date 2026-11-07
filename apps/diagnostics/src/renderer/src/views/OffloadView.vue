@@ -7,7 +7,7 @@ import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 
 import type { ConnectionReport } from '@shared/ipc';
-import type { OffloadStatus } from '@shared/offload';
+import type { OffloadProgress, OffloadStatus } from '@shared/offload';
 import { robotAddresses } from '@shared/robot-address';
 import SaveStatus from '@/components/SaveStatus.vue';
 import { formatBytes, formatTime } from '@/format';
@@ -32,33 +32,49 @@ async function checkConnection() {
   }
 }
 
-// The main process does the offloading, and doesn't tell the window as it
-// goes; the window asks this often while the page is open.
+// The main process does the downloading, and doesn't tell the window as it
+// goes; the window asks this often while the page is open, and more often
+// while a download runs, so its start shows straight away.
 const refreshMs = 1000;
+const runningRefreshMs = 250;
 
 const status = ref<OffloadStatus | null>(null);
 const startMessage = ref('');
-let timer: ReturnType<typeof setInterval> | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
 
-const filesLeft = computed(() => {
-  const current = status.value?.current;
-  return current ? current.filesTotal - current.filesDone : 0;
+// What the download is doing before files come in.
+const stageText = computed(() => {
+  const now = status.value;
+  if (!now?.running) return '';
+  if (now.looking.length) return `Looking for the robot at ${now.looking.join(', ')}…`;
+  if (now.stage === 'connecting' && now.robotHost) return `Logging in to the robot at ${now.robotHost}…`;
+  return '';
 });
 
-// Download speed, in bytes a second, from how far the byte count moved
-// between refreshes, smoothed so it doesn't jump about.
-const speed = ref<number | null>(null);
-let lastSample: { label: string; bytes: number; time: number } | null = null;
+function searchText(job: OffloadProgress): string {
+  const found = `${job.foldersListed} folder${job.foldersListed === 1 ? '' : 's'} looked in, ${job.filesFound} log${job.filesFound === 1 ? '' : 's'} found, ${job.filesTotal} new`;
+  return job.searching ? `Finding logs: ${found}…` : `${found}.`;
+}
 
-function measureSpeed(current: OffloadStatus['current']) {
+// Download speed for each part, in bytes a second, from how far its byte
+// count moved between refreshes, smoothed so it doesn't jump about.
+const speeds = ref(new Map<string, number>());
+const lastSamples = new Map<string, { bytes: number; time: number }>();
+
+function measureSpeeds(jobs: OffloadProgress[]) {
   const now = performance.now();
-  if (!current || !lastSample || lastSample.label !== current.label || current.bytesDone < lastSample.bytes) {
-    speed.value = null;
-  } else if (now > lastSample.time) {
-    const latest = ((current.bytesDone - lastSample.bytes) / (now - lastSample.time)) * 1000;
-    speed.value = speed.value === null ? latest : 0.7 * speed.value + 0.3 * latest;
+  const next = new Map<string, number>();
+  for (const job of jobs) {
+    const last = lastSamples.get(job.label);
+    const before = speeds.value.get(job.label);
+    if (last && job.bytesDone >= last.bytes && now > last.time) {
+      const latest = ((job.bytesDone - last.bytes) / (now - last.time)) * 1000;
+      next.set(job.label, before === undefined ? latest : 0.7 * before + 0.3 * latest);
+    }
+    lastSamples.set(job.label, { bytes: job.bytesDone, time: now });
   }
-  lastSample = current ? { label: current.label, bytes: current.bytesDone, time: now } : null;
+  for (const label of [...lastSamples.keys()]) if (!jobs.some((job) => job.label === label)) lastSamples.delete(label);
+  speeds.value = next;
 }
 
 function runSeconds(run: NonNullable<OffloadStatus['lastRun']>): number {
@@ -67,7 +83,14 @@ function runSeconds(run: NonNullable<OffloadStatus['lastRun']>): number {
 
 async function refresh() {
   status.value = await window.diagnostics.getOffloadStatus();
-  measureSpeed(status.value.current);
+  measureSpeeds(status.value.jobs);
+}
+
+function schedule() {
+  timer = setTimeout(async () => {
+    await refresh().catch(() => {});
+    schedule();
+  }, status.value?.running ? runningRefreshMs : refreshMs);
 }
 
 async function offloadNow() {
@@ -79,12 +102,12 @@ async function offloadNow() {
   await refresh();
 }
 
-onMounted(() => {
-  refresh();
-  timer = setInterval(refresh, refreshMs);
+onMounted(async () => {
+  await refresh();
+  schedule();
 });
 
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => clearTimeout(timer));
 </script>
 
 <template>
@@ -169,44 +192,49 @@ onUnmounted(() => clearInterval(timer));
   </section>
 
   <section class="card">
-    <h2>Offload</h2>
+    <h2>Download</h2>
     <template v-if="status">
       <p class="hint">
-        <template v-if="status.autoOffload">Logs are pulled automatically when the robot connects.</template>
-        <template v-else>Automatic offload is off in <RouterLink to="/settings">Settings</RouterLink>.</template>
+        <template v-if="status.autoOffload">Logs are downloaded automatically when the robot connects.</template>
+        <template v-else>Automatic download is off in <RouterLink to="/settings">Settings</RouterLink>.</template>
         Logs already on this computer aren't pulled again. What's been pulled is on the
         <RouterLink to="/storage">Storage</RouterLink> page.
       </p>
 
-      <div v-if="status.current" id="offload-progress" class="progress">
-        <div>{{ status.current.label }}</div>
-        <label class="bar">
-          <span>
-            {{ status.current.filesDone }} of {{ status.current.filesTotal }} files
-            <span class="hint">({{ filesLeft }} left)</span>
-          </span>
-          <progress id="files-progress" :value="status.current.filesDone" :max="Math.max(status.current.filesTotal, 1)"></progress>
-        </label>
-        <label class="bar">
-          <span>
-            {{ formatBytes(status.current.bytesDone) }} of {{ formatBytes(status.current.bytesTotal) }}
-            <span v-if="speed !== null" id="offload-speed" class="hint">({{ formatBytes(speed) }}/s)</span>
-          </span>
-          <progress id="bytes-progress" :value="status.current.bytesDone" :max="Math.max(status.current.bytesTotal, 1)"></progress>
-        </label>
-        <div v-for="name in status.current.active" :key="name" class="hint path">{{ name }}</div>
+      <p v-if="stageText" id="offload-stage">{{ stageText }}</p>
+
+      <div v-for="job in status.jobs" :key="job.label" class="progress offload-progress">
+        <div>{{ job.label }}</div>
+        <div class="hint">{{ searchText(job) }}</div>
+        <template v-if="job.filesTotal > 0">
+          <label class="bar">
+            <span>
+              {{ job.filesDone }} of {{ job.filesTotal }} files
+              <span class="hint">({{ job.filesTotal - job.filesDone }} left{{ job.searching ? ' so far' : '' }})</span>
+            </span>
+            <progress :value="job.filesDone" :max="Math.max(job.filesTotal, 1)"></progress>
+          </label>
+          <label class="bar">
+            <span>
+              {{ formatBytes(job.bytesDone) }} of {{ formatBytes(job.bytesTotal) }}
+              <span v-if="speeds.get(job.label) !== undefined" class="hint offload-speed">({{ formatBytes(speeds.get(job.label)!) }}/s)</span>
+            </span>
+            <progress :value="job.bytesDone" :max="Math.max(job.bytesTotal, 1)"></progress>
+          </label>
+        </template>
+        <div v-for="name in job.active" :key="name" class="hint path">{{ name }}</div>
       </div>
 
       <div class="card-actions">
         <md-filled-button id="offload-now" :disabled="status.running" @click="offloadNow">
-          {{ status.running ? 'Offloading…' : 'Offload now' }}
+          {{ status.running ? 'Downloading…' : 'Download now' }}
         </md-filled-button>
         <span v-if="startMessage" class="error-text">{{ startMessage }}</span>
       </div>
 
       <div v-if="status.lastRun && !status.running" id="last-run">
         <p>
-          Last offload {{ formatTime(status.lastRun.finishedAt) }}{{ status.lastRun.automatic ? ' (automatic)' : '' }}:
+          Last download {{ formatTime(status.lastRun.finishedAt) }}{{ status.lastRun.automatic ? ' (automatic)' : '' }}:
           {{ status.lastRun.copied }} copied ({{ formatBytes(status.lastRun.bytes) }}),
           {{ status.lastRun.skipped }} already here<template v-if="status.lastRun.tooOld">,
           {{ status.lastRun.tooOld }} older than the Settings limit not pulled</template>.
