@@ -8,7 +8,7 @@ import { hootBus, hootBusLabel, hootStartTime, type HootAlignment, type HootLogS
 import type { DsAlignment, DsLogStatus, HootSessionStatus, SessionDsLog, SessionHoot, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import { isLiveId } from '@shared/live';
 import { filesToDelete } from '@shared/log-filter';
-import { runMonitors, type Gates, type MonitorResult } from '@shared/monitors';
+import { monitorEvents, runMonitors, type Gates, type MonitorResult } from '@shared/monitors';
 import { matchKey } from '@shared/signal-match';
 import { notesPathSegments } from '@shared/storage-layout';
 import type { SignalRecords } from '@shared/plots';
@@ -937,20 +937,6 @@ function sessionMonitors(session: Session, enabled: [number, number][], phases: 
 }
 
 // Each alarm as an event, for the timeline and reports' warnings.
-function monitorEvents(results: MonitorResult[]): LogEvent[] {
-  return results.flatMap((result) => result.alarms.map((alarm): LogEvent => ({
-    id: `monitor:${result.id}:${alarm.title}:${alarm.start.toFixed(2)}`,
-    kind: 'monitor',
-    severity: alarm.severity ?? 'warning',
-    start: alarm.start,
-    end: alarm.end,
-    title: alarm.title,
-    detail: alarm.detail,
-    count: 1,
-    key: alarm.key
-  })));
-}
-
 export async function sessionEvents(settings: Settings, id: string): Promise<SessionEvents> {
   if (isLiveId(id)) return { events: [], phases: [], enabled: [], monitors: [], notes: [], pending: '' };
   const session = await openSession(settings, id);

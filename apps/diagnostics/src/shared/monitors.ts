@@ -9,6 +9,8 @@
 //
 // Nothing here may touch Node or the DOM.
 
+import type { LogEvent } from './events';
+
 export interface Series {
   times: ArrayLike<number>;
   values: ArrayLike<number>;
@@ -509,4 +511,19 @@ export function visionCameras(available: readonly string[]): { name: string; pro
     if (m) found.set(m[2].replace(/^ll/i, '') || m[2], m[1]);
   }
   return [...found.entries()].map(([name, provider]) => ({ name, provider }));
+}
+
+// Each alarm as an event: on the Signals timeline, and a report's problems.
+export function monitorEvents(results: MonitorResult[]): LogEvent[] {
+  return results.flatMap((result) => result.alarms.map((alarm): LogEvent => ({
+    id: `monitor:${result.id}:${alarm.title}:${alarm.start.toFixed(2)}`,
+    kind: 'monitor',
+    severity: alarm.severity ?? 'warning',
+    start: alarm.start,
+    end: alarm.end,
+    title: alarm.title,
+    detail: alarm.detail,
+    count: 1,
+    key: alarm.key
+  })));
 }

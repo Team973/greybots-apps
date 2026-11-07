@@ -7,7 +7,7 @@
 // Nothing here may touch Node or the DOM.
 
 import type { EventKind, LogEvent, MatchPhase } from './events';
-import type { MonitorAlarm, MonitorResult } from './monitors';
+import { monitorEvents, type MonitorAlarm, type MonitorResult } from './monitors';
 import type { MatchInfo, MatchType } from './offload';
 import type { VisionSummary } from './vision';
 import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
@@ -341,4 +341,30 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
   }
   if (scope?.type === 'conditions') for (const condition of scope.conditions) keys.add(condition.key);
   return [...keys];
+}
+
+// --- A report's problems ---
+
+// The monitor the vision section shows.
+export const visionMonitor = 'vision-disagreement';
+
+export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
+
+// A report's errors and warnings are only what its own sections check: the
+// events its events sections list, and the alarms of the monitors its
+// monitors and vision sections show. So the Vision System report flags only
+// the cameras, and the log's device faults (the Hoot logs', the robot
+// code's) go to the reports that list them, the Match Report and the
+// match-phase ones such as Autonomous.
+export function reportProblems(sections: ReportSection[], events: LogEvent[], monitors: MonitorResult[]): LogEvent[] {
+  const found = new Map<string, LogEvent>();
+  const add = (list: LogEvent[]) => {
+    for (const event of list) if (isProblem(event)) found.set(event.id, event);
+  };
+  for (const section of sections) {
+    if (section.type === 'events') add(events.filter((e) => section.kinds.length === 0 || section.kinds.includes(e.kind)));
+    if (section.type === 'monitors') add(monitorEvents(monitors.filter((r) => section.ids.length === 0 || section.ids.includes(r.id))));
+    if (section.type === 'vision') add(monitorEvents(monitors.filter((r) => r.id === visionMonitor)));
+  }
+  return [...found.values()].sort((a, b) => a.start - b.start);
 }

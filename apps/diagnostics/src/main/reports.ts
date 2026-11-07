@@ -10,9 +10,12 @@ import { dirname, join } from 'node:path';
 import { phaseLabels, type LogEvent, type MatchPhase, type SessionEvents } from '@shared/events';
 import type { SignalLogFile } from '@shared/ipc';
 import {
+  isProblem,
+  reportProblems,
   reportSummary,
   templateKeys,
   theAutoReport,
+  visionMonitor,
   type Pipeline,
   type RenderedSection,
   type Report,
@@ -196,7 +199,9 @@ const formatSeconds = (s: number) => (s >= 120 ? `${Math.floor(s / 60)} min ${Ma
 // Battery, from whichever signal the log calls it.
 const batteryPattern = /(^|\/)(battery ?voltage|batteryvoltage|vbat|batteryvolts)$/i;
 
-async function summaryFacts(context: Context, file: SignalLogFile, spans: [number, number][], events: LogEvent[]) {
+// Errors, warnings and brownouts: the report's own problems (see
+// reportProblems). Brownouts only where it lists the log's events.
+async function summaryFacts(context: Context, file: SignalLogFile, spans: [number, number][], problems: LogEvent[], listsEvents: boolean) {
   const facts: { label: string; value: string }[] = [];
   const span = spans.reduce((t, [s, e]) => t + (e - s), 0);
   facts.push({ label: 'Log', value: logLabel(file) });
@@ -205,9 +210,9 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
   for (const phase of context.review.phases) {
     facts.push({ label: phaseLabels[phase.name], value: `${phase.start.toFixed(1)}–${phase.end.toFixed(1)} s` });
   }
-  facts.push({ label: 'Errors', value: String(events.filter((e) => e.severity === 'error').length) });
-  facts.push({ label: 'Warnings', value: String(events.filter((e) => e.severity === 'warning').length) });
-  facts.push({ label: 'Brownouts', value: String(events.filter((e) => e.kind === 'brownout').reduce((n, e) => n + e.count, 0)) });
+  facts.push({ label: 'Errors', value: String(problems.filter((e) => e.severity === 'error').length) });
+  facts.push({ label: 'Warnings', value: String(problems.filter((e) => e.severity === 'warning').length) });
+  if (listsEvents) facts.push({ label: 'Brownouts', value: String(problems.filter((e) => e.kind === 'brownout').reduce((n, e) => n + e.count, 0)) });
   const battery = context.available.find((key) => batteryPattern.test(key));
   if (battery) {
     const stats = await statsOver(context, battery, spans);
@@ -216,7 +221,6 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
   return facts;
 }
 
-export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
 const isRoutine = (event: LogEvent) => event.severity === 'info' && !['mode', 'note', 'state', 'command'].includes(event.kind);
 
 // Cancelling: every report being run, or waiting to be, stops. Each report
@@ -305,6 +309,9 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     key: null
   }));
   const events = [...review.events, ...notes].filter(inSpans).sort((a, b) => a.start - b.start);
+  const monitors = (review.monitors ?? []).map((result) => ({ ...result, alarms: result.alarms.filter(inSpans) }));
+  const problems = reportProblems(template.sections, events, monitors);
+  const listsEvents = template.sections.some((s) => s.type === 'events');
 
   const sections: RenderedSection[] = [];
   for (const section of template.sections) {
@@ -315,7 +322,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         sections.push(section);
         break;
       case 'summary':
-        sections.push({ type: 'summary', facts: await summaryFacts(context, file, spans, events) });
+        sections.push({ type: 'summary', facts: await summaryFacts(context, file, spans, problems, listsEvents) });
         break;
       case 'chart': {
         const view = chartSpan(context, section.view.span, spans);
@@ -411,9 +418,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         break;
       }
       case 'monitors': {
-        const results = (review.monitors ?? [])
-          .filter((result) => section.ids.length === 0 || section.ids.includes(result.id))
-          .map((result) => ({ ...result, alarms: result.alarms.filter(inSpans) }));
+        const results = monitors.filter((result) => section.ids.length === 0 || section.ids.includes(result.id));
         sections.push({ type: 'monitors', title: section.title, results });
         break;
       }
@@ -431,7 +436,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
           const series = key ? read.get(key) : undefined;
           return key && series ? { key, series } : null;
         };
-        const alarms = (review.monitors ?? []).filter((r) => r.id === 'vision-disagreement').flatMap((r) => r.alarms).filter(inSpans);
+        const alarms = monitors.filter((r) => r.id === visionMonitor).flatMap((r) => r.alarms);
         sections.push({ type: 'vision', title: section.title, summary: visionSummary(lookup, keys, spans), alarms });
         break;
       }
@@ -453,7 +458,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     spans,
     phases: review.phases,
     sections,
-    problems: events.filter(isProblem),
+    problems,
     missing: [...context.missing]
   };
 }
