@@ -122,40 +122,6 @@ const cardPage = 60;
 const cardLimit = ref(cardPage);
 watch(cardFilter, () => (cardLimit.value = cardPage), { deep: true });
 
-// --- Progress, and cancelling ---
-// Everything being run, added up: Run a report, the cards' run buttons, and
-// the main process's auto reports (or reports run again after a log grew).
-const cancelling = ref(false);
-const runProgress = computed(() => {
-  let done = 0;
-  let total = 0;
-  if (batch.value) {
-    done += batch.value.done;
-    total += batch.value.total;
-  }
-  for (const run of running.value.values()) {
-    done += run.done;
-    total += run.total;
-  }
-  const auto = pipelineStatus.value;
-  if (auto?.running) {
-    done += auto.done;
-    total += auto.total;
-  }
-  const busy = !!batch.value || running.value.size > 0 || !!auto?.running;
-  return busy ? { done, total } : null;
-});
-async function cancelAll() {
-  cancelling.value = true;
-  await window.diagnostics.cancelReports().catch((error) => { problem.value = cleanError(error); });
-  await pollStatus();
-}
-watch(runProgress, (now, before) => {
-  if (now) return;
-  if (before && cancelling.value) transferMessage.value = 'Cancelled: reports already finished were kept; the rest weren\'t run.';
-  cancelling.value = false;
-});
-
 // --- Exporting and importing every report ---
 // Each report as a PDF, and its JSON as the data folder keeps it, into a
 // new folder; and reports' JSON files read back in.
@@ -456,6 +422,42 @@ async function pollStatus() {
 }
 
 const templateName = (id: string) => templates.value.find((t) => t.id === id)?.name ?? '(gone)';
+
+// --- Progress, and cancelling ---
+// Here, after everything it reads: a watch reads its source straight away,
+// and a const used before its line throws (the page would be blank).
+// Everything being run, added up: Run a report, the cards' run buttons, and
+// the main process's auto reports (or reports run again after a log grew).
+const cancelling = ref(false);
+const runProgress = computed(() => {
+  let done = 0;
+  let total = 0;
+  if (batch.value) {
+    done += batch.value.done;
+    total += batch.value.total;
+  }
+  for (const run of running.value.values()) {
+    done += run.done;
+    total += run.total;
+  }
+  const auto = pipelineStatus.value;
+  if (auto?.running) {
+    done += auto.done;
+    total += auto.total;
+  }
+  const busy = !!batch.value || running.value.size > 0 || !!auto?.running;
+  return busy ? { done, total } : null;
+});
+async function cancelAll() {
+  cancelling.value = true;
+  await window.diagnostics.cancelReports().catch((error) => { problem.value = cleanError(error); });
+  await pollStatus();
+}
+watch(runProgress, (now, before) => {
+  if (now) return;
+  if (before && cancelling.value) transferMessage.value = 'Cancelled: reports already finished were kept; the rest weren\'t run.';
+  cancelling.value = false;
+});
 
 onMounted(async () => {
   await load();
