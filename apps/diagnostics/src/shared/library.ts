@@ -261,6 +261,15 @@ export interface Report {
   missing: string[];
 }
 
+// An error or warning a report found, as the list of reports shows it.
+export interface ReportProblem {
+  // The same each time the log is read, so the same problem found by two
+  // reports of one log is one problem.
+  id: string;
+  severity: 'error' | 'warning';
+  title: string;
+}
+
 // The list of reports, without their data.
 export interface ReportSummary {
   id: string;
@@ -271,7 +280,11 @@ export interface ReportSummary {
   logId: string;
   logLabel: string;
   robot: string;
+  match: MatchInfo | null;
   missing: number;
+  // The errors and warnings in its spans (none for reports made before
+  // they were kept).
+  problems: ReportProblem[];
 }
 
 export const reportSummary = (report: Report): ReportSummary => ({
@@ -283,7 +296,11 @@ export const reportSummary = (report: Report): ReportSummary => ({
   logId: report.logId,
   logLabel: report.logLabel,
   robot: report.robot,
-  missing: report.missing.length
+  match: report.match ?? null,
+  missing: report.missing.length,
+  problems: (report.problems ?? [])
+    .filter((event) => event.severity === 'error' || event.severity === 'warning')
+    .map((event) => ({ id: event.id, severity: event.severity as ReportProblem['severity'], title: event.title }))
 });
 
 // Every signal a template or view asks for.

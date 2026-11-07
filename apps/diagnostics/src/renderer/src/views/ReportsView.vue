@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
+import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { SignalLogFile } from '@shared/ipc';
 import {
@@ -15,12 +16,13 @@ import {
   type SignalMapping
 } from '@shared/library';
 import { describeMatch, type MatchType } from '@shared/offload';
+import { defaultCardFilter, filterCards, logCards, type CardFilter, type LogCard } from '@shared/report-cards';
 import type { PipelineStatus } from '@shared/reports';
-import { searchMatches } from '@shared/signal-match';
 import MappingEditor from '@/components/MappingEditor.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
 import TemplateEditor from '@/components/TemplateEditor.vue';
 import { formatTime, logCompanions } from '@/format';
+import { severityColor } from '@/review';
 
 // Reports (#148): made from templates, by hand or by pipelines as logs
 // arrive; the templates and pipelines themselves; and robot mappings, for
@@ -76,8 +78,44 @@ watch(() => route.query.report, async (id) => {
 const generating = ref(false);
 const generateTemplate = ref('');
 const generateLog = ref('');
-const reportQuery = ref('');
-const shownReports = computed(() => reports.value.filter((r) => searchMatches(reportQuery.value, `${r.name} ${r.by} ${r.robot}`, [])));
+
+// The reports, by log: a card for each log, with its reports and flags for
+// the errors and warnings they found. Filterable; by default only logs with
+// reports. The filter is kept between visits.
+const viewMode = useViewModeStore();
+const flagColor = (severity: 'error' | 'warning') => severityColor(severity, viewMode.isDarkMode);
+const cardFilterKey = 'reports.cardFilter';
+function loadCardFilter(): CardFilter {
+  try {
+    const saved = JSON.parse(localStorage.getItem(cardFilterKey) ?? 'null') as Partial<CardFilter> | null;
+    return {
+      ...defaultCardFilter,
+      event: typeof saved?.event === 'string' && saved.event ? saved.event : null,
+      realMatches: saved?.realMatches === true,
+      analyzedOnly: saved?.analyzedOnly !== false
+    };
+  } catch {
+    return { ...defaultCardFilter };
+  }
+}
+const cardFilter = ref<CardFilter>(loadCardFilter());
+watch(cardFilter, (value) => localStorage.setItem(cardFilterKey, JSON.stringify({ ...value, query: '' })), { deep: true });
+const cards = computed(() => logCards(logs.value, reports.value));
+const cardEvents = computed(() => [...new Set(cards.value.map((card) => card.match?.event.toUpperCase()).filter((e): e is string => !!e))].sort());
+const shownCards = computed(() => filterCards(cards.value, cardFilter.value));
+// Many logs have no reports (every Driver Station log, for one): a page at
+// a time when they're shown.
+const cardPage = 60;
+const cardLimit = ref(cardPage);
+watch(cardFilter, () => (cardLimit.value = cardPage), { deep: true });
+const problemList = (problems: { title: string }[]) => problems.map((p) => p.title).join('\n');
+const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log no longer in the data folder');
+
+// "Make a report" for this log: picks it in the form above.
+function reportOn(card: LogCard) {
+  generateLog.value = card.id;
+  document.getElementById('make-report')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 async function generate() {
   if (!generateTemplate.value || !generateLog.value) return;
@@ -265,7 +303,7 @@ onUnmounted(() => clearInterval(statusTimer));
 
   <!-- Reports -->
   <template v-else-if="tab === 'reports'">
-    <section class="card">
+    <section id="make-report" class="card">
       <h2>Make a report</h2>
       <p v-if="templates.length === 0" class="hint">There are no templates yet: make one under Templates.</p>
       <template v-else>
@@ -291,23 +329,53 @@ onUnmounted(() => clearInterval(statusTimer));
         </div>
       </template>
     </section>
-    <section class="card">
-      <h2>Reports</h2>
-      <input v-if="reports.length > 5" v-model="reportQuery" class="search" type="search" placeholder="Find a report" aria-label="Find a report" />
-      <p v-if="reports.length === 0" class="hint">None yet. They're made here, or by a pipeline when logs are downloaded.</p>
-      <table v-else id="report-list" class="plain">
-        <thead><tr><th>Report</th><th>Made</th><th>By</th></tr></thead>
-        <tbody>
-          <tr v-for="r in shownReports" :key="r.id" class="clickable" @click="go({ tab: 'reports', report: r.id })">
-            <td>
-              <a href="#" @click.prevent>{{ r.name }}</a>
-              <span v-if="r.missing" class="hint small"> · {{ r.missing }} signals missing</span>
-            </td>
-            <td class="small">{{ formatTime(r.generated) }}</td>
-            <td class="small">{{ r.by }}</td>
-          </tr>
-        </tbody>
-      </table>
+    <section class="card wide">
+      <h2>Reports by log</h2>
+      <div class="card-filter" role="group" aria-label="Which logs to show">
+        <input id="report-search" v-model="cardFilter.query" class="search" type="search" placeholder="Find a log or report" aria-label="Find a log or report" />
+        <select id="report-event" v-model="cardFilter.event" aria-label="Event">
+          <option :value="null">All events</option>
+          <option v-for="event in cardEvents" :key="event" :value="event">{{ event }}</option>
+        </select>
+        <label class="check"><input id="report-real-matches" v-model="cardFilter.realMatches" type="checkbox" /> Real matches only</label>
+        <label class="check"><input id="report-analyzed-only" v-model="cardFilter.analyzedOnly" type="checkbox" /> Only logs with reports</label>
+      </div>
+      <p v-if="reports.length === 0 && cardFilter.analyzedOnly" class="hint">
+        No reports yet. They're made here, or by a pipeline when logs are downloaded.
+      </p>
+      <p v-else-if="shownCards.length === 0" class="hint">No logs match the filter.</p>
+      <div v-else id="report-cards" class="log-cards">
+        <article v-for="card in shownCards.slice(0, cardLimit)" :key="card.id" class="log-card" :class="{ gone: !card.log }">
+          <header>
+            <strong>{{ card.title }}</strong>
+            <span class="hint small">{{ cardWhen(card) }}{{ card.robot ? ` · ${card.robot}` : '' }}</span>
+          </header>
+          <ul v-if="card.reports.length" class="card-reports">
+            <li v-for="r in card.reports" :key="r.id">
+              <a href="#" @click.prevent="go({ tab: 'reports', report: r.id })">{{ r.name }}</a>
+            </li>
+          </ul>
+          <p v-else class="hint small">
+            No reports yet.
+            <button v-if="templates.length" class="link" @click="reportOn(card)">Make one</button>
+          </p>
+          <footer v-if="card.reports.length" class="flags">
+            <span v-if="card.errors.length" class="flag" :style="{ '--flag': flagColor('error') }" :title="problemList(card.errors)">
+              {{ card.errors.length }} error{{ card.errors.length === 1 ? '' : 's' }}
+            </span>
+            <span v-if="card.warnings.length" class="flag" :style="{ '--flag': flagColor('warning') }" :title="problemList(card.warnings)">
+              {{ card.warnings.length }} warning{{ card.warnings.length === 1 ? '' : 's' }}
+            </span>
+            <span v-if="card.missing" class="flag quiet" title="Signals its reports asked for that this log doesn't have">
+              {{ card.missing }} signal{{ card.missing === 1 ? '' : 's' }} missing
+            </span>
+            <span v-if="!card.errors.length && !card.warnings.length" class="flag quiet">No errors or warnings</span>
+          </footer>
+        </article>
+      </div>
+      <div v-if="shownCards.length > cardLimit" class="card-actions">
+        <md-outlined-button @click="cardLimit += cardPage">Show more ({{ shownCards.length - cardLimit }} left)</md-outlined-button>
+      </div>
     </section>
   </template>
 
@@ -509,6 +577,85 @@ select option {
 .search {
   width: 100%;
   box-sizing: border-box;
+}
+
+.card-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.card-filter .search {
+  flex: 1 1 240px;
+  width: auto;
+}
+
+.card-filter .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.log-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.log-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 10px;
+}
+
+.log-card.gone {
+  border-style: dashed;
+}
+
+.log-card header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-reports {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+
+/* Errors and warnings found, at the card's foot: tinted with their colour,
+   and always named, so colour isn't all that tells them apart. */
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.flag {
+  padding: 1px 8px;
+  border: 1px solid var(--flag, rgba(127, 127, 127, 0.6));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--flag, transparent) 18%, transparent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: default;
+}
+
+.flag.quiet {
+  font-weight: 400;
+  opacity: 0.75;
 }
 
 .items {
