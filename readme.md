@@ -10,6 +10,9 @@ npm-workspaces monorepo:
 - `packages/common`: shared Vue components, styles, and the Supabase client
 - `supabase/`: the shared Supabase project
 
+How we work on this repo (branches, PRs, review, checks, database changes)
+is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Installation
 
 1. Clone the repo
