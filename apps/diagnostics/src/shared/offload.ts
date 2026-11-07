@@ -93,6 +93,20 @@ export function parseLogName(fileName: string): LogNameInfo {
   return { recorded: null, match: null };
 }
 
+// How far a file's name time can be from the robot's time for the file
+// before the name is taken to be wrong.
+const nameTimeSlackMs = 2 * 24 * 60 * 60 * 1000;
+
+// When a log was recorded, for ordering. A Hoot log is named with the
+// robot's clock when it started, which isn't always set yet: logs from a
+// 2026 event can be named 2024-12-18. When the name is days away from the
+// file's time on the robot (kept in the index when it was pulled), the
+// robot's time is the one to go by. With neither, the file's own time.
+export function trustedTime(nameTime: Date | null, robotModified: Date | null, fileModified: Date): Date {
+  if (nameTime && (!robotModified || Math.abs(nameTime.getTime() - robotModified.getTime()) <= nameTimeSlackMs)) return nameTime;
+  return robotModified ?? fileModified;
+}
+
 // A data log still named FRC_TBD_ is either still being written (it's
 // renamed once the Driver Station sets the clock) or from a boot that never
 // saw a Driver Station, with no times and no match in it. Not worth pulling:
