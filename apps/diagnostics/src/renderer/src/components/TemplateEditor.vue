@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 
 import { eventKinds, type EventKind } from '@shared/events';
+import { monitorCatalog } from '@shared/monitors';
 import {
   pieMeasureLabels,
   scopeLabels,
@@ -45,6 +46,8 @@ function newSection(type: ReportSectionType): ReportSection {
     case 'stats': return { type, title: 'Stats', keys: [] };
     case 'pie': return { type, title: 'Pie chart', measure: 'charge', voltage: '', slices: [] };
     case 'events': return { type, title: 'Errors and warnings', kinds: [], problemsOnly: true };
+    case 'monitors': return { type, title: 'Monitors', ids: [] };
+    case 'vision': return { type, title: 'Vision system' };
   }
 }
 
@@ -192,6 +195,20 @@ const canSave = () => draft.value.name.trim() !== '';
         <textarea v-model="eachText[i]" rows="3" aria-label="Signals to add, a slice each" placeholder="Or signals, one per line, a slice each"></textarea>
         <button type="button" class="small-button" :disabled="!eachText[i]?.trim()" @click="addEach(section, i)">Add a slice for each</button>
       </template>
+      <template v-else-if="section.type === 'monitors'">
+        <input v-model="section.title" aria-label="Monitors title" maxlength="120" />
+        <div class="kinds">
+          <label v-for="monitor in monitorCatalog" :key="monitor.id" class="choice small">
+            <input type="checkbox" :checked="section.ids.includes(monitor.id)"
+              @change="section.ids = section.ids.includes(monitor.id) ? section.ids.filter((id) => id !== monitor.id) : [...section.ids, monitor.id]" /> {{ monitor.name }}
+          </label>
+        </div>
+        <p class="hint small">None ticked runs every monitor. Their bounds are in the code (monitorSettings, src/shared/monitors.ts).</p>
+      </template>
+      <template v-else-if="section.type === 'vision'">
+        <input v-model="section.title" aria-label="Vision title" maxlength="120" />
+        <p class="hint small">Each camera the robot reads: frames used and thrown out, when (a heatmap), and its measurements against the fused pose.</p>
+      </template>
       <template v-else-if="section.type === 'events'">
         <input v-model="section.title" aria-label="Events title" maxlength="120" />
         <div class="kinds">
@@ -200,6 +217,8 @@ const canSave = () => draft.value.name.trim() !== '';
           </label>
         </div>
         <label class="choice small"><input v-model="section.problemsOnly" type="checkbox" /> Errors and warnings only</label>
+        <label class="choice small"><input type="checkbox" :checked="section.topic === 'power'"
+          @change="section.topic = ($event.target as HTMLInputElement).checked ? 'power' : undefined" /> Power only (brownouts; battery, voltage, supply current, breaker and reboot faults)</label>
         <p class="hint small">No kinds ticked lists every kind.</p>
       </template>
     </div>

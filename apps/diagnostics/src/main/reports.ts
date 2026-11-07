@@ -10,9 +10,13 @@ import { dirname, join } from 'node:path';
 import { phaseLabels, type LogEvent, type MatchPhase, type SessionEvents } from '@shared/events';
 import type { SignalLogFile } from '@shared/ipc';
 import {
+  isProblem,
+  reportProblems,
+  sectionLists,
   reportSummary,
   templateKeys,
   theAutoReport,
+  visionMonitor,
   type Pipeline,
   type RenderedSection,
   type Report,
@@ -25,7 +29,9 @@ import {
   type ViewSpan
 } from '@shared/library';
 import { describeMatch } from '@shared/offload';
+import type { Series } from '@shared/monitors';
 import { duplicateReports } from '@shared/report-cards';
+import { visionSummary } from '@shared/vision';
 import { isReport, reportFileNames, type ReportExport, type ReportImport } from '@shared/report-files';
 import { cancelledMessage, type PipelineRun, type PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
@@ -194,7 +200,9 @@ const formatSeconds = (s: number) => (s >= 120 ? `${Math.floor(s / 60)} min ${Ma
 // Battery, from whichever signal the log calls it.
 const batteryPattern = /(^|\/)(battery ?voltage|batteryvoltage|vbat|batteryvolts)$/i;
 
-async function summaryFacts(context: Context, file: SignalLogFile, spans: [number, number][], events: LogEvent[]) {
+// Errors, warnings and brownouts: the report's own problems (see
+// reportProblems). Brownouts only where it lists the log's events.
+async function summaryFacts(context: Context, file: SignalLogFile, spans: [number, number][], problems: LogEvent[], listsEvents: boolean) {
   const facts: { label: string; value: string }[] = [];
   const span = spans.reduce((t, [s, e]) => t + (e - s), 0);
   facts.push({ label: 'Log', value: logLabel(file) });
@@ -203,9 +211,9 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
   for (const phase of context.review.phases) {
     facts.push({ label: phaseLabels[phase.name], value: `${phase.start.toFixed(1)}–${phase.end.toFixed(1)} s` });
   }
-  facts.push({ label: 'Errors', value: String(events.filter((e) => e.severity === 'error').length) });
-  facts.push({ label: 'Warnings', value: String(events.filter((e) => e.severity === 'warning').length) });
-  facts.push({ label: 'Brownouts', value: String(events.filter((e) => e.kind === 'brownout').reduce((n, e) => n + e.count, 0)) });
+  facts.push({ label: 'Errors', value: String(problems.filter((e) => e.severity === 'error').length) });
+  facts.push({ label: 'Warnings', value: String(problems.filter((e) => e.severity === 'warning').length) });
+  if (listsEvents) facts.push({ label: 'Brownouts', value: String(problems.filter((e) => e.kind === 'brownout').reduce((n, e) => n + e.count, 0)) });
   const battery = context.available.find((key) => batteryPattern.test(key));
   if (battery) {
     const stats = await statsOver(context, battery, spans);
@@ -214,7 +222,6 @@ async function summaryFacts(context: Context, file: SignalLogFile, spans: [numbe
   return facts;
 }
 
-export const isProblem = (event: LogEvent) => event.severity === 'error' || event.severity === 'warning';
 const isRoutine = (event: LogEvent) => event.severity === 'info' && !['mode', 'note', 'state', 'command'].includes(event.kind);
 
 // Cancelling: every report being run, or waiting to be, stops. Each report
@@ -303,6 +310,9 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     key: null
   }));
   const events = [...review.events, ...notes].filter(inSpans).sort((a, b) => a.start - b.start);
+  const monitors = (review.monitors ?? []).map((result) => ({ ...result, alarms: result.alarms.filter(inSpans) }));
+  const problems = reportProblems(template.sections, events, monitors);
+  const listsEvents = template.sections.some((s) => s.type === 'events');
 
   const sections: RenderedSection[] = [];
   for (const section of template.sections) {
@@ -313,7 +323,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         sections.push(section);
         break;
       case 'summary':
-        sections.push({ type: 'summary', facts: await summaryFacts(context, file, spans, events) });
+        sections.push({ type: 'summary', facts: await summaryFacts(context, file, spans, problems, listsEvents) });
         break;
       case 'chart': {
         const view = chartSpan(context, section.view.span, spans);
@@ -402,10 +412,31 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
         break;
       }
       case 'events': {
-        const chosen = events.filter((e) =>
-          (section.kinds.length === 0 || section.kinds.includes(e.kind)) &&
-          (section.problemsOnly ? isProblem(e) : !isRoutine(e)));
+        const chosen = events.filter((e) => sectionLists(section, e) && (section.problemsOnly ? isProblem(e) : !isRoutine(e)));
         sections.push({ type: 'events', title: section.title, events: chosen });
+        break;
+      }
+      case 'monitors': {
+        const results = monitors.filter((result) => section.ids.length === 0 || section.ids.includes(result.id));
+        sections.push({ type: 'monitors', title: section.title, results });
+        break;
+      }
+      case 'vision': {
+        // Every camera counter and measurement, and the fused pose, read
+        // whole first: the summary looks them up as it goes.
+        const keys = context.available.filter((key) => /\/providers\/ll[^/]+\/(perf\/|mt[12]\/)/i.test(key) || /\/estimators\/fused\/pose\//i.test(key));
+        const read = new Map<string, Series>();
+        for (const key of keys) {
+          const series = await readSignal(settings, logId, key, {}).catch(() => null);
+          if (series && series.values instanceof Float64Array) read.set(key, { times: series.times, values: series.values });
+        }
+        const lookup = (wanted: string) => {
+          const key = matchKey(wanted, keys).key;
+          const series = key ? read.get(key) : undefined;
+          return key && series ? { key, series } : null;
+        };
+        const alarms = monitors.filter((r) => r.id === visionMonitor).flatMap((r) => r.alarms);
+        sections.push({ type: 'vision', title: section.title, summary: visionSummary(lookup, keys, spans), alarms, recorded: file.recorded });
         break;
       }
     }
@@ -426,7 +457,7 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
     spans,
     phases: review.phases,
     sections,
-    problems: events.filter(isProblem),
+    problems,
     missing: [...context.missing]
   };
 }

@@ -186,7 +186,8 @@ const plotStore = usePlotStore();
 function openInSignals(card: LogCard) {
   plotStore.logId = card.id;
   plotStore.setView(null);
-  router.push('/signals');
+  // Signals offers a way back here (?from=reports).
+  router.push({ path: '/signals', query: { from: 'reports' } });
 }
 const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log no longer in the data folder');
 
@@ -196,9 +197,12 @@ const cardWhen = (card: LogCard) => (card.log ? formatTime(card.recorded) : 'Log
 // logs open, so they don't take turns loading). Each card fills in as its
 // reports come.
 const missingFor = (card: LogCard) => missingTemplates(card, templates.value);
+// Every template that applies to the log's robot: re-running them all
+// replaces the reports it has (only the newest of each is kept).
+const allFor = (card: LogCard) => templates.value.filter((t) => !t.robot || t.robot === card.robot);
 const running = ref(new Map<string, { done: number; total: number }>());
-async function makeMissing(card: LogCard) {
-  const wanted = missingFor(card);
+async function makeMissing(card: LogCard, again = false) {
+  const wanted = again ? allFor(card) : missingFor(card);
   if (running.value.has(card.id) || wanted.length === 0) return;
   const setRun = (run: { done: number; total: number } | null) => {
     const next = new Map(running.value);
@@ -520,6 +524,10 @@ onUnmounted(() => clearInterval(statusTimer));
       <md-filled-button v-if="missingFor(focusedCard).length" class="make-missing" :disabled="running.has(focusedCard.id)"
         :title="`Runs: ${missingFor(focusedCard).map((t) => t.name).join(', ')}`"
         @click="makeMissing(focusedCard)">{{ makeLabel(focusedCard) }}</md-filled-button>
+      <md-outlined-button v-if="focusedCard.log && focusedCard.reports.length && allFor(focusedCard).length" id="rerun-all"
+        :disabled="running.has(focusedCard.id)"
+        :title="`Runs again, replacing what this log has: ${allFor(focusedCard).map((t) => t.name).join(', ')}`"
+        @click="makeMissing(focusedCard, true)">{{ running.has(focusedCard.id) ? makeLabel(focusedCard) : allFor(focusedCard).length === 1 ? 'Re-run the report' : `Re-run all ${allFor(focusedCard).length} reports` }}</md-outlined-button>
     </header>
     <ReportFlags v-if="focusedCard.reports.length" :errors="focusedCard.errors" :warnings="focusedCard.warnings" :missing="focusedCard.missing" />
 
