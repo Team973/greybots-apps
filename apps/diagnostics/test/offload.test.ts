@@ -114,6 +114,15 @@ async function main() {
     assert.equal(again.copied, 0);
     assert.equal(again.skipped, 5);
 
+    // --- A log that grew since: pulled again, and named as changed ---
+    const grown = tree();
+    grown['/home/lvuser/logs'].files[0] = { ...grown['/home/lvuser/logs'].files[0], size: 160, modified: '2026-11-07T03:20:00.000Z' };
+    const regrown = await offloadLogs(directory, job(new FakeRobot(grown, { '/u/logs': '/home/lvuser/logs' })), () => {}, now);
+    assert.equal(regrown.copied, 1);
+    assert.equal(regrown.changed.length, 1);
+    assert.ok(regrown.changed[0].endsWith('FRC_20261107_030907_mttd_P5.wpilog'));
+    assert.deepEqual(first.changed, [], 'nothing was here before the first run');
+
     // --- Too old ---
     const old = await offloadLogs(directory, job(new FakeRobot(tree()), new Date('2026-12-01T00:00:00Z')), () => {}, now);
     assert.equal(old.copied, 0);

@@ -55,7 +55,8 @@ export function offloadStatus(): OffloadStatus {
   return structuredClone(status);
 }
 
-function addResult(summary: OffloadRunSummary, result: OffloadResult) {
+function addResult(summary: OffloadRunSummary, result: OffloadResult, changed: string[]) {
+  changed.push(...result.changed);
   summary.copied += result.copied;
   summary.skipped += result.skipped;
   summary.tooOld += result.tooOld;
@@ -90,6 +91,8 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     if (at === -1) status.jobs.push(progress);
     else status.jobs[at] = progress;
   };
+  // Files pulled again because they grew: their logs' reports run again.
+  const changed: string[] = [];
   // The logs there before, so the pipelines run on the new ones after. A
   // scan of the whole data folder, so it goes on while the robot is found.
   let before: Promise<Set<string> | null> = Promise.resolve(null);
@@ -107,7 +110,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     // Driver Station logs are on this computer: they don't wait for the robot.
     const local = process.platform === 'win32'
       ? offloadLogs(directory, { label: 'Driver Station logs', reader: new LocalReader(), origin: 'local', robot, locations: driverStationLocations, since }, onProgress, new Date(), store)
-        .then((result) => addResult(summary, result), (error: Error) => { summary.errors.push(`Driver Station logs: ${error.message}`); })
+        .then((result) => addResult(summary, result, changed), (error: Error) => { summary.errors.push(`Driver Station logs: ${error.message}`); })
       : Promise.resolve();
 
     const fromRobot = (async () => {
@@ -127,7 +130,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
         reader = await SftpReader.connect(robotHost);
         status.stage = 'pulling';
         const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since };
-        addResult(summary, await offloadLogs(directory, job, onProgress, new Date(), store));
+        addResult(summary, await offloadLogs(directory, job, onProgress, new Date(), store), changed);
       } catch (error) {
         status.stage = 'pulling';
         summary.errors.push(`${reader ? 'Download from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
@@ -148,7 +151,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     status.jobs = [];
     status.running = false;
     if (summary.copied > 0) {
-      before.then((ids) => (ids ? afterNewLogs(ids, 'offload') : undefined)).catch(() => {});
+      before.then((ids) => (ids ? afterNewLogs(ids, 'offload', changed) : undefined)).catch(() => {});
     }
   }
   return '';

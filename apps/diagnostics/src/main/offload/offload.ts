@@ -27,6 +27,9 @@ export interface OffloadResult {
   tooOld: number;
   bytes: number;
   errors: string[];
+  // Files pulled again because they'd changed on the robot since (a log
+  // still being written, that grew): their reports are run again.
+  changed: string[];
 }
 
 // How many files are pulled at once. Each file from the robot already keeps
@@ -103,6 +106,8 @@ interface Download {
   key: string;
   // The location's place in the job's order: earlier ones are pulled first.
   order: number;
+  // It was here already, and has changed since.
+  replaces?: boolean;
 }
 
 // The index of what's been pulled, and its writer, shared by jobs that run
@@ -136,7 +141,7 @@ export async function offloadLogs(
   now = new Date(),
   store?: IndexStore
 ): Promise<OffloadResult> {
-  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [] };
+  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [], changed: [] };
   const own = !store;
   const { index, writer } = store ?? (await openIndexStore(dataDirectory));
   const absolute = (localPath: string) => join(dataDirectory, ...localPath.split('/'));
@@ -258,7 +263,7 @@ export async function offloadLogs(
         if (!known) record(download);
         result.skipped += 1;
       } else {
-        enqueue(download);
+        enqueue({ ...download, replaces: onDisk[i] !== null || !!known });
       }
     });
     report();
@@ -338,6 +343,7 @@ export async function offloadLogs(
     delete index.partials[key];
     record(download);
     result.copied += 1;
+    if (download.replaces) result.changed.push(download.localPath);
   };
 
   // A few workers taking the next file as it's found, until the search is

@@ -374,6 +374,18 @@ const hootCacheOf = (directory: string, localPath: string) =>
 const hootLogs = new Map<string, HootLog>();
 let progress: HootProgress | null = null;
 
+// Files pulled again because they changed (a log that grew): what's held
+// of them in memory goes, so they're read afresh. Their Hoot exports on disk
+// are checked against the file's size and time when next opened.
+export function forgetFiles(localPaths: string[]) {
+  const changed = new Set(localPaths);
+  for (const path of changed) hootLogs.delete(path);
+  for (const [id, session] of openSessions) {
+    const files = [session.file.localPath, ...session.file.hoots.map((h) => h.localPath), ...session.file.dsLogs.map((d) => d.localPath)];
+    if (files.some((path) => path !== null && changed.has(path))) openSessions.delete(id);
+  }
+}
+
 // So Hoot logs that couldn't be read are tried again, with the licence or
 // owlet there is now. Those already being read are left alone: they may be
 // part way through an export.

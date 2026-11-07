@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import type { SignalLogFile } from '@shared/ipc';
 import { reportSummary, type Report, type ReportSummary } from '@shared/library';
 import type { MatchInfo } from '@shared/offload';
-import { defaultCardFilter, filterCards, logCards, missingTemplates } from '@shared/report-cards';
+import { defaultCardFilter, duplicateReports, filterCards, logCards, missingTemplates } from '@shared/report-cards';
 
 function log(id: string, match: MatchInfo | null, recorded: string): SignalLogFile {
   return { id, localPath: id, name: id, robot: 'frc973', size: 1, recorded, match, hoots: [], dsLogs: [] };
@@ -93,3 +93,14 @@ assert.equal(summary.templateName, 'Autonomous');
 assert.deepEqual(summary.problems, [{ id: 'e', severity: 'error', title: 'Fault' }]);
 // Reports made before problems were kept have none.
 assert.deepEqual(reportSummary({ ...full, problems: undefined }).problems, []);
+
+// --- Duplicates: only the newest report from each template for each log ---
+{
+  const a1 = report('a1', 'q12.wpilog', '2026-11-07T21:00:00Z', []);
+  const a2 = report('a2', 'q12.wpilog', '2026-11-07T22:00:00Z', []);
+  const other = { ...report('b1', 'q12.wpilog', '2026-11-07T20:00:00Z', []), templateId: 'power' };
+  const elsewhere = report('c1', 'p5.wpilog', '2026-11-07T19:00:00Z', []);
+  assert.deepEqual(duplicateReports([a1, other, a2, elsewhere]).map((r) => r.id), ['a1']);
+  assert.deepEqual(duplicateReports([a2, a1]).map((r) => r.id), ['a1']);
+  assert.deepEqual(duplicateReports([other, elsewhere]), []);
+}

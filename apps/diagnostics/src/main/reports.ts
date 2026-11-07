@@ -25,6 +25,7 @@ import {
   type ViewSpan
 } from '@shared/library';
 import { describeMatch } from '@shared/offload';
+import { duplicateReports } from '@shared/report-cards';
 import type { PipelineRun, PipelineStatus } from '@shared/reports';
 import type { Settings } from '@shared/settings';
 import { matchKey, type KeyMatch } from '@shared/signal-match';
@@ -33,7 +34,7 @@ import { reportPathSegments } from '@shared/storage-layout';
 import { getLibraryItem, listLibrary } from './library-store';
 import { loadNotes } from './notes-store';
 import { loadSettings } from './settings-store';
-import { hootStatus, openSignalLog, prepareSignals, readSignal, sessionEvents, signalLogs } from './signals-service';
+import { forgetFiles, hootStatus, openSignalLog, prepareSignals, readSignal, sessionEvents, signalLogs } from './signals-service';
 import { dataDirectory } from './storage';
 
 const reportPath = (settings: Settings, id: string) => join(dataDirectory(settings), ...reportPathSegments(id));
@@ -439,7 +440,15 @@ export async function listReports(settings: Settings): Promise<ReportSummary[]> 
     }
     if (known.summary) out.push(known.summary);
   }
-  return out.sort((a, b) => b.generated.localeCompare(a.generated));
+  // Only the newest report from each template for each log is kept: one
+  // run again (by hand, or after its log grew) replaces the one before.
+  const older = duplicateReports(out);
+  for (const report of older) {
+    await fs.rm(reportPath(settings, report.id), { force: true });
+    summaries.delete(reportPath(settings, report.id));
+  }
+  const gone = new Set(older.map((report) => report.id));
+  return out.filter((report) => !gone.has(report.id)).sort((a, b) => b.generated.localeCompare(a.generated));
 }
 
 export async function deleteReport(settings: Settings, id: string): Promise<void> {
@@ -555,13 +564,77 @@ export async function logIdsNow(settings: Settings): Promise<Set<string>> {
   return new Set((await signalLogs(settings).catch(() => [])).map((log) => log.id));
 }
 
-// After an offload or import: the new logs go through the pipelines, in
-// the background.
-export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import'): Promise<void> {
+// After a download or import, in the background: the new logs go through
+// the auto reports, and logs whose files were pulled again because they
+// grew (a log still being written when it was first pulled) have their
+// reports run again.
+export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import', changed: string[] = []): Promise<void> {
   const settings = await loadSettings();
+  if (changed.length > 0) {
+    forgetFiles(changed);
+    const grown = new Set(changed);
+    const files = (session: SignalLogFile) => [session.localPath, ...session.hoots.map((h) => h.localPath), ...session.dsLogs.flatMap((d) => [d.localPath, d.eventsPath])];
+    const logs = (await signalLogs(settings)).filter((log) => before.has(log.id) && files(log).some((path) => path !== null && grown.has(path)));
+    if (logs.length > 0) rerunReports(logs.map((log) => log.id)).catch(() => {});
+  }
   const added = [...(await logIdsNow(settings))].filter((id) => !before.has(id));
   if (added.length === 0) return;
   const pipeline = theAutoReport(await listLibrary(settings, 'pipeline'));
   if (!pipeline?.enabled || !(how === 'offload' ? pipeline.onOffload : pipeline.onImport)) return;
   runPipelines(added, how).catch(() => {});
+}
+
+// Runs each of these logs' reports again, from the template each was made
+// with (as it was then), after their logs grew. The new report replaces
+// the old (see listReports). In turn with the auto reports, a log's
+// reports at once and a few logs at once.
+export function rerunReports(logIds: string[]): Promise<PipelineRun[]> {
+  const next = queue.then(async () => {
+    const settings = await loadSettings();
+    const all = await listReports(settings);
+    const files = new Map((await signalLogs(settings)).map((log) => [log.id, log]));
+    const runs: PipelineRun[] = [];
+    status.running = true;
+    const runOne = async (summary: ReportSummary) => {
+      const file = files.get(summary.logId);
+      const run: PipelineRun = {
+        at: new Date().toISOString(),
+        pipeline: 'Run again (the log grew)',
+        template: summary.templateName,
+        logId: summary.logId,
+        logLabel: file ? logLabel(file) : summary.logLabel,
+        reportId: null,
+        problem: ''
+      };
+      try {
+        const old = await loadReport(settings, summary.id);
+        if (!old) throw new Error('The report is gone.');
+        const report = await makeReport(settings, old.template, summary.logId, old.by);
+        await saveReport(settings, report);
+        run.reportId = report.id;
+      } catch (error) {
+        run.problem = (error as Error).message;
+      }
+      runs.push(run);
+      status.recent = [run, ...status.recent].slice(0, recentRuns);
+    };
+    try {
+      const ids = logIds.filter((id) => files.has(id));
+      let at = 0;
+      const worker = async () => {
+        while (at < ids.length) {
+          const id = ids[at++];
+          await Promise.all(all.filter((r) => r.logId === id).map(runOne));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(logsAtOnce, ids.length) }, worker));
+      // The old ones go now, not at the next look at the list.
+      await listReports(settings);
+    } finally {
+      status.running = false;
+    }
+    return runs;
+  });
+  queue = next.catch(() => {});
+  return next;
 }

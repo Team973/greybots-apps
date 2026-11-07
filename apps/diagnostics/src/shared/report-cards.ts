@@ -86,3 +86,23 @@ export function missingTemplates<T extends { id: string; robot: string | null }>
   const made = new Set(card.reports.map((report) => report.templateId));
   return templates.filter((template) => !made.has(template.id) && (!template.robot || template.robot === card.robot));
 }
+
+// Reports made again from the same template for the same log: all but the
+// newest of each, which are deleted. Only the latest of a report is kept.
+export function duplicateReports(reports: ReportSummary[]): ReportSummary[] {
+  const newest = new Map<string, ReportSummary>();
+  const older: ReportSummary[] = [];
+  for (const report of reports) {
+    const key = `${report.logId}\n${report.templateId}`;
+    const kept = newest.get(key);
+    if (!kept) {
+      newest.set(key, report);
+    } else if (report.generated > kept.generated || (report.generated === kept.generated && report.id > kept.id)) {
+      older.push(kept);
+      newest.set(key, report);
+    } else {
+      older.push(report);
+    }
+  }
+  return older;
+}
