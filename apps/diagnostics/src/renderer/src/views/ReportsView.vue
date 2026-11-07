@@ -134,9 +134,9 @@ async function makeMissing(card: LogCard) {
   }
 }
 const makeLabel = (card: LogCard) => {
-  if (making.value?.logId === card.id) return `Making ${making.value.done + 1} of ${making.value.total}…`;
+  if (making.value?.logId === card.id) return `Running ${making.value.done + 1} of ${making.value.total}…`;
   const count = missingFor(card).length;
-  return card.reports.length ? `Make ${count} more` : `Make ${count} report${count === 1 ? '' : 's'}`;
+  return card.reports.length ? `Run ${count} more` : `Run ${count} report${count === 1 ? '' : 's'}`;
 };
 
 async function generate() {
@@ -376,7 +376,7 @@ onUnmounted(() => clearInterval(statusTimer));
             <!-- Always at the top right: the reports this log doesn't have yet. -->
             <md-outlined-button v-if="missingFor(card).length" class="make-missing"
               :disabled="!!making"
-              :title="`Makes: ${missingFor(card).map((t) => t.name).join(', ')}`"
+              :title="`Runs: ${missingFor(card).map((t) => t.name).join(', ')}`"
               @click="makeMissing(card)">{{ makeLabel(card) }}</md-outlined-button>
           </header>
           <ul v-if="card.reports.length" class="card-reports">
