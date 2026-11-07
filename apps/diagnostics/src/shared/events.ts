@@ -4,6 +4,8 @@
 //
 // Nothing here may touch Node or the DOM.
 
+import type { MonitorResult } from './monitors';
+
 export type EventSeverity = 'error' | 'warning' | 'info';
 
 export type EventKind =
@@ -17,6 +19,7 @@ export type EventKind =
   | 'message'
   | 'state'
   | 'command'
+  | 'monitor'
   | 'note';
 
 export const eventKinds: { kind: EventKind; label: string }[] = [
@@ -30,6 +33,7 @@ export const eventKinds: { kind: EventKind; label: string }[] = [
   { kind: 'message', label: 'Console' },
   { kind: 'state', label: 'Subsystem states' },
   { kind: 'command', label: 'Driver input' },
+  { kind: 'monitor', label: 'Monitors' },
   { kind: 'note', label: 'Notes' }
 ];
 
@@ -81,6 +85,8 @@ export interface SessionEvents {
   phases: MatchPhase[];
   // When the robot was enabled (any mode), in seconds on the timeline.
   enabled: [number, number][];
+  // The post-match monitors' results (their alarms are events too).
+  monitors: MonitorResult[];
   notes: Annotation[];
   // What's still being looked through (device faults in Hoot logs, which
   // owlet exports first), or ''. Asked for again until it's ''.

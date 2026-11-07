@@ -68,8 +68,15 @@ export const monitorSettings = {
     holdSeconds: 0.1,
     meters: 0.3, degrees: 10, persist: 0.5
   },
-  slip: { pose: `${robot}/drive/estimators/fused/pose`, mps: 0.5, maxTurnRadPerSec: 0.5, movingMps: 0.5, window: 0.1, persist: 0.5 },
-  vision: { meters: 0.5, degrees: 10, persist: 1 }
+  // Against odometry (the wheels and gyro alone: vision moves the fused
+  // pose in jumps). The pose is logged a few times a second, so its speed is
+  // taken between samples at least `minGap` apart (and no more than
+  // `maxGap`); faster than `fastestMps` is a reset, not motion.
+  slip: { pose: `${robot}/drive/estimators/odometryOnly/pose`, mps: 0.5, maxTurnRadPerSec: 0.5, movingMps: 0.5, minGap: 0.2, maxGap: 1, fastestMps: 6, persist: 0.5 },
+  // Each camera's own measurement (MegaTag2 for where, MegaTag1 for which
+  // way) against the fused pose then. A measurement counts for
+  // `freshSeconds`; (0, 0) is none.
+  vision: { fused: `${robot}/drive/estimators/fused/pose`, meters: 0.5, degrees: 10, persist: 1, freshSeconds: 0.5 }
 };
 
 // The monitors, for choosing them in a template.
@@ -100,6 +107,28 @@ export function valueAt(series: Series, t: number, hold = Infinity): number | nu
   if (t - times[low - 1] > hold) return null;
   const value = values[low - 1];
   return Number.isFinite(value) ? value : null;
+}
+
+// How fast a signal changes at t, between its last sample there and the
+// one at least `minGap` before it, or null without two such samples within
+// `maxGap`. `angle`: the change is wrapped to ±π.
+export function rateAt(series: Series, t: number, minGap: number, maxGap: number, angle = false): number | null {
+  const { times, values } = series;
+  let low = 0;
+  let high = times.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (times[mid] <= t) low = mid + 1;
+    else high = mid;
+  }
+  const last = low - 1;
+  if (last < 1 || t - times[last] > maxGap) return null;
+  let first = last - 1;
+  while (first > 0 && times[last] - times[first] < minGap) first -= 1;
+  const gap = times[last] - times[first];
+  if (gap < minGap || gap > maxGap) return null;
+  const change = values[last] - values[first];
+  return (angle ? Math.atan2(Math.sin(change), Math.cos(change)) : change) / gap;
 }
 
 export const median = (values: number[]) => {
@@ -256,10 +285,11 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
     if (result.checked) {
       const [px, py, pr] = found.map((f) => f.series);
       const motion = (t: number) => {
-        const x1 = valueAt(px, t); const y1 = valueAt(py, t); const r1 = valueAt(pr, t);
-        const x0 = valueAt(px, t - s.slip.window); const y0 = valueAt(py, t - s.slip.window); const r0 = valueAt(pr, t - s.slip.window);
-        if ([x1, y1, r1, x0, y0, r0].some((v) => v === null)) return null;
-        return { speed: Math.hypot(x1! - x0!, y1! - y0!) / s.slip.window, turn: Math.abs(wrap(r1! - r0!)) / s.slip.window };
+        const vx = rateAt(px, t, s.slip.minGap, s.slip.maxGap);
+        const vy = rateAt(py, t, s.slip.minGap, s.slip.maxGap);
+        const turn = rateAt(pr, t, s.slip.minGap, s.slip.maxGap, true);
+        if (vx === null || vy === null || turn === null || Math.hypot(vx, vy) > s.slip.fastestMps) return null;
+        return { speed: Math.hypot(vx, vy), turn: Math.abs(turn) };
       };
       for (const m of modules) {
         const alarms = persistent(gates.enabled, s.slip.persist, (t) => {
@@ -276,29 +306,50 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
     }
   }
 
-  // Each camera's own pose estimate against the fused one.
+  // Each camera's own measurement against the fused pose.
   {
-    const cameras = visionEstimators(available);
-    const pose = s.slip.pose;
-    const fusedWanted = [`${pose}/translation/x`, `${pose}/translation/y`, `${pose}/rotation/value`];
-    const { result, found } = need('vision-disagreement', 'Vision pose disagreement', cameras.length ? fusedWanted : [...fusedWanted, 'estimators/<camera>Only/pose']);
+    const cameras = visionCameras(available);
+    const fused = s.vision.fused;
+    const fusedWanted = [`${fused}/translation/x`, `${fused}/translation/y`, `${fused}/rotation/value`];
+    const { result, found } = need('vision-disagreement', 'Vision pose disagreement', cameras.length ? fusedWanted : [...fusedWanted, 'providers/<camera>/mt2']);
     if (result.checked) {
       const [fx, fy, fr] = found.map((f) => f.series);
       for (const camera of cameras) {
-        const parts = ['x', 'y'].map((c) => lookup(`${camera.pose}/translation/${c}`)).concat(lookup(`${camera.pose}/rotation/value`));
-        if (parts.some((p) => !p)) continue;
-        const [cx, cy, cr] = parts.map((p) => p!.series);
+        const mx = lookup(`${camera.provider}/mt2/translation/x`);
+        const my = lookup(`${camera.provider}/mt2/translation/y`);
+        const heading = lookup(`${camera.provider}/mt1/rotation/value`);
+        if (!mx || !my) continue;
         const alarms = persistent(gates.enabled, s.vision.persist, (t) => {
-          const d = poseGap({ x: fx, y: fy, r: fr }, { x: cx, y: cy, r: cr }, t);
+          const d = measurementGap({ x: fx, y: fy, r: fr }, { x: mx.series, y: my.series, r: heading?.series ?? null }, t, s.vision.freshSeconds);
           if (!d) return null;
-          return { on: d.meters > s.vision.meters || d.degrees > s.vision.degrees, value: d.meters, detail: `${fmt(d.meters, 2)} m, ${fmt(d.degrees)}° from the fused pose` };
+          return { on: d.meters > s.vision.meters || (d.degrees ?? 0) > s.vision.degrees, value: d.meters, detail: `${fmt(d.meters, 2)} m${d.degrees === null ? '' : `, ${fmt(d.degrees)}°`} from the fused pose` };
         });
-        result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `${camera.name} camera disagrees with the fused pose`, detail: `up to ${a.detail}, for ${seconds(a)}`, key: parts[0]!.key })));
+        result.alarms.push(...alarms.map((a) => ({ start: a.start, end: a.end, title: `${camera.name} camera disagrees with the fused pose`, detail: `up to ${a.detail}, for ${seconds(a)}`, key: mx.key })));
       }
       result.alarms.sort((a, b) => a.start - b.start);
     }
   }
   return results;
+}
+
+// How far a camera's latest measurement (if it's fresh, and not (0, 0))
+// is from the fused pose at t. Its heading only when it measures one.
+export function measurementGap(
+  fused: { x: Series; y: Series; r: Series },
+  camera: { x: Series; y: Series; r: Series | null },
+  t: number,
+  fresh: number
+): { meters: number; degrees: number | null } | null {
+  const cx = valueAt(camera.x, t, fresh);
+  const cy = valueAt(camera.y, t, fresh);
+  if (cx === null || cy === null || (cx === 0 && cy === 0)) return null;
+  const fx = valueAt(fused.x, t);
+  const fy = valueAt(fused.y, t);
+  if (fx === null || fy === null) return null;
+  const cr = camera.r ? valueAt(camera.r, t, fresh) : null;
+  const fr = valueAt(fused.r, t);
+  const degrees = cr === null || fr === null || cr === 0 ? null : Math.abs(wrap(cr - fr)) * 180 / Math.PI;
+  return { meters: Math.hypot(cx - fx, cy - fy), degrees };
 }
 
 // How far one pose is from another at t.
@@ -309,13 +360,13 @@ export function poseGap(a: { x: Series; y: Series; r: Series }, b: { x: Series; 
   return { meters: Math.hypot(ax - bx, ay - by), degrees: Math.abs(wrap(ar - br)) * 180 / Math.PI };
 }
 
-// The cameras' own pose estimators (`estimators/leftLLOnly/pose`), named
-// as their camera ("left").
-export function visionEstimators(available: readonly string[]): { name: string; pose: string }[] {
+// The cameras the robot reads (`providers/llLeft`), named for people
+// ("Left"), with where their logging is.
+export function visionCameras(available: readonly string[]): { name: string; provider: string }[] {
   const found = new Map<string, string>();
   for (const key of available) {
-    const m = /^(.*\/estimators\/([^/]+?)Only\/pose)\/translation\/x$/i.exec(key);
-    if (m && !/odometry/i.test(m[2])) found.set(m[2].replace(/ll$/i, '').replace(/LL$/, '') || m[2], m[1]);
+    const m = /^(.*\/providers\/(ll[^/]+))\/mt2\/translation\/x$/i.exec(key);
+    if (m) found.set(m[2].replace(/^ll/i, '') || m[2], m[1]);
   }
-  return [...found.entries()].map(([name, pose]) => ({ name, pose }));
+  return [...found.entries()].map(([name, provider]) => ({ name, provider }));
 }
