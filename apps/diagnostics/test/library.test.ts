@@ -6,7 +6,7 @@ import { matchKey, searchMatches, sharedTail } from '@shared/signal-match';
 import { cleanLibraryItem } from '@shared/library-check';
 import { planSync } from '@shared/library-sync';
 import { starterLibrary } from '@shared/starters';
-import { templateKeys, type LibraryItem } from '@shared/library';
+import { templateKeys, theAutoReport, type LibraryItem, type Pipeline } from '@shared/library';
 import { integrateProduct } from '@shared/signals';
 
 // --- Matching ---
@@ -96,3 +96,17 @@ assert.equal(integrateProduct([0, 1], [2, 4], [0.5, 2], [10, 12], 0, 3), 10 + 40
 // A value from before the start holds into it.
 assert.equal(integrateProduct([-5], [3], [-1], [12], 0, 2), 72);
 assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
+
+// --- Auto reports: one configuration, and several new logs at once ---
+{
+  const raw = { id: '5f0c2a10-0003-4000-8000-0000000000aa', kind: 'pipeline', name: 'Auto', templateIds: ['t'] };
+  // Saved before the choice existed: runs on all of them, as it did.
+  assert.equal((cleanLibraryItem(raw) as Pipeline).several, 'all');
+  assert.equal((cleanLibraryItem({ ...raw, several: 'newest' }) as Pipeline).several, 'newest');
+  assert.equal((cleanLibraryItem({ ...raw, several: 'nonsense' }) as Pipeline).several, 'all');
+  const older = { ...(cleanLibraryItem({ ...raw, created: '2026-10-01T00:00:00.000Z' }) as Pipeline), id: 'b', name: 'First' };
+  const newer = { ...(cleanLibraryItem({ ...raw, created: '2026-11-01T00:00:00.000Z' }) as Pipeline), id: 'a', name: 'Second' };
+  // The one that runs is the first made.
+  assert.equal(theAutoReport([newer, older])?.name, 'First');
+  assert.equal(theAutoReport([]), null);
+}

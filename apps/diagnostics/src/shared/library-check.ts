@@ -158,7 +158,8 @@ export function cleanLibraryItem(raw: unknown, now = new Date().toISOString()): 
         onImport: raw.onImport === true,
         robots: strings(raw.robots, 50),
         matchTypes: strings(raw.matchTypes).filter((t): t is MatchType | 'none' => matchTypes.has(t)),
-        templateIds: strings(raw.templateIds, 50)
+        templateIds: strings(raw.templateIds, 50),
+        several: raw.several === 'newest' || raw.several === 'none' ? raw.several : 'all'
       };
   }
 }

@@ -3,11 +3,15 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
+import Switch from '@greybots/common/components/Switch.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import type { SignalLogFile } from '@shared/ipc';
 import {
   scopeLabels,
+  severalLogsLabels,
+  theAutoReport,
+  type SeveralLogs,
   type Pipeline,
   type Report,
   type ReportSummary,
@@ -78,9 +82,13 @@ watch(() => route.query.report, async (id) => {
   openReport.value = typeof id === 'string' ? await window.diagnostics.getReport(id).catch(() => null) : null;
 }, { immediate: true });
 
-const generating = ref(false);
-const generateTemplate = ref('');
-const generateLog = ref('');
+// Running one template on the logs picked from the list: a few logs at a
+// time (the main process keeps three open). Logs that already have a report
+// from it are left out unless asked.
+const batchTemplate = ref('');
+const batchAgain = ref(false);
+const selected = ref(new Set<string>());
+const batch = ref<{ done: number; total: number } | null>(null);
 
 // The reports, by log: a card for each log, with its reports and flags for
 // the errors and warnings they found. Filterable; by default only logs with
@@ -178,19 +186,57 @@ const makeLabel = (card: LogCard) => {
   return card.reports.length ? `Run ${count} more` : `Run ${count} report${count === 1 ? '' : 's'}`;
 };
 
-async function generate() {
-  if (!generateTemplate.value || !generateLog.value) return;
-  generating.value = true;
-  problem.value = '';
-  try {
-    const report = await window.diagnostics.generateReport(generateTemplate.value, generateLog.value);
-    await load();
-    go({ tab: 'reports', report: report.id });
-  } catch (error) {
-    problem.value = cleanError(error);
-  } finally {
-    generating.value = false;
+const isSelected = (card: LogCard) => selected.value.has(card.id);
+function setSelected(card: LogCard, on: boolean) {
+  const next = new Set(selected.value);
+  if (on) next.add(card.id);
+  else next.delete(card.id);
+  selected.value = next;
+}
+// Every log shown (that's still in the data folder), or none.
+const selectable = computed(() => shownCards.value.filter((card) => card.log));
+const allShownSelected = computed(() => selectable.value.length > 0 && selectable.value.every(isSelected));
+function selectAllShown(on: boolean) {
+  const next = new Set(selected.value);
+  for (const card of selectable.value) {
+    if (on) next.add(card.id);
+    else next.delete(card.id);
   }
+  selected.value = next;
+}
+// The picked logs it would run on.
+const batchTargets = computed(() => cards.value.filter((card) => card.log && selected.value.has(card.id) &&
+  (batchAgain.value || !card.reports.some((r) => r.templateId === batchTemplate.value))));
+const batchLabel = computed(() => {
+  if (batch.value) return `Running… ${batch.value.done} of ${batch.value.total} done`;
+  const count = batchTargets.value.length;
+  return `Run on ${count} log${count === 1 ? '' : 's'}`;
+});
+async function runBatch() {
+  const targets = batchTargets.value;
+  const templateId = batchTemplate.value;
+  if (batch.value || !templateId || targets.length === 0) return;
+  problem.value = '';
+  batch.value = { done: 0, total: targets.length };
+  const failed: string[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < targets.length) {
+      const card = targets[next++];
+      try {
+        await window.diagnostics.generateReport(templateId, card.id);
+        reports.value = await window.diagnostics.getReports();
+      } catch (error) {
+        failed.push(`${card.title}: ${cleanError(error)}`);
+      } finally {
+        if (batch.value) batch.value = { ...batch.value, done: batch.value.done + 1 };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, targets.length) }, worker));
+  batch.value = null;
+  selected.value = new Set();
+  if (failed.length) problem.value = failed.join('; ');
 }
 
 async function removeReport(id: string) {
@@ -255,9 +301,7 @@ async function duplicate(template: ReportTemplate) {
   await load();
 }
 
-// --- Pipelines ---
-
-const editingPipeline = ref<Pipeline | null>(null);
+// --- Auto reports: one configuration (pipelines in the code and library) ---
 const matchTypeChoices: { id: MatchType | 'none'; label: string }[] = [
   { id: 'qualification', label: 'Qualifications' },
   { id: 'elimination', label: 'Playoffs' },
@@ -267,32 +311,34 @@ const matchTypeChoices: { id: MatchType | 'none'; label: string }[] = [
 
 function blankPipeline(): Pipeline {
   return {
-    id: '', kind: 'pipeline', name: 'New pipeline', description: '', created: '', changed: '', createdBy: null, robot: null, cloud: null,
-    enabled: true, onOffload: true, onImport: false, robots: [], matchTypes: [], templateIds: []
+    id: '', kind: 'pipeline', name: 'Auto reports', description: '', created: '', changed: '', createdBy: null, robot: null, cloud: null,
+    enabled: false, onOffload: true, onImport: false, robots: [], matchTypes: [], templateIds: [], several: 'all'
   };
 }
 
-const toggle = <T,>(list: T[], item: T) => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
-
-async function savePipeline() {
-  if (!editingPipeline.value) return;
+const autoReport = computed(() => theAutoReport(pipelines.value) ?? blankPipeline());
+const severalChoices = Object.entries(severalLogsLabels) as [SeveralLogs, string][];
+// Saved as soon as anything changes; there's only the one.
+async function updateAuto(change: Partial<Pipeline>) {
   try {
-    await window.diagnostics.saveLibraryItem(JSON.parse(JSON.stringify(editingPipeline.value)));
-    editingPipeline.value = null;
-    await load();
+    await window.diagnostics.saveLibraryItem(JSON.parse(JSON.stringify({ ...autoReport.value, ...change })));
+    pipelines.value = await window.diagnostics.getLibrary('pipeline');
   } catch (error) {
     problem.value = cleanError(error);
   }
 }
 
+const toggle = <T,>(list: T[], item: T) => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
+
+
 const pipelineStatus = ref<PipelineStatus | null>(null);
-const runLog = ref<Record<string, string>>({});
-async function runNow(pipeline: Pipeline) {
-  const logId = runLog.value[pipeline.id];
-  if (!logId) return;
+const runLog = ref('');
+async function runNow() {
+  const pipeline = autoReport.value;
+  if (!runLog.value || !pipeline.id) return;
   problem.value = '';
-  const runs = await window.diagnostics.runPipeline(pipeline.id, [logId]).catch((error) => { problem.value = cleanError(error); return []; });
-  if (runs.length === 0 && !problem.value) problem.value = `${pipeline.name} has no templates, or none apply to that log's robot.`;
+  const runs = await window.diagnostics.runPipeline(pipeline.id, [runLog.value]).catch((error) => { problem.value = cleanError(error); return []; });
+  if (runs.length === 0 && !problem.value) problem.value = "It has no templates, or none apply to that log's robot.";
   await load();
 }
 let statusTimer: ReturnType<typeof setInterval> | undefined;
@@ -306,8 +352,7 @@ const templateName = (id: string) => templates.value.find((t) => t.id === id)?.n
 
 onMounted(async () => {
   await load();
-  generateTemplate.value = templates.value[0]?.id ?? '';
-  generateLog.value = reportLogs.value[0]?.id ?? '';
+  batchTemplate.value = templates.value[0]?.id ?? '';
   await pollStatus();
   statusTimer = setInterval(pollStatus, 2000);
 });
@@ -382,30 +427,26 @@ onUnmounted(() => clearInterval(statusTimer));
 
   <!-- Reports -->
   <template v-else-if="tab === 'reports'">
-    <section id="make-report" class="card">
-      <h2>Make a report</h2>
+    <section id="run-report" class="card full">
+      <h2>Run a report</h2>
       <p v-if="templates.length === 0" class="hint">There are no templates yet: make one under Templates.</p>
       <template v-else>
         <div class="field-row">
           <label class="pick">
             <span class="hint small">Template</span>
-            <select id="generate-template" v-model="generateTemplate">
+            <select id="batch-template" v-model="batchTemplate">
               <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
             </select>
           </label>
-          <label class="pick">
-            <span class="hint small">Log</span>
-            <select id="generate-log" v-model="generateLog">
-              <option v-for="log in reportLogs" :key="log.id" :value="log.id">{{ logLabel(log) }}</option>
-            </select>
-          </label>
+          <md-filled-button id="run-batch" :disabled="!!batch || batchTargets.length === 0" @click="runBatch">{{ batchLabel }}</md-filled-button>
         </div>
-        <div class="card-actions">
-          <md-filled-button id="generate" :disabled="generating || !generateTemplate || !generateLog" @click="generate">
-            {{ generating ? 'Making it…' : 'Make the report' }}
-          </md-filled-button>
-          <span v-if="generating" class="hint small">Hoot logs are read first, which takes a little while the first time.</span>
+        <div class="chips">
+          <label class="chip"><input v-model="batchAgain" type="checkbox" /><span>Run again on logs that already have it</span></label>
         </div>
+        <p class="hint small">
+          Pick the logs below: tick them, or narrow the list with the filter and pick every one shown.
+          {{ selected.size }} picked<template v-if="selected.size && batchTargets.length < selected.size">, {{ selected.size - batchTargets.length }} already have it</template>.
+        </p>
       </template>
     </section>
     <section class="card full">
@@ -416,9 +457,15 @@ onUnmounted(() => clearInterval(statusTimer));
           <option :value="null">All events</option>
           <option v-for="event in cardEvents" :key="event" :value="event">{{ event }}</option>
         </select>
-        <label class="check"><input id="report-real-matches" v-model="cardFilter.realMatches" type="checkbox" /> Real matches only</label>
-        <label class="check"><input id="report-analyzed-only" v-model="cardFilter.analyzedOnly" type="checkbox" /> Only logs with reports</label>
+        <span class="chips">
+          <label class="chip"><input id="report-real-matches" v-model="cardFilter.realMatches" type="checkbox" /><span>Real matches only</span></label>
+          <label class="chip"><input id="report-analyzed-only" v-model="cardFilter.analyzedOnly" type="checkbox" /><span>Only logs with reports</span></label>
+        </span>
       </div>
+      <label v-if="selectable.length" class="pick-all">
+        <input type="checkbox" class="pick-box" :checked="allShownSelected" @change="selectAllShown(($event.target as HTMLInputElement).checked)" />
+        Pick all {{ selectable.length }} shown<template v-if="selected.size"> · {{ selected.size }} picked</template>
+      </label>
       <p v-if="reports.length === 0 && cardFilter.analyzedOnly" class="hint">
         No reports yet. They're made here, or automatically when logs are downloaded or imported (Auto reports).
       </p>
@@ -427,6 +474,8 @@ onUnmounted(() => clearInterval(statusTimer));
         <article v-for="card in shownCards.slice(0, cardLimit)" :key="card.id" class="log-card clickable" :class="{ gone: !card.log }"
           @click="go({ tab: 'reports', log: card.id })">
           <header>
+            <input v-if="card.log" type="checkbox" class="pick-box" :checked="isSelected(card)" :aria-label="`Pick ${card.title}`"
+              @click.stop @change="setSelected(card, ($event.target as HTMLInputElement).checked)" />
             <div class="card-title">
               <a href="#" class="card-name" @click.prevent>{{ card.title }}</a>
               <span class="hint small">{{ cardWhen(card) }}{{ card.robot ? ` · ${card.robot}` : '' }}</span>
@@ -497,69 +546,62 @@ onUnmounted(() => clearInterval(statusTimer));
 
   <!-- Auto reports (pipelines in the code and library) -->
   <template v-else-if="tab === 'pipelines'">
-    <section v-if="editingPipeline" class="card">
-      <h2>{{ editingPipeline.id ? `Change ${editingPipeline.name}` : 'New auto report' }}</h2>
-      <form id="pipeline-editor" class="form" @submit.prevent="savePipeline">
-        <label class="pick"><span class="hint small">Name</span><input v-model="editingPipeline.name" maxlength="120" required /></label>
-        <label class="check"><input v-model="editingPipeline.enabled" type="checkbox" /> On</label>
-        <fieldset>
-          <legend class="hint small">Runs on logs that are</legend>
-          <label class="check"><input v-model="editingPipeline.onOffload" type="checkbox" /> Downloaded from the robot</label>
-          <label class="check"><input v-model="editingPipeline.onImport" type="checkbox" /> Imported</label>
-        </fieldset>
-        <fieldset>
-          <legend class="hint small">From (none ticked: any)</legend>
-          <label v-for="choice in matchTypeChoices" :key="choice.id" class="check">
-            <input type="checkbox" :checked="editingPipeline.matchTypes.includes(choice.id)"
-              @change="editingPipeline.matchTypes = toggle(editingPipeline.matchTypes, choice.id)" /> {{ choice.label }}
-          </label>
-        </fieldset>
-        <label class="pick">
-          <span class="hint small">Robots (none: any)</span>
-          <input :value="editingPipeline.robots.join(', ')" placeholder="frc973, frc973B"
-            @change="editingPipeline.robots = ($event.target as HTMLInputElement).value.split(',').map((r) => r.trim()).filter(Boolean)" />
-        </label>
-        <fieldset>
-          <legend class="hint small">Makes</legend>
-          <p v-if="templates.length === 0" class="hint small">No templates yet.</p>
-          <label v-for="t in templates" :key="t.id" class="check">
-            <input type="checkbox" :checked="editingPipeline.templateIds.includes(t.id)"
-              @change="editingPipeline.templateIds = toggle(editingPipeline.templateIds, t.id)" /> {{ t.name }}
-          </label>
-        </fieldset>
-        <div class="card-actions">
-          <md-filled-button id="save-pipeline" type="submit" @click="savePipeline">Save</md-filled-button>
-          <md-outlined-button @click="editingPipeline = null">Cancel</md-outlined-button>
-        </div>
-      </form>
-    </section>
-    <section v-else class="card">
-      <h2>Auto report generation</h2>
-      <p class="hint">Makes reports by itself as logs arrive: each new log an auto report applies to gets a report from each of its templates.</p>
-      <div class="card-actions">
-        <md-filled-button id="new-pipeline" @click="editingPipeline = blankPipeline()">New auto report</md-filled-button>
+    <section id="auto-report" class="card">
+      <div class="auto-head">
+        <h2>Auto report generation</h2>
+        <Switch id="auto-report-on" class="on-switch" :model-value="autoReport.enabled" aria-label="Auto report generation on"
+          @update:model-value="updateAuto({ enabled: $event })"></Switch>
+        <span :class="autoReport.enabled ? 'on-text' : 'hint'">{{ autoReport.enabled ? 'On' : 'Off' }}</span>
       </div>
-      <p v-if="pipelines.length === 0" class="hint">None yet.</p>
-      <ul class="items">
-        <li v-for="p in pipelines" :key="p.id" class="item">
-          <div class="what">
-            <strong>{{ p.name }}</strong>
-            <span class="hint small">
-              {{ p.enabled ? 'On' : 'Off' }} · on {{ [p.onOffload ? 'download' : '', p.onImport ? 'import' : ''].filter(Boolean).join(' and ') || 'nothing' }}
-              · {{ p.templateIds.map(templateName).join(', ') || 'no templates' }}
-            </span>
-            <span class="run small">
-              Run now on
-              <select v-model="runLog[p.id]" :aria-label="`Log to run ${p.name} on`">
-                <option v-for="log in reportLogs" :key="log.id" :value="log.id">{{ logLabel(log) }}</option>
-              </select>
-              <button class="link" :disabled="!runLog[p.id]" @click="runNow(p)">Run</button>
-            </span>
-          </div>
-          <button class="link" @click="editingPipeline = JSON.parse(JSON.stringify(p))">Change</button>
-          <button class="link" @click="removeItem('pipeline', p.id)">Delete</button>
-        </li>
-      </ul>
+      <p class="hint">Makes reports by itself as logs arrive: each new log it applies to gets a report from each template picked here. Saved as it's changed.</p>
+
+      <fieldset>
+        <legend class="hint small">Runs on logs that are</legend>
+        <div class="chips">
+          <label class="chip"><input type="checkbox" :checked="autoReport.onOffload" @change="updateAuto({ onOffload: !autoReport.onOffload })" /><span>Downloaded from the robot</span></label>
+          <label class="chip"><input type="checkbox" :checked="autoReport.onImport" @change="updateAuto({ onImport: !autoReport.onImport })" /><span>Imported</span></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="hint small">When several new logs come at once (a backlog, say)</legend>
+        <div class="chips">
+          <label v-for="[id, label] in severalChoices" :key="id" class="chip">
+            <input type="radio" name="several" :checked="autoReport.several === id" @change="updateAuto({ several: id })" /><span>{{ label }}</span>
+          </label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="hint small">From (none picked: any)</legend>
+        <div class="chips">
+          <label v-for="choice in matchTypeChoices" :key="choice.id" class="chip">
+            <input type="checkbox" :checked="autoReport.matchTypes.includes(choice.id)" @change="updateAuto({ matchTypes: toggle(autoReport.matchTypes, choice.id) })" /><span>{{ choice.label }}</span>
+          </label>
+        </div>
+      </fieldset>
+      <label class="pick">
+        <span class="hint small">Robots (none: any)</span>
+        <input :value="autoReport.robots.join(', ')" placeholder="frc973, frc973B"
+          @change="updateAuto({ robots: ($event.target as HTMLInputElement).value.split(',').map((r) => r.trim()).filter(Boolean) })" />
+      </label>
+      <fieldset>
+        <legend class="hint small">Runs these templates</legend>
+        <p v-if="templates.length === 0" class="hint small">No templates yet.</p>
+        <div class="chips">
+          <label v-for="t in templates" :key="t.id" class="chip">
+            <input type="checkbox" :checked="autoReport.templateIds.includes(t.id)" @change="updateAuto({ templateIds: toggle(autoReport.templateIds, t.id) })" /><span>{{ t.name }}</span>
+          </label>
+        </div>
+      </fieldset>
+      <div v-if="autoReport.id" class="run small">
+        Run it now on
+        <select v-model="runLog" aria-label="Log to run it on">
+          <option v-for="log in reportLogs" :key="log.id" :value="log.id">{{ logLabel(log) }}</option>
+        </select>
+        <md-outlined-button :disabled="!runLog" @click="runNow">Run</md-outlined-button>
+      </div>
+      <p v-if="pipelines.length > 1" class="hint small">
+        {{ pipelines.length - 1 }} older auto report configuration{{ pipelines.length === 2 ? ' is' : 's are' }} kept in the library but no longer run: there's one now.
+      </p>
     </section>
     <section class="card">
       <h2>Lately</h2>
@@ -645,11 +687,115 @@ select option {
   width: auto;
 }
 
-.card-filter .check {
+/* Choices as pills: orange when on, with a tick, and the box itself hidden
+   (still there for the keyboard and screen readers). */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.chip input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.chip span {
+  padding: 5px 12px;
+  border: 1px solid rgba(127, 127, 127, 0.5);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  transition: background 120ms, border-color 120ms;
+  user-select: none;
+}
+
+.chip:hover span {
+  background: rgba(127, 127, 127, 0.1);
+}
+
+.chip input:checked + span {
+  border-color: var(--md-sys-color-primary);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 20%, transparent);
+  font-weight: 600;
+}
+
+.chip input:checked + span::before {
+  content: '✓ ';
+}
+
+.chip input:focus-visible + span {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+
+.pick-box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--md-sys-color-primary);
+  cursor: pointer;
+}
+
+.pick-all {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+fieldset {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.auto-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auto-head h2 {
+  margin: 0;
+  margin-right: auto;
+}
+
+.on-text {
+  font-weight: 600;
+}
+
+/* The On switch: orange when on, grey when off. */
+.on-switch {
+  --md-switch-selected-track-color: #e8710a;
+  --md-switch-selected-hover-track-color: #e8710a;
+  --md-switch-selected-focus-track-color: #e8710a;
+  --md-switch-selected-pressed-track-color: #e8710a;
+  --md-switch-selected-handle-color: #fff;
+  --md-switch-selected-hover-handle-color: #fff;
+  --md-switch-selected-focus-handle-color: #fff;
+  --md-switch-selected-pressed-handle-color: #fff;
+  --md-switch-selected-icon-color: #e8710a;
+  --md-switch-track-color: #9aa0a8;
+  --md-switch-hover-track-color: #9aa0a8;
+  --md-switch-focus-track-color: #9aa0a8;
+  --md-switch-pressed-track-color: #9aa0a8;
+  --md-switch-track-outline-color: #9aa0a8;
+  --md-switch-handle-color: #fff;
+  --md-switch-hover-handle-color: #fff;
+  --md-switch-focus-handle-color: #fff;
+  --md-switch-pressed-handle-color: #fff;
 }
 
 /* The list of logs and a log on its own use the page's whole width. */

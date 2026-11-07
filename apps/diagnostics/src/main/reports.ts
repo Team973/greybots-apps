@@ -12,6 +12,7 @@ import type { SignalLogFile } from '@shared/ipc';
 import {
   reportSummary,
   templateKeys,
+  theAutoReport,
   type Pipeline,
   type RenderedSection,
   type Report,
@@ -482,8 +483,18 @@ const logsAtOnce = 3;
 export function runPipelines(logIds: string[], how: 'offload' | 'import' | 'manual', only?: string): Promise<PipelineRun[]> {
   const next = queue.then(async () => {
     const settings = await loadSettings();
-    const pipelines = (await listLibrary(settings, 'pipeline')).filter((p) => !only || p.id === only);
-    const files = (await signalLogs(settings)).filter((log) => logIds.includes(log.id));
+    // The one auto report configuration (see theAutoReport), or the one asked for.
+    const all = await listLibrary(settings, 'pipeline');
+    const chosen = only ? all.find((p) => p.id === only) : theAutoReport(all);
+    const pipelines = chosen ? [chosen] : [];
+    let files = (await signalLogs(settings)).filter((log) => logIds.includes(log.id));
+    // Several new logs at once: all, the newest, or none, as it says. Run by
+    // hand, it runs on what it's asked to.
+    if (how !== 'manual' && chosen) {
+      const applies = files.filter((file) => pipelineApplies(chosen, file, how));
+      if (applies.length > 1 && chosen.several === 'none') files = [];
+      else if (applies.length > 1 && chosen.several === 'newest') files = [applies.reduce((a, b) => (b.recorded > a.recorded ? b : a))];
+    }
     const runs: PipelineRun[] = [];
     const making = new Set<string>();
     const showMaking = () => { status.current = making.size ? [...making].join('; ') : null; };
@@ -550,7 +561,7 @@ export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import
   const settings = await loadSettings();
   const added = [...(await logIdsNow(settings))].filter((id) => !before.has(id));
   if (added.length === 0) return;
-  const pipelines = await listLibrary(settings, 'pipeline');
-  if (!pipelines.some((p) => p.enabled && (how === 'offload' ? p.onOffload : p.onImport))) return;
+  const pipeline = theAutoReport(await listLibrary(settings, 'pipeline'));
+  if (!pipeline?.enabled || !(how === 'offload' ? pipeline.onOffload : pipeline.onImport)) return;
   runPipelines(added, how).catch(() => {});
 }

@@ -141,6 +141,23 @@ export interface Pipeline extends LibraryItemBase {
   // Matches of these types only, or 'none' for logs that aren't a match (empty: any).
   matchTypes: (MatchType | 'none')[];
   templateIds: string[];
+  // When a download or import brings several new logs at once (a backlog,
+  // say): reports on all of them, on just the newest, or none.
+  several: SeveralLogs;
+}
+
+export type SeveralLogs = 'all' | 'newest' | 'none';
+
+export const severalLogsLabels: Record<SeveralLogs, string> = {
+  all: 'Run on all of them',
+  newest: 'Run on the newest only',
+  none: "Don't run"
+};
+
+// There's one auto report configuration: the first one made. Libraries
+// from before kept any number; the others are left alone and not run.
+export function theAutoReport(pipelines: Pipeline[]): Pipeline | null {
+  return [...pipelines].sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id))[0] ?? null;
 }
 
 export type LibraryItem = SavedView | ReportTemplate | Pipeline;

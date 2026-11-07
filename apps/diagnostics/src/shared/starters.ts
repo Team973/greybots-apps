@@ -231,7 +231,8 @@ const pipeline: Pipeline = {
   onImport: false,
   robots: [],
   matchTypes: ['qualification'],
-  templateIds: ['5f0c2a10-0002-4000-8000-000000000005', '5f0c2a10-0002-4000-8000-000000000010']
+  templateIds: ['5f0c2a10-0002-4000-8000-000000000005', '5f0c2a10-0002-4000-8000-000000000010'],
+  several: 'all'
 };
 
 export function starterLibrary(): LibraryItem[] {
