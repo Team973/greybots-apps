@@ -119,7 +119,7 @@ const number = (value: number | null, unit: string) => {
   return unit ? `${text} ${unit}` : text;
 };
 // --- Monitors and vision ---
-const alarmColor = (severity: 'warning' | 'info' | undefined) => (severity === 'info' ? (dark.value ? '#9aa0a8' : '#8a8f98') : severityColor('warning', dark.value));
+const alarmColor = (severity: 'warning' | 'info' | undefined) => severityColor(severity ?? 'warning', dark.value);
 const stateColors: Record<VisionState, string> = { valid: '#2e9e5b', thrown: '#d03b3a', noTargets: '#8a8f98', noData: '#c98500' };
 // A heatmap cell: its state's share of the bin's frames, as how solid it is.
 function cellStyle(camera: VisionCamera, bin: number, state: VisionState) {

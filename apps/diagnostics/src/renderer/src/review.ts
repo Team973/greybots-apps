@@ -2,18 +2,18 @@
 // colours, which are routine, and notes as events, so they're marked,
 // listed and jumped to like the rest.
 
-import { phaseClock, type Annotation, type EventKind, type LogEvent, type MatchPhase } from '@shared/events';
+import { phaseClock, type Annotation, type EventKind, type EventSeverity, type LogEvent, type MatchPhase } from '@shared/events';
 
 // Status colours, kept for events and used for nothing else: red for
-// errors, amber for warnings. Every event is named beside its mark, so
+// errors, amber for warnings, blue for information. Every event is named beside its mark, so
 // colour is never all that tells them apart.
 const colors = {
-  light: { error: '#d03b3a', warning: '#c98500', info: '#8a8f98', note: '#6250d6' },
-  dark: { error: '#e66767', warning: '#e0a526', info: '#9aa0a8', note: '#9085e9' }
+  light: { error: '#d03b3a', warning: '#c98500', info: '#2f74c8', note: '#6250d6' },
+  dark: { error: '#e66767', warning: '#e0a526', info: '#5b9fe6', note: '#9085e9' }
 };
 
-// An error's or warning's colour, for flags that aren't events (a report's).
-export function severityColor(severity: 'error' | 'warning', dark: boolean): string {
+// A level's colour, for what isn't an event (a report's flags, a filter).
+export function severityColor(severity: EventSeverity, dark: boolean): string {
   return (dark ? colors.dark : colors.light)[severity];
 }
 
@@ -49,11 +49,25 @@ export function noteEvent(note: Annotation): LogEvent {
 
 export interface EventFilter {
   kinds: EventKind[];
+  // Errors, warnings, information: which show. Notes show by their kind alone.
+  levels: EventSeverity[];
   routine: boolean;
 }
 
+export const eventLevels: { level: EventSeverity; label: string }[] = [
+  { level: 'error', label: 'Errors' },
+  { level: 'warning', label: 'Warnings' },
+  { level: 'info', label: 'Info' }
+];
+
+export const allLevels = (): EventSeverity[] => eventLevels.map((l) => l.level);
+
+// Of a level shown (notes aside), and routine only if asked for.
+export const shownLevel = (event: LogEvent, filter: EventFilter) =>
+  (event.kind === 'note' || filter.levels.includes(event.severity)) && (filter.routine || !isRoutine(event));
+
 export function shownEvent(event: LogEvent, filter: EventFilter): boolean {
-  return filter.kinds.includes(event.kind) && (filter.routine || !isRoutine(event));
+  return filter.kinds.includes(event.kind) && shownLevel(event, filter);
 }
 
 // "123.4 s · Teleop 0:42".

@@ -299,7 +299,7 @@ The Signals page is also where a log is reviewed (#94): what happened in it is f
 | Driver input | Booleans under a controller (`driverStick/`, `operatorController/`, `joystick0/`, ...), each from press to release; WPILib's and AdvantageKit's joystick button bits |
 
 - **Merging:** the same event less than 2 s apart is one, with a count and its span (overruns loop after loop, a fault that flickers).
-- **Severity:** errors (red), warnings (amber) and information (grey); notes are purple. Information other than enables, states and driver input is routine (current limits, Team 973's Q39 had hundreds): hidden unless **Routine too** is ticked.
+- **Severity:** errors (red), warnings (amber) and information (blue); notes are purple. The list can be filtered by level (Errors, Warnings, Info, each with its count) as well as by type; notes show by their type alone. Both are kept between visits. Information other than enables, states and driver input is routine (current limits, Team 973's Q39 had hundreds): hidden unless **Routine too** is ticked.
 - **Many and ordinary:** subsystem states and driver input are listed only once their kinds are picked (Q39 has 323 state changes and 44 presses). Which subsystems and buttons matter to a team comes with dashboards (#95).
 - **Hoot logs:** device faults need owlet to export about 450 signals from each Hoot log, which takes about 12 s the first time a log is opened (once for both of a match's Hoot logs, kept like any export). Until then the list says it's still looking; everything else shows at once.
 
