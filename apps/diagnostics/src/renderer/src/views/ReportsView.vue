@@ -296,13 +296,25 @@ const batchJobs = computed(() => cards.value
 const batchReports = computed(() => batchJobs.value.reduce((total, job) => total + job.templates.length, 0));
 // Selected logs with nothing to run: they have it (or them) already.
 const batchDone = computed(() => cards.value.filter((card) => card.log && selected.value.has(card.id)).length - batchJobs.value.length);
+// Reports the selected logs already have, of those chosen: left out unless
+// regenerating.
+const batchExisting = computed(() => cards.value
+  .filter((card) => card.log && selected.value.has(card.id))
+  .reduce((total, card) => total + (batchTemplate.value === allTemplates
+    ? templates.value.filter((t) => (!t.robot || t.robot === card.robot) && card.reports.some((r) => r.templateId === t.id)).length
+    : Number(card.reports.some((r) => r.templateId === batchTemplate.value))), 0));
+// Of those, how many replace a report the log already has.
+const batchRegenerated = computed(() => batchJobs.value.reduce((total, job) =>
+  total + job.templates.filter((t) => job.card.reports.some((r) => r.templateId === t.id)).length, 0));
 const batchLabel = computed(() => {
   if (batch.value) return `Running… ${batch.value.done} of ${batch.value.total} done`;
   const logs = batchJobs.value.length;
+  if (logs === 0 && batchDone.value > 0) return `Already run on ${batchDone.value === 1 ? 'that log' : 'those logs'}`;
   const onLogs = `${logs} log${logs === 1 ? '' : 's'}`;
+  const regenerated = batchRegenerated.value ? ` (${batchRegenerated.value} regenerated)` : '';
   return batchTemplate.value === allTemplates
-    ? `Run ${batchReports.value} report${batchReports.value === 1 ? '' : 's'} on ${onLogs}`
-    : `Run on ${onLogs}`;
+    ? `Run ${batchReports.value} report${batchReports.value === 1 ? '' : 's'} on ${onLogs}${regenerated}`
+    : `Run on ${onLogs}${regenerated}`;
 });
 async function runBatch() {
   const jobs = batchJobs.value;
@@ -545,9 +557,13 @@ onUnmounted(() => clearInterval(statusTimer));
             </select>
           </label>
           <md-filled-button id="run-batch" :disabled="!!batch || batchJobs.length === 0" @click="runBatch">{{ batchLabel }}</md-filled-button>
+          <!-- Everything selected has these reports already: run them again. -->
+          <md-outlined-button v-if="!batch && !batchAgain && batchExisting > 0" id="regenerate" @click="batchAgain = true">
+            Regenerate {{ batchExisting }} existing
+          </md-outlined-button>
         </div>
         <div class="chips">
-          <label class="chip"><input v-model="batchAgain" type="checkbox" /><span>Run again where a log already has the report</span></label>
+          <label class="chip"><input v-model="batchAgain" type="checkbox" /><span>Regenerate reports a log already has</span></label>
         </div>
         <p class="hint small">
           Select the logs below: tick them, or narrow the list with the filter and select all shown.
