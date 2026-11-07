@@ -124,6 +124,8 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
   assert.equal(outdatedStarter({ ...keptAsAdded, changed: '2026-11-05T10:00:00.000Z' }, power), false);
   // Up to date already.
   assert.equal(outdatedStarter(power, power), false);
+  // Brought up to date before, and the starter's changed again since.
+  assert.equal(outdatedStarter({ ...keptAsAdded, changed: '2026-11-07T00:00:00.000Z' }, power), true);
   // The scope is kept as read.
   assert.deepEqual((cleanLibraryItem({ ...power, scope: { type: 'enabled' } }) as { scope: unknown }).scope, { type: 'enabled' });
 }
@@ -152,9 +154,18 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
     reportProblems([{ type: 'events', title: '', kinds: [], problemsOnly: true, topic: 'power' }], [{ ...fault, id: title, kind, title }], monitors).length;
   assert.equal(power('TalonFX-60: bridge brownout'), 1);
   assert.equal(power('TalonFX-2: undervoltage'), 1);
-  assert.equal(power('TalonFX-58: supply current limit'), 1);
+  assert.equal(power('Pigeon2-1: supply voltage unstable'), 1);
+  // Only the battery's: not a current limit, a temperature, a reboot, CAN or a monitor.
+  assert.equal(power('TalonFX-58: supply current limit'), 0);
   assert.equal(power('TalonFX-58: device temperature'), 0);
+  assert.equal(power('TalonFX-58: rebooted while enabled'), 0);
+  assert.equal(power('CANivore: transmit buffer full', 'can'), 0);
   assert.equal(power('Wheel slip', 'monitor'), 0);
+  // An events section of every kind leaves the monitors' alarms to the
+  // monitors sections; ticked, they're listed.
+  const slip = { ...fault, id: 'monitor:slip', kind: 'monitor' as const, title: 'Module 0 wheel slipping' };
+  assert.equal(reportProblems([{ type: 'events', title: '', kinds: [], problemsOnly: true }], [slip], monitors).length, 0);
+  assert.equal(reportProblems([{ type: 'events', title: '', kinds: ['monitor'], problemsOnly: true }], [slip], monitors).length, 1);
   // The Match Report: the log's faults and every monitor's warnings, once each.
   assert.deepEqual(ids(templates.get('Match Report')!.sections).sort(),
     ['brownout', 'hoot:fault', 'monitor:pair-shooter:pair-shooter:2.00', 'monitor:vision-disagreement:vision-disagreement:2.00']);

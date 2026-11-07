@@ -129,12 +129,13 @@ export function phaseClock(phases: MatchPhase[], t: number): string {
   return `${phaseLabels[at.phase.name]} ${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 }
 
-// Power problems: brownouts, and faults, alerts and messages about the
-// battery, voltage, supply current, breakers or reboots. What a Power
-// Analysis report lists, rather than wheel slip or a camera.
-const powerWords = /brown ?out|under ?volt|voltage|supply|battery|breaker|power|reboot/i;
+// The battery's problems: brownouts, and faults, alerts and messages about
+// the battery, its voltage sagging (a device's undervoltage or supply
+// voltage, a bridge brownout) or a breaker. What a Power Analysis report
+// lists: not wheel slip, a camera, a current limit or a CAN error.
+const batteryWords = /brown ?out|under ?volt|supply voltage|battery|breaker/i;
 export const isPowerEvent = (event: LogEvent) =>
-  event.kind === 'brownout' || (['fault', 'alert', 'message', 'can'].includes(event.kind) && powerWords.test(event.title));
+  event.kind === 'brownout' || (['fault', 'alert', 'message'].includes(event.kind) && batteryWords.test(event.title));
 
 // The Pigeon's faults, and the CANivore's problems (its bus down, errors,
 // buffer full): what a Match Report's Pigeon and CANivore section lists.

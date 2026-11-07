@@ -39,8 +39,9 @@ function body(traces: [string, Side, ViewTrace['kind']?][], span: ViewSpan = { t
   };
 }
 
-// When the starters were first made: a starter in a library still stamped
-// with this (and by "Starter") hasn't been changed by anyone.
+// When the starters were first made. A starter in a library still stamped
+// with this or a later revision's time (all midnight, UTC), and by
+// "Starter", hasn't been changed by anyone (outdatedStarter).
 export const starterStamp = '2026-11-01T00:00:00.000Z';
 
 // Starters changed since, and when. A copy nobody has changed is brought up
@@ -50,8 +51,10 @@ export const starterStamp = '2026-11-01T00:00:00.000Z';
 //     wheel slip or the cameras.
 //   Autonomous: path tracking error and the path and surf monitors.
 //   Match Report: the monitors, and the log's errors and warnings.
+//   Power Analysis again: only the battery's problems (titled so); Match
+//   Report: the Pigeon and CANivore.
 export const starterRevisions: Record<string, string> = {
-  '5f0c2a10-0002-4000-8000-000000000011': '2026-11-09T00:00:00.000Z',
+  '5f0c2a10-0002-4000-8000-000000000011': '2026-11-11T00:00:00.000Z',
   '5f0c2a10-0002-4000-8000-000000000009': '2026-11-08T00:00:00.000Z',
   '5f0c2a10-0002-4000-8000-000000000010': '2026-11-11T00:00:00.000Z'
 };
@@ -281,7 +284,7 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
   ]],
   ['5f0c2a10-0002-4000-8000-000000000011', 'Power Analysis', "Where the battery's energy goes while the robot is enabled, in watt-hours: each motor's share, and each subsystem's. From the robot code's log (each motor's supply current times the battery's voltage), and from the Hoot logs alone (each TalonFX's own supply voltage and current).", { type: 'enabled' }, [
     { type: 'summary' },
-    { type: 'events', title: 'Power problems', kinds: [], problemsOnly: true, topic: 'power' },
+    { type: 'events', title: 'Battery problems', kinds: [], problemsOnly: true, topic: 'power' },
     { type: 'heading', text: "From the robot code's log" },
     { type: 'text', text: "Each motor's supply current, as the robot code logs it, times the battery's voltage." },
     ...energyPies('', (name) => keyOf.get(name)!, `${stats}/BatteryVoltage`),
@@ -314,6 +317,10 @@ export function starterLibrary(): LibraryItem[] {
 
 // Whether a starter kept in a library should be replaced by the starter as
 // it is now: nobody has changed it, and the starter has changed since.
+// Kept as a starter was (added, or brought up to date since), and older than
+// it is now. Starters' times are all midnight (UTC); one someone changed has
+// the time they saved it, and stays theirs.
+const starterTime = (time: string) => time.endsWith('T00:00:00.000Z');
 export function outdatedStarter(kept: LibraryItem, starter: LibraryItem): boolean {
-  return kept.id === starter.id && kept.createdBy === 'Starter' && kept.changed === starterStamp && starter.changed !== starterStamp;
+  return kept.id === starter.id && kept.createdBy === 'Starter' && starterTime(kept.changed) && kept.changed < starter.changed;
 }

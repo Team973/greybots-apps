@@ -355,9 +355,13 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
 // --- A report's problems ---
 
 // Whether an events section lists an event: of its kinds, and its topic.
+// One of every kind lists every kind but the monitors' alarms: those are
+// the monitors and vision sections' (only where they're asked for, so a
+// wheel slipping isn't in every report's errors). Ticked, they're listed.
 export function sectionLists(section: Extract<ReportSection, { type: 'events' }>, event: LogEvent): boolean {
   const onTopic = section.topic === 'power' ? isPowerEvent(event) : section.topic === 'pigeon-canivore' ? isPigeonCanivoreEvent(event) : true;
-  return (section.kinds.length === 0 || section.kinds.includes(event.kind)) && onTopic;
+  const ofKind = section.kinds.length === 0 ? event.kind !== 'monitor' : section.kinds.includes(event.kind);
+  return ofKind && onTopic;
 }
 
 // The monitor the vision section shows.
@@ -368,9 +372,10 @@ export const isProblem = (event: LogEvent) => event.severity === 'error' || even
 // A report's errors and warnings are only what its own sections check: the
 // events its events sections list, and the alarms of the monitors its
 // monitors and vision sections show. So the Vision System report flags only
-// the cameras, and the log's device faults (the Hoot logs', the robot
-// code's) go to the reports that list them, the Match Report and the
-// match-phase ones such as Autonomous.
+// the cameras, Power Analysis only the battery's problems, the monitors'
+// alarms are in the reports that show those monitors, and the log's device
+// faults (the Hoot logs', the robot code's) go to the reports that list
+// them, the Match Report and the match-phase ones such as Autonomous.
 export function reportProblems(sections: ReportSection[], events: LogEvent[], monitors: MonitorResult[]): LogEvent[] {
   const found = new Map<string, LogEvent>();
   const add = (list: LogEvent[]) => {
