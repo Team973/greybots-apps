@@ -219,6 +219,8 @@ const canSave = () => draft.value.name.trim() !== '';
         <label class="choice small"><input v-model="section.problemsOnly" type="checkbox" /> Errors and warnings only</label>
         <label class="choice small"><input type="checkbox" :checked="section.topic === 'power'"
           @change="section.topic = ($event.target as HTMLInputElement).checked ? 'power' : undefined" /> Power only (brownouts; battery, voltage, supply current, breaker and reboot faults)</label>
+        <label class="choice small"><input type="checkbox" :checked="section.topic === 'pigeon-canivore'"
+          @change="section.topic = ($event.target as HTMLInputElement).checked ? 'pigeon-canivore' : undefined" /> Pigeon and CANivore only (the Pigeon's faults; the CANivore's bus down, errors, buffer full)</label>
         <p class="hint small">No kinds ticked lists every kind.</p>
       </template>
     </div>

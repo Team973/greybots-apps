@@ -69,7 +69,10 @@ function increases(series: SignalSeries | null): { start: number; end: null; val
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-const busName = (key: string) => (/canivore/i.test(key) ? 'CANivore' : 'roboRIO CAN bus');
+const isCanivore = (key: string) => /canivore/i.test(key);
+const busName = (key: string) => (isCanivore(key) ? 'CANivore' : 'roboRIO CAN bus');
+// The CANivore carries the drive and the Pigeon: anything wrong with it is an error.
+const busSeverity = (key: string, severity: EventSeverity): EventSeverity => (isCanivore(key) ? 'error' : severity);
 
 // --- From a data log ---
 
@@ -95,14 +98,14 @@ function canErrors(source: LogSignalSource, end: number): LogEvent[] {
         if (series && values) for (let i = 0; i < values.length; i++) if (series.times[i] >= span.start && series.times[i] <= (span.end ?? span.start)) max = Math.max(max, values[i]);
         return max;
       };
-      out.push(...eventsFrom('can', 'warning', `${busName(key)}: ${errors[2].toLowerCase()} errors`, spans, {
+      out.push(...eventsFrom('can', busSeverity(key, 'warning'), `${busName(key)}: ${errors[2].toLowerCase()} errors`, spans, {
         key,
         detail: (count, span) => `Up to ${plural(most(span), 'error')}${count > 1 ? `, ${count} times` : ''}`
       }));
     } else if (/off.?count$/i.test(key) && /can|bus/i.test(key)) {
       out.push(...eventsFrom('can', 'error', `${busName(key)}: bus off`, increases(source.read(key)), { key }));
     } else if (/tx.?full.?count$/i.test(key)) {
-      out.push(...eventsFrom('can', 'warning', `${busName(key)}: transmit buffer full`, increases(source.read(key)), { key }));
+      out.push(...eventsFrom('can', busSeverity(key, 'warning'), `${busName(key)}: transmit buffer full`, increases(source.read(key)), { key }));
     }
   }
   return out;
@@ -487,11 +490,19 @@ export function matchPhases(changes: ModeChange[], end: number, inMatch: boolean
 
 // --- Device faults, from Hoot logs ---
 
-// A fault while it's happening is an error, whatever it is: something the
-// device did that the robot didn't ask for. Its sticky twin stays set after
-// it's gone (until cleared), so it says only that it happened at some point,
-// maybe before this log: a warning.
+// A device's fault: a current limit holding is the motor doing as it was
+// told, so information (hidden as routine). Otherwise by the device:
+// - a motor controller's are warnings: a motor faults often (a current limit
+//   holding) and the robot carries on;
+// - the Pigeon's are errors, sticky or not: the robot's heading is
+//   everything it drives and aims by;
+// - anything else's (a CANcoder) is an error while it's happening, and a
+//   warning once only its sticky twin is set (that stays set until cleared,
+//   so says only that it happened at some point, maybe before this log).
 const stickyFault = /(^|\/)StickyFault_/;
+const currentLimit = /(Sticky)?Fault_(Stator|Supply)CurrLimit$/;
+const motorDevice = /^(TalonFXS?|TalonSRX|VictorSPX)-/;
+const pigeonDevice = /^Pigeon2-/;
 
 export const isStickyFault = (name: string) => stickyFault.test(name);
 
@@ -508,6 +519,9 @@ const faultWords: Record<string, string> = {
 };
 
 export function faultSeverity(fault: string): EventSeverity {
+  if (currentLimit.test(fault)) return 'info';
+  if (pigeonDevice.test(fault)) return 'error';
+  if (motorDevice.test(fault)) return 'warning';
   return isStickyFault(fault) ? 'warning' : 'error';
 }
 

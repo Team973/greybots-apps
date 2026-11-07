@@ -865,7 +865,9 @@ async function scanHoots(session: Session, found: FoundEvents) {
         const after = { ...series, times: series.times.slice(first), values: (series.values as Float64Array).slice(first) };
         found.hoot.push(...eventsFrom('network', 'error', 'Driver Station disconnected', shifted(spansWhere(after, (v) => v === 0, end)), { key }));
       } else if (signal.name === 'CANBusIsUp') {
-        found.hoot.push(...eventsFrom('can', 'error', `${hoot.label}: CAN bus down`, shifted(spansWhere(series, (v) => v === 0, end)), { key }));
+        // Any bus but the rio's is a CANivore's: say so, though it has a name.
+        const bus = hoot.bus.toLowerCase() === 'rio' || /canivore/i.test(hoot.label) ? hoot.label : `${hoot.label} (CANivore)`;
+        found.hoot.push(...eventsFrom('can', 'error', `${bus}: CAN bus down`, shifted(spansWhere(series, (v) => v === 0, end)), { key }));
       }
     }
   }

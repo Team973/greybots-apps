@@ -6,7 +6,7 @@ import { matchKey, searchMatches, sharedTail } from '@shared/signal-match';
 import { cleanLibraryItem } from '@shared/library-check';
 import { planSync } from '@shared/library-sync';
 import { outdatedStarter, starterLibrary, starterStamp } from '@shared/starters';
-import { reportProblems, templateKeys, theAutoReport, type LibraryItem, type Pipeline, type ReportTemplate } from '@shared/library';
+import { reportProblems, sectionLists, templateKeys, theAutoReport, type LibraryItem, type Pipeline, type ReportTemplate } from '@shared/library';
 import type { LogEvent } from '@shared/events';
 import type { MonitorResult } from '@shared/monitors';
 import { integrateProduct } from '@shared/signals';
@@ -160,4 +160,16 @@ assert.equal(integrateProduct([], [], [0], [12], 0, 2), 0);
     ['brownout', 'hoot:fault', 'monitor:pair-shooter:pair-shooter:2.00', 'monitor:vision-disagreement:vision-disagreement:2.00']);
   // An events section of only some kinds: those.
   assert.deepEqual(ids([{ type: 'events', title: '', kinds: ['brownout'], problemsOnly: true }]), ['brownout']);
+}
+
+// A Pigeon and CANivore section: the Pigeon's faults and the CANivore's bus
+// problems, not a motor's faults or the rio's bus.
+{
+  const section = { type: 'events' as const, title: 'Pigeon and CANivore', kinds: ['fault', 'can'] as LogEvent['kind'][], problemsOnly: true, topic: 'pigeon-canivore' as const };
+  const event = (kind: LogEvent['kind'], title: string): LogEvent => ({ id: title, kind, severity: 'error', title, detail: '', start: 0, end: null, key: null, count: 1 });
+  assert.equal(sectionLists(section, event('fault', 'Pigeon2-1: hardware')), true);
+  assert.equal(sectionLists(section, event('can', 'Hoot CANivore 17E61D98: CAN bus down')), true);
+  assert.equal(sectionLists(section, event('can', 'CANivore: transmit buffer full')), true);
+  assert.equal(sectionLists(section, event('fault', 'TalonFX-2: bridge brownout')), false);
+  assert.equal(sectionLists(section, event('can', 'roboRIO CAN bus: bus off')), false);
 }

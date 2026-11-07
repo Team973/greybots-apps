@@ -136,6 +136,11 @@ const powerWords = /brown ?out|under ?volt|voltage|supply|battery|breaker|power|
 export const isPowerEvent = (event: LogEvent) =>
   event.kind === 'brownout' || (['fault', 'alert', 'message', 'can'].includes(event.kind) && powerWords.test(event.title));
 
+// The Pigeon's faults, and the CANivore's problems (its bus down, errors,
+// buffer full): what a Match Report's Pigeon and CANivore section lists.
+export const isPigeonCanivoreEvent = (event: LogEvent) =>
+  (event.kind === 'fault' && /^Pigeon2-/.test(event.title)) || (event.kind === 'can' && /canivore/i.test(event.title));
+
 // The playback tape's stretches: the log cut into disabled, auto, teleop
 // and endgame (and enabled, outside a match's phases: test mode, or a log
 // with no modes), each as long as it lasted, in order, from start to end.

@@ -52,7 +52,7 @@ export const starterStamp = '2026-11-01T00:00:00.000Z';
 export const starterRevisions: Record<string, string> = {
   '5f0c2a10-0002-4000-8000-000000000011': '2026-11-09T00:00:00.000Z',
   '5f0c2a10-0002-4000-8000-000000000009': '2026-11-08T00:00:00.000Z',
-  '5f0c2a10-0002-4000-8000-000000000010': '2026-11-09T00:00:00.000Z'
+  '5f0c2a10-0002-4000-8000-000000000010': '2026-11-10T00:00:00.000Z'
 };
 
 // Starters added since the first ones: put in a library once by
@@ -224,6 +224,10 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
     { type: 'summary' },
     { type: 'monitors', title: 'Monitors', ids: [] },
     problems('Errors and warnings'),
+    // The Pigeon (heading) and the CANivore (the drive's and Pigeon's bus):
+    // any fault on either is an error.
+    { type: 'events', title: 'Pigeon and CANivore', kinds: ['fault', 'can'], problemsOnly: true, topic: 'pigeon-canivore' },
+    { type: 'stats', title: 'Pigeon and CANivore health', keys: [`${robot}/canivoreUtilization`, `${robot}/canivoreTXFullCount`, 'Pigeon2-1/SupplyVoltage', 'Pigeon2-1/Temperature'] },
     chart('Pit Health', 'Battery and CAN'),
     { type: 'stats', title: 'Health', keys: [`${stats}/BatteryVoltage`, `${stats}/BatteryCurrent`, `${stats}/CANBus/Utilization`, `${robot}/canivoreUtilization`, `${stats}/CPUTempCelcius`] },
     chart('Battery Health', 'The battery: voltage against current drawn'),
