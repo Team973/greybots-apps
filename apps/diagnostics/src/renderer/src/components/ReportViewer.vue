@@ -7,6 +7,7 @@ import type { RenderedSection, Report, ReportLine, ReportPieSlice } from '@share
 import type { SignalSeries } from '@shared/signals';
 import PieChart, { sharePercent, type DonutSlice } from '@/components/PieChart.vue';
 import PlotChart, { type ChartAxis, type ChartLine } from '@/components/PlotChart.vue';
+import TimeTape from '@/components/TimeTape.vue';
 import { formatTime } from '@/format';
 import { colorFor, palette } from '@/palette';
 import { eventColor, severityColor } from '@/review';
@@ -15,6 +16,7 @@ import { allianceFrom, visionStates, zoneAt, zoneLabels, type Alliance, type Vis
 import { defaultRobotSize, type Pose } from '@shared/plots';
 import FieldCanvas, { type CanvasItem, type HeatLayer } from '@/components/FieldCanvas.vue';
 import { seasonFor } from '@/fields';
+import type { SymmetryRow } from '@shared/symmetry';
 
 // A report as it was made: its charts from the data kept with it, so it
 // reads the same whether or not the log is still here. On paper (a PDF),
@@ -56,6 +58,28 @@ const views = reactive<Record<number, [number, number]>>({});
 const viewOf = (i: number, section: Extract<RenderedSection, { type: 'chart' }>) => views[i] ?? section.view;
 function zoom(i: number, section: Extract<RenderedSection, { type: 'chart' }>, next: [number, number], gesture: string) {
   views[i] = gesture === 'all' ? section.view : next;
+}
+// Each chart's pinned moment: clicked on the chart, or picked on its tape
+// (which moves the span to keep it in sight).
+const pins = reactive<Record<number, number | null>>({});
+function seek(i: number, section: Extract<RenderedSection, { type: 'chart' }>, t: number) {
+  pins[i] = t;
+  const [from, to] = viewOf(i, section);
+  if (t >= from && t <= to) return;
+  const span = to - from;
+  const start = Math.min(Math.max(section.view[0], t - span / 2), section.view[1] - span);
+  views[i] = [start, start + span];
+}
+// Which axis a line is drawn on, named as the chart names them (L1, R2), or
+// a band above or below the chart.
+function axisName(axes: ChartAxis[], line: ChartLine) {
+  const axis = axes.find((a) => a.id === line.axis);
+  return axis ? axis.name : line.band === 'bottom' ? 'Band ↓' : 'Band ↑';
+}
+function axisTitle(axes: ChartAxis[], line: ChartLine) {
+  const axis = axes.find((a) => a.id === line.axis);
+  if (!axis) return `In the band ${line.band === 'bottom' ? 'below' : 'above'} the chart`;
+  return `On the ${axis.side} axis ${axis.name}${line.unit ? ` (${line.unit})` : ''}`;
 }
 
 // --- Problems: every error and warning, first ---
@@ -119,10 +143,16 @@ const number = (value: number | null, unit: string) => {
   const text = Math.abs(value) >= 1000 || value === Math.trunc(value) ? value.toFixed(0) : value.toPrecision(4);
   return unit ? `${text} ${unit}` : text;
 };
+// How far apart a symmetry pair was on average, as a share of the larger
+// mean: " (12%)". Nothing when the means are about 0.
+const shareApart = (row: SymmetryRow) => {
+  const big = Math.max(Math.abs(row.meanA ?? 0), Math.abs(row.meanB ?? 0));
+  return row.meanAbsGap === null || big < 1e-6 ? '' : ` (${Math.round((row.meanAbsGap / big) * 100)}%)`;
+};
 // --- Monitors and vision ---
 // A device's or log's status: red, amber, or (fine) green.
 const statusColor = (status: DeviceStatus) => (status === 'ok' ? (dark.value ? '#4cc38a' : '#2e9e5b') : severityColor(status, dark.value));
-const alarmColor = (severity: 'warning' | 'info' | undefined) => severityColor(severity ?? 'warning', dark.value);
+const alarmColor = (severity: 'error' | 'warning' | 'info' | undefined) => severityColor(severity ?? 'warning', dark.value);
 const stateColors: Record<VisionState, string> = { valid: '#2e9e5b', thrown: '#d03b3a', noTargets: '#8a8f98', noData: '#c98500' };
 // A heatmap cell: its state's share of the bin's frames, as how solid it is.
 function cellStyle(camera: VisionCamera, bin: number, state: VisionState) {
@@ -433,12 +463,18 @@ const at = (t: number) => {
 
       <section v-else-if="section.type === 'chart'" class="chart-section">
         <h4>{{ section.title }}</h4>
-        <PlotChart v-if="section.lines.length" :lines="charts[i]!.lines" :axes="charts[i]!.axes" :view="viewOf(i, section)" :full="section.view"
-          :height="paper ? 240 : 300" :phases="report.phases" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
+        <!-- Framed, so it's plain where scrolling zooms the chart and where it scrolls the page. -->
+        <div v-if="section.lines.length" class="chart-frame">
+          <PlotChart v-model:pin="pins[i]" :lines="charts[i]!.lines" :axes="charts[i]!.axes" :view="viewOf(i, section)" :full="section.view"
+            :height="paper ? 240 : 300" :phases="report.phases" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
+          <TimeTape v-if="!paper" :full="section.view" :view="viewOf(i, section)" :time="pins[i] ?? null" :phases="report.phases"
+            :enabled="report.spans" @seek="(t) => seek(i, section, t)" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
+        </div>
         <p v-else class="hint small">None of this chart's signals are in the log.</p>
         <p class="legend small">
           <span v-for="line in charts[i]!.lines" :key="line.key" class="legend-item">
-            <span class="swatch" :style="{ background: line.color }"></span>{{ line.label }}
+            <span class="swatch" :style="{ background: line.color }"></span>
+            <span class="axis-badge" :title="axisTitle(charts[i]!.axes, line)">{{ axisName(charts[i]!.axes, line) }}</span>{{ line.label }}
           </span>
           <span v-if="section.missing.length" class="hint">Missing: {{ section.missing.join(', ') }}</span>
         </p>
@@ -460,6 +496,40 @@ const at = (t: number) => {
           </tbody>
         </table>
         <p v-if="section.missing.length" class="hint small">Missing: {{ section.missing.join(', ') }}</p>
+      </section>
+
+      <section v-else-if="section.type === 'symmetry'" class="stats-section symmetry-section">
+        <h4>{{ section.title }}</h4>
+        <table class="plain">
+          <thead>
+            <tr>
+              <th></th><th class="number">Mean (first)</th><th class="number">Mean (second)</th><th class="number">First − second</th>
+              <th class="number">Apart, on average</th><th class="number">Apart, at most</th><th class="number">Compared</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, j) in section.rows" :key="j">
+              <td>
+                {{ row.label }}
+                <span class="hint small block">{{ row.aLabel }} vs. {{ row.bLabel }}{{ row.condition ? `, ${row.condition}` : '' }}</span>
+              </td>
+              <template v-if="!row.a || !row.b || row.missing">
+                <td colspan="6" class="hint small">Not compared: this log hasn't {{ [!row.a ? row.aLabel : '', !row.b ? row.bLabel : '', row.missing ?? ''].filter(Boolean).join(' or ') }}</td>
+              </template>
+              <template v-else-if="row.seconds === 0">
+                <td colspan="6" class="hint small">{{ row.condition ? `Never ${row.condition} in the span` : 'Never running in the span' }}</td>
+              </template>
+              <template v-else>
+                <td class="number">{{ number(row.meanA, row.unit) }}</td>
+                <td class="number">{{ number(row.meanB, row.unit) }}</td>
+                <td class="number">{{ number(row.meanGap, row.unit) }}</td>
+                <td class="number">{{ number(row.meanAbsGap, row.unit) }}{{ shareApart(row) }}</td>
+                <td class="number">{{ number(row.maxAbsGap, row.unit) }}<span v-if="row.maxAt !== null" class="hint small block">at {{ at(row.maxAt) }}</span></td>
+                <td class="number">{{ row.seconds.toFixed(1) }} s</td>
+              </template>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <section v-else-if="section.type === 'pie'" class="pie-section">
@@ -703,14 +773,18 @@ const at = (t: number) => {
             </div>
           </template>
           <template v-if="visionCharts[i]">
-            <h4 class="sub">Distance from the fused pose</h4>
-            <PlotChart :lines="visionCharts[i]!.distance" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
-              :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
-              @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
-            <h4 class="sub">Heading from the fused pose</h4>
-            <PlotChart :lines="visionCharts[i]!.heading" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
-              :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
-              @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
+            <div class="chart-frame">
+              <h4 class="sub">Distance from the fused pose</h4>
+              <PlotChart :lines="visionCharts[i]!.distance" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
+                :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
+                @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
+              <h4 class="sub">Heading from the fused pose</h4>
+              <PlotChart :lines="visionCharts[i]!.heading" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
+                :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
+                @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
+              <TimeTape v-if="!paper" :full="visionCharts[i]!.full" :view="visionView(i)" :time="visionPin(i)" :phases="report.phases"
+                :enabled="report.spans" @seek="(t) => (visionPins[i] = t)" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
+            </div>
             <p class="legend small">
               <span v-for="(camera, c) in section.summary.cameras" :key="camera.name" class="legend-item">
                 <span class="swatch" :style="{ background: cameraColor(c) }"></span>{{ camera.name }}
@@ -812,6 +886,22 @@ h4 {
   border-radius: 2px;
 }
 
+.chart-frame {
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 8px;
+  padding: 8px 8px 4px;
+}
+
+.axis-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0 4px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 4px;
+  min-width: 22px;
+  text-align: center;
+}
+
 .events {
   margin: 0;
   padding: 0;
@@ -848,6 +938,10 @@ h4 {
 
 .monitors .alarm td {
   padding-left: 16px;
+}
+
+.symmetry-section .block {
+  display: block;
 }
 
 .devices td {

@@ -18,8 +18,8 @@ import {
   type ReportTemplate,
   type SavedView,
 } from '@shared/library';
-import { describeMatch, type MatchType } from '@shared/offload';
-import { defaultCardFilter, filterCards, groupProblems, logCards, missingTemplates, type CardFilter, type LogCard } from '@shared/report-cards';
+import { describeMatch, robotFolderName, type MatchType } from '@shared/offload';
+import { cardRobots, defaultCardFilter, filterCards, groupProblems, logCards, missingTemplates, robotLabel, type CardFilter, type LogCard } from '@shared/report-cards';
 import { cancelledMessage, type PipelineStatus } from '@shared/reports';
 import ReportFlags from '@/components/ReportFlags.vue';
 import ReportViewer from '@/components/ReportViewer.vue';
@@ -27,6 +27,7 @@ import TemplateEditor from '@/components/TemplateEditor.vue';
 import { formatTime, logCompanions } from '@/format';
 import { severityColor } from '@/review';
 import { usePlotStore } from '@/stores/plot-store';
+import { useSettingsStore } from '@/stores/settings-store';
 
 // Reports (#148): made from templates, by hand or by pipelines as logs
 // arrive; and the templates and pipelines themselves.
@@ -98,24 +99,38 @@ const batch = ref<{ done: number; total: number } | null>(null);
 const viewMode = useViewModeStore();
 const flagColor = (severity: 'error' | 'warning') => severityColor(severity, viewMode.isDarkMode);
 const cardFilterKey = 'reports.cardFilter';
-function loadCardFilter(): CardFilter {
+// The team: the default team (Settings) until another, or all, is picked.
+// Undefined is the default; null all teams (kept as '').
+type CardChoice = Omit<CardFilter, 'robot'> & { robot: string | null | undefined };
+function loadCardFilter(): CardChoice {
   try {
     const saved = JSON.parse(localStorage.getItem(cardFilterKey) ?? 'null') as Partial<CardFilter> | null;
     return {
       ...defaultCardFilter,
       event: typeof saved?.event === 'string' && saved.event ? saved.event : null,
       realMatches: saved?.realMatches === true,
-      analyzedOnly: saved?.analyzedOnly !== false
+      analyzedOnly: saved?.analyzedOnly !== false,
+      robot: typeof saved?.robot === 'string' ? saved.robot || null : undefined
     };
   } catch {
-    return { ...defaultCardFilter };
+    return { ...defaultCardFilter, robot: undefined };
   }
 }
-const cardFilter = ref<CardFilter>(loadCardFilter());
-watch(cardFilter, (value) => localStorage.setItem(cardFilterKey, JSON.stringify({ ...value, query: '' })), { deep: true });
+const cardFilter = ref<CardChoice>(loadCardFilter());
+watch(cardFilter, (value) => localStorage.setItem(cardFilterKey, JSON.stringify({ ...value, query: '', robot: value.robot === undefined ? undefined : value.robot ?? '' })), { deep: true });
+const settingsStore = useSettingsStore();
+const defaultRobot = computed(() => (settingsStore.loaded ? robotFolderName(settingsStore.settings) : null));
 const cards = computed(() => logCards(logs.value, reports.value));
 const cardEvents = computed(() => [...new Set(cards.value.map((card) => card.match?.event.toUpperCase()).filter((e): e is string => !!e))].sort());
-const shownCards = computed(() => filterCards(cards.value, cardFilter.value));
+// The filter as it applies, and the robots (teams) to pick from: the
+// logs', and the one picked even if it has none here.
+const activeFilter = computed<CardFilter>(() => ({ ...cardFilter.value, robot: cardFilter.value.robot === undefined ? defaultRobot.value : cardFilter.value.robot }));
+const robots = computed(() => cardRobots([...cards.value, ...(activeFilter.value.robot && !cards.value.some((c) => c.robot === activeFilter.value.robot) ? [{ robot: activeFilter.value.robot }] : [])]));
+const teamChoice = computed({
+  get: () => activeFilter.value.robot ?? '',
+  set: (robot: string) => (cardFilter.value.robot = robot || null)
+});
+const shownCards = computed(() => filterCards(cards.value, activeFilter.value));
 // Many logs have no reports (every Driver Station log, for one): a page at
 // a time when they're shown.
 const cardPage = 60;
@@ -601,6 +616,10 @@ onUnmounted(() => clearInterval(statusTimer));
           <option :value="null">All events</option>
           <option v-for="event in cardEvents" :key="event" :value="event">{{ event }}</option>
         </select>
+        <select id="report-robot" v-model="teamChoice" aria-label="Team">
+          <option value="">All teams</option>
+          <option v-for="robot in robots" :key="robot" :value="robot">{{ robotLabel(robot) }}</option>
+        </select>
         <span class="chips">
           <label class="chip"><input id="report-real-matches" v-model="cardFilter.realMatches" type="checkbox" /><span>Real matches only</span></label>
           <label class="chip"><input id="report-analyzed-only" v-model="cardFilter.analyzedOnly" type="checkbox" /><span>Only logs with reports</span></label>
@@ -630,6 +649,9 @@ onUnmounted(() => clearInterval(statusTimer));
               <a href="#" class="card-name" @click.prevent>{{ card.title }}</a>
               <span class="hint small">{{ cardWhen(card) }}{{ card.robot ? ` · ${card.robot}` : '' }}</span>
             </div>
+            <!-- Straight to the log's signals, without opening the card first. -->
+            <md-outlined-button v-if="card.log" class="make-missing open-signals" :title="`Open ${card.title} on the Signals page`"
+              @click.stop="openInSignals(card)">Signals</md-outlined-button>
             <!-- Always at the top right: the reports this log doesn't have yet. -->
             <md-outlined-button v-if="missingFor(card).length" class="make-missing"
               :disabled="running.has(card.id)"

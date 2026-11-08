@@ -12,7 +12,8 @@ import { addSeen, loadSeen, seenKey, storedKey, storedLogs } from '@main/usb/see
 import type { SignalLogFile } from '@shared/ipc';
 import { parseLogName } from '@shared/offload';
 import { logPathSegments } from '@shared/storage-layout';
-import { defaultUsbExportFilter, filesOfLogs, logsToExport, usbExportFolder } from '@shared/usb';
+import type { ImportedFile, ImportSummary } from '@shared/import';
+import { defaultUsbExportFilter, filesOfLogs, logsToExport, mergeExported, usbExportFolder, usbImportCounts } from '@shared/usb';
 
 const now = new Date('2026-11-07T20:00:00Z');
 const daysAgo = (days: number) => new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -48,6 +49,23 @@ assert.deepEqual(filesOfLogs(withFiles), ['logs/x.wpilog', 'logs/x.hoot', ds.loc
 
 assert.equal(exportFolderIn(join('E:', 'stuff')), join('E:', 'stuff', usbExportFolder));
 assert.equal(exportFolderIn(join('E:', usbExportFolder)), join('E:', usbExportFolder), 'the export folder itself picked');
+
+// Recently exported: newest first, each file once per place it went.
+{
+  const at = (path: string, to = 'E:', when = '2026-11-08T10:00:00Z') => ({ localPath: path, size: 1, at: when, destination: to });
+  const before = [at('logs/a.wpilog'), at('logs/b.wpilog'), at('logs/a.wpilog', 'F:')];
+  const after = mergeExported(before, [at('logs/b.wpilog', 'E:', '2026-11-08T11:00:00Z'), at('logs/c.wpilog')]);
+  assert.deepEqual(after.map((f) => `${f.destination}${f.localPath}`), ['E:logs/b.wpilog', 'E:logs/c.wpilog', 'E:logs/a.wpilog', 'F:logs/a.wpilog']);
+  assert.equal(after[0].at, '2026-11-08T11:00:00Z', 'copied again: the newer time');
+  assert.equal(mergeExported(before, [at('logs/d.wpilog')], 2).length, 2, 'only the newest kept');
+}
+
+// A drive's import as counts: loaded, skipped (here already, before or found so), failed.
+{
+  const file = (outcome: ImportedFile['outcome']) => ({ outcome }) as ImportedFile;
+  const summary = { files: [file('copied'), file('copied'), file('already-here'), file('error'), file('conflict')] } as ImportSummary;
+  assert.deepEqual(usbImportCounts(summary, 3), { loaded: 2, skipped: 4, failed: 2 });
+}
 
 // --- Copying to a drive, and importing from it elsewhere ---
 

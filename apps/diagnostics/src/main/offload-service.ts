@@ -20,9 +20,9 @@ import type { Settings } from '@shared/settings';
 import { clearableExtensions, clearLogs, type ClearCandidate } from './offload/clear';
 import { findRobot } from './offload/find-robot';
 import { loadIndex } from './offload/offload-index';
-import { offloadLogs, openIndexStore, type OffloadResult } from './offload/offload';
+import { offloadLogs, openIndexStore, type MatchDone, type OffloadResult } from './offload/offload';
 import { LocalReader, SftpReader } from './offload/readers';
-import { afterNewLogs, logIdsNow } from './reports';
+import { afterMatchDownloaded, afterNewLogs, logIdsNow } from './reports';
 import { loadSettings } from './settings-store';
 import { dataDirectory, ensureStorageLayout } from './storage';
 
@@ -74,7 +74,7 @@ export function offloadStatus(): OffloadStatus {
 }
 
 // Deletes from the robot the logs the last download pulled, those it's safe
-// to (clear.ts), once someone has confirmed it twice on the Download page.
+// to (clear.ts), once someone has confirmed it twice on the Log Import page.
 export async function clearRobotLogs(downloadedAt: string, count: number): Promise<string> {
   const clearable = offloadStatus().clearable;
   if (status.running) return 'Wait for the download to finish.';
@@ -120,6 +120,7 @@ function addResult(summary: OffloadRunSummary, result: OffloadResult, changed: s
   summary.tooOld += result.tooOld;
   summary.bytes += result.bytes;
   summary.errors.push(...result.errors);
+  summary.interrupted ||= result.interrupted;
 }
 
 // Offloads from the robot, if it can be found, and from the Driver Station's
@@ -144,7 +145,8 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     skipped: 0,
     tooOld: 0,
     bytes: 0,
-    errors: []
+    errors: [],
+    interrupted: false
   };
   // Each job's progress has its own row, in the order the jobs started.
   const onProgress = (progress: OffloadStatus['jobs'][number]) => {
@@ -157,6 +159,9 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
   // The logs there before, so the pipelines run on the new ones after. A
   // scan of the whole data folder, so it goes on while the robot is found.
   let before: Promise<Set<string> | null> = Promise.resolve(null);
+  // Logs whose reports were made as their match came in, while the download
+  // went on: the end of the download leaves them out.
+  const handled = new Set<string>();
 
   try {
     const settings = await loadSettings();
@@ -182,7 +187,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
       status.robotHost = robotHost;
       if (!robotHost) {
         status.stage = 'pulling';
-        if (!automatic) summary.errors.push('No robot found. Check connection on the Download page shows where it was looked for.');
+        if (!automatic) summary.errors.push('No robot found. Check connection on the Log Import page shows where it was looked for.');
         return;
       }
       summary.host = robotHost;
@@ -190,7 +195,19 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
       try {
         reader = await SftpReader.connect(robotHost);
         status.stage = 'pulling';
-        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since };
+        // Each match's reports as soon as its files are here (and the Driver
+        // Station's, which are on this computer and come quickly), not after
+        // every match's: the download goes on meanwhile.
+        const onMatchDone = ({ localPaths, matches }: MatchDone) => {
+          (async () => {
+            const ids = await before;
+            if (!ids) return;
+            await local;
+            await store.writer.flush();
+            await afterMatchDownloaded(ids, handled, localPaths, matches);
+          })().catch((error) => console.error(error));
+        };
+        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since, onMatchDone };
         const result = await offloadLogs(directory, job, onProgress, new Date(), store);
         addResult(summary, result, changed);
         // Logs only (not the robot program's own log): offered for clearing.
@@ -206,6 +223,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
         }
       } catch (error) {
         status.stage = 'pulling';
+        if (reader && !reader.connected) summary.interrupted = true;
         summary.errors.push(`${reader ? 'Download from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
       } finally {
         reader?.close();
@@ -223,8 +241,11 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
     status.looking = [];
     status.jobs = [];
     status.running = false;
+    // The robot went away: it's looked for again, and a download starts by
+    // itself when it's back (with automatic download on).
+    if (summary.interrupted) status.robotHost = null;
     if (summary.copied > 0) {
-      before.then((ids) => (ids ? afterNewLogs(ids, 'offload', changed) : undefined)).catch(() => {});
+      before.then((ids) => (ids ? afterNewLogs(ids, 'offload', changed, handled) : undefined)).catch(() => {});
     }
   }
   return '';

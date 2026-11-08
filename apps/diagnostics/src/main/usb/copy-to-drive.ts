@@ -15,7 +15,7 @@ import { usbExportFolder, type UsbExportProgress, type UsbExportSummary } from '
 export const exportReadme = `Logs copied from Greybots Diagnostics.
 
 Plug this drive into a computer running Greybots Diagnostics and they're
-imported on their own (or import this folder on its Storage page). Each log
+imported on their own (or import this folder on its Log Import page). Each log
 is filed under its team, day and kind there, as it was here; logs already
 there are skipped.
 

@@ -151,7 +151,7 @@ export function panelTitle(panel: PlotPanel): string {
 // are grey).
 export const maxPanels = 6;
 // Signals on one line chart: the palette's colours.
-export const maxLineTraces = 8;
+export const maxLineTraces = 16;
 export const maxFieldItems = 8;
 export const maxPieKeys = 24;
 

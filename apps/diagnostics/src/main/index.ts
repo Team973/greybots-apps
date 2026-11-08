@@ -31,7 +31,7 @@ import {
   watchOwlet
 } from './signals-service';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
-import { cancelUsbExport, chooseUsbFolder, exportToUsb, usbStatus, watchUsbDrives } from './usb-service';
+import { cancelUsbExport, chooseUsbFolder, exportToUsb, recentExports, usbStatus, watchUsbDrives } from './usb-service';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -216,6 +216,9 @@ const handlers: DiagnosticsApi = {
   },
   async cancelUsbExport() {
     cancelUsbExport();
+  },
+  async getRecentExports() {
+    return recentExports();
   },
   async chooseDataDirectory() {
     const options: Electron.OpenDialogOptions = {
@@ -438,7 +441,7 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     // A data folder that can't be made (a missing drive, say) mustn't stop
-    // the app from opening: the Storage page reports it.
+    // the app from opening: the Log Export page reports it.
     await ensureStorageLayout(dataDirectory(await loadSettings())).catch((error) => console.error(error));
 
     // macOS takes the dock's icon from the app, not the window.

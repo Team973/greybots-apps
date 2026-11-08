@@ -184,6 +184,25 @@ export function tapeSegments(full: [number, number], phases: MatchPhase[], enabl
   return out;
 }
 
+// How much either side of a match the Signals page shows when it fits a
+// log to its match.
+export const matchFitMarginSeconds = 5;
+
+// The match a log holds, from auto's start to the end of the endgame after
+// it, with a margin either side, within the log: not the robot enabled
+// again in the queue or the pit afterwards (mttd Q47, ten minutes later).
+// Without an endgame (not a match), every phase. Null when the log has no
+// phases (the robot never enabled).
+export function matchFit(phases: MatchPhase[], full: [number, number], margin = matchFitMarginSeconds): [number, number] | null {
+  if (phases.length === 0) return null;
+  const first = Math.min(...phases.map((p) => p.start));
+  const from = phases.find((p) => p.name === 'auto')?.start ?? first;
+  const endgame = phases.filter((p) => p.name === 'endgame' && p.end > from).sort((x, y) => x.start - y.start)[0];
+  const start = Math.max(full[0], (endgame ? from : first) - margin);
+  const end = Math.min(full[1], (endgame ? endgame.end : Math.max(...phases.map((p) => p.end))) + margin);
+  return end > start ? [start, end] : null;
+}
+
 // The phase a time is in, and how far into it.
 export function phaseAt(phases: MatchPhase[], t: number): { phase: MatchPhase; into: number } | null {
   // Endgame is inside teleop: it wins.

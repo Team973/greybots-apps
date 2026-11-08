@@ -1,7 +1,7 @@
 // Log review: merging spans, modes and match phases, faults, notes' files.
 
 import assert from 'node:assert/strict';
-import { brownoutCount, mergeSpans, phaseClock, phaseAt, tapeSegments, type LogEvent } from '@shared/events';
+import { brownoutCount, matchFit, mergeSpans, phaseClock, phaseAt, tapeSegments, type LogEvent } from '@shared/events';
 import { brownoutDetail, enabledSpans, eventsFrom, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
 import { notesPathSegments } from '@shared/storage-layout';
 const series = (times: number[], values: number[] | string[]) => ({ key: 'k', kind: typeof values[0] === 'string' ? 'string' : 'number', times: Float64Array.from(times), values: typeof values[0] === 'string' ? values : Float64Array.from(values as number[]), downsampled: false, stats: null }) as never;
@@ -93,4 +93,22 @@ assert.deepEqual(enabledSpans([{ time: 0, mode: 'disabled' }], 100), []);
   const ds: LogEvent = { ...events[0], id: 'ds', key: 'DS/Brownout', count: 1, start: 282.05, end: 282.2 };
   assert.deepEqual(brownoutCount([...events, ds]), { brownouts: 2, flags: 12 });
   assert.deepEqual(brownoutCount([]), { brownouts: 0, flags: 0 });
+}
+
+// Fitting the Signals page to the match: auto's start to the endgame's end,
+// 5 s either side, within the log; nothing to fit without phases.
+{
+  const phases = [
+    { name: 'auto' as const, start: 100, end: 120 },
+    { name: 'teleop' as const, start: 123, end: 263 },
+    { name: 'endgame' as const, start: 233, end: 263 }
+  ];
+  assert.deepEqual(matchFit(phases, [0, 400]), [95, 268]);
+  assert.deepEqual(matchFit(phases, [98, 265]), [98, 265], 'not past the log');
+  assert.deepEqual(matchFit(phases, [0, 400], 0), [100, 263]);
+  assert.equal(matchFit([], [0, 400]), null);
+  // Enabled again after the match (in the queue): not part of it.
+  assert.deepEqual(matchFit([...phases, { name: 'teleop' as const, start: 1010, end: 1060 }], [0, 1100]), [95, 268]);
+  // Not a match (no endgame): every phase.
+  assert.deepEqual(matchFit([{ name: 'teleop' as const, start: 50, end: 60 }, { name: 'teleop' as const, start: 80, end: 90 }], [0, 100]), [45, 95]);
 }

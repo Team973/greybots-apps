@@ -3,6 +3,7 @@
 
 import type { SignalLogFile } from './ipc';
 import type { ReportProblem, ReportSummary } from './library';
+import { robotLabel, robotsIn } from './log-filter';
 import { describeMatch, type MatchInfo } from './offload';
 import { searchMatches } from './signal-match';
 
@@ -33,9 +34,11 @@ export interface CardFilter {
   realMatches: boolean;
   // Only logs with at least one report.
   analyzedOnly: boolean;
+  // One robot's logs (frc973), or null for every robot's.
+  robot: string | null;
 }
 
-export const defaultCardFilter: CardFilter = { query: '', event: null, realMatches: false, analyzedOnly: true };
+export const defaultCardFilter: CardFilter = { query: '', event: null, realMatches: false, analyzedOnly: true, robot: null };
 
 // One card per log, newest first (the logs' order), then cards for logs
 // that are gone but still have reports.
@@ -72,12 +75,18 @@ export function logCards(logs: SignalLogFile[], reports: ReportSummary[]): LogCa
 export function filterCards(cards: LogCard[], filter: CardFilter): LogCard[] {
   return cards.filter((card) => {
     if (filter.analyzedOnly && card.reports.length === 0) return false;
+    if (filter.robot && card.robot !== filter.robot) return false;
     if ((filter.realMatches || filter.event) && !card.match) return false;
     if (filter.event && card.match!.event.toUpperCase() !== filter.event.toUpperCase()) return false;
     const text = [card.title, card.robot, card.log?.name ?? '', ...card.reports.map((r) => `${r.name} ${r.by}`)].join(' ');
     return searchMatches(filter.query, text, []);
   });
 }
+
+// The robots the cards are of, for the team filter: teams by number, then
+// anything else (a simulator), by name. As the Signals page's log filter.
+export const cardRobots = robotsIn;
+export { robotLabel };
 
 // The templates a log has no report from yet: those for any robot or for
 // its robot. None for a log that isn't in the data folder any more.

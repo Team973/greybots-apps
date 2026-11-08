@@ -3,7 +3,7 @@ import { defineStore } from 'pinia';
 import type { EventKind } from '@shared/events';
 import type { ViewBody, ViewSpan } from '@shared/library';
 import { chartsNow, copyChart, isLineTab, keepLine, takeLine, type LineChart } from '@shared/line-charts';
-import { cleanPanels, mapPanelKeys, maxPanels, newPanel, type LinePanel, type PanelType, type PlotPanel } from '@shared/plots';
+import { cleanPanels, mapPanelKeys, maxLineTraces, maxPanels, newPanel, type LinePanel, type PanelType, type PlotPanel } from '@shared/plots';
 import type { SignalKind } from '@shared/signals';
 
 // What's on the Signals page's chart: which log or live session, which
@@ -47,7 +47,7 @@ export interface PlotTrace {
 export type PlotTarget = { axis: string } | { newAxis: AxisSide } | { band: BandSide };
 
 // The palette has this many colours; more signals than that can't be told apart.
-export const maxTraces = 8;
+export const maxTraces = maxLineTraces;
 
 let nextAxisId = 1;
 

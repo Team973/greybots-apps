@@ -10,12 +10,12 @@ import Switch from '@greybots/common/components/Switch.vue';
 import TextInput from '@greybots/common/components/TextInput.vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
-import { eventKinds, phaseClock, quietKinds, type LogEvent, type SessionEvents } from '@shared/events';
+import { eventKinds, matchFit, quietKinds, type LogEvent, type SessionEvents } from '@shared/events';
 import type { DsLogStatus, HootSessionStatus, SignalLogFile, SignalLogSummary } from '@shared/ipc';
 import type { SavedView, ViewBody, ViewSpan } from '@shared/library';
 import { isLiveId, isLiveNow, liveKeepSeconds, liveSessions, type EarlierRun, type LiveStatus } from '@shared/live';
-import { eventsIn, filesToDelete, filterLogs, noLogFilter, type LogFilter } from '@shared/log-filter';
-import { describeMatch } from '@shared/offload';
+import { eventsIn, filesToDelete, filterLogs, noLogFilter, robotLabel, robotsIn, type LogFilter } from '@shared/log-filter';
+import { describeMatch, robotFolderName } from '@shared/offload';
 import { matchKey } from '@shared/signal-match';
 import { isPoseType, type PanelType } from '@shared/plots';
 import { valueAtTime, type SignalInfo, type SignalKind, type SignalSeries, type SignalValue } from '@shared/signals';
@@ -43,31 +43,42 @@ const colorOf = (color: TraceColor) => (typeof color === 'number' ? themePalette
 const logs = ref<SignalLogFile[] | null>(null);
 const selectedLog = ref('');
 
-// Which logs the picker offers: by event, and only real matches. Kept
-// between visits. The open log stays in the list either way.
+// Which logs the picker offers: by team, by event, and only real matches.
+// Kept between visits. The open log stays in the list either way. The team
+// starts as the default team (Settings), until another (or all) is picked.
 const logFilterKey = 'signals.logFilter';
 function loadLogFilter(): LogFilter {
   try {
     const saved = JSON.parse(localStorage.getItem(logFilterKey) ?? 'null') as Partial<LogFilter> | null;
     return {
       event: typeof saved?.event === 'string' && saved.event ? saved.event : null,
-      realMatches: saved?.realMatches === true
+      realMatches: saved?.realMatches === true,
+      // Undefined: the default team. '' was kept for all teams.
+      robot: typeof saved?.robot === 'string' ? saved.robot || null : undefined
     };
   } catch {
     return { ...noLogFilter };
   }
 }
 const logFilter = ref<LogFilter>(loadLogFilter());
-watch(logFilter, (value) => localStorage.setItem(logFilterKey, JSON.stringify(value)), { deep: true });
+watch(logFilter, (value) => localStorage.setItem(logFilterKey, JSON.stringify({ ...value, robot: value.robot === undefined ? undefined : value.robot ?? '' })), { deep: true });
 const logEvents = computed(() => eventsIn(logs.value ?? []));
-const filtering = computed(() => !!logFilter.value.event || logFilter.value.realMatches);
+const defaultRobot = computed(() => (settingsStore.loaded ? robotFolderName(settingsStore.settings) : null));
+// The filter as it applies: the default team until one's picked.
+const activeLogFilter = computed<LogFilter>(() => ({ ...logFilter.value, robot: logFilter.value.robot === undefined ? defaultRobot.value : logFilter.value.robot }));
+const logRobots = computed(() => robotsIn([...(logs.value ?? []), ...(activeLogFilter.value.robot ? [{ robot: activeLogFilter.value.robot }] : [])]));
+const teamChoice = computed({
+  get: () => activeLogFilter.value.robot ?? '',
+  set: (robot: string) => (logFilter.value.robot = robot || null)
+});
+const filtering = computed(() => !!activeLogFilter.value.event || activeLogFilter.value.realMatches || !!activeLogFilter.value.robot);
 const shownLogs = computed(() => {
   const all = logs.value ?? [];
-  const shown = filterLogs(all, logFilter.value);
+  const shown = filterLogs(all, activeLogFilter.value);
   const open = all.find((log) => log.id === selectedLog.value);
   return open && !shown.includes(open) ? [open, ...shown] : shown;
 });
-const filterHidesAll = computed(() => filtering.value && (logs.value?.length ?? 0) > 0 && filterLogs(logs.value ?? [], logFilter.value).length === 0);
+const filterHidesAll = computed(() => filtering.value && (logs.value?.length ?? 0) > 0 && filterLogs(logs.value ?? [], activeLogFilter.value).length === 0);
 // Driver Station logs with no data log or Hoot log are listed apart: there
 // are many (each time it was open with a robot), and they'd crowd the rest.
 const dsOnlyLogs = computed(() => shownLogs.value.filter((log) => !log.localPath && log.hoots.length === 0));
@@ -186,6 +197,14 @@ function shown(signal: SignalInfo | undefined): signal is SignalInfo {
   return text === '' || signal.key.toLowerCase().includes(text);
 }
 
+// Signals the list leaves out for having no values in this log (that match
+// the filter), so it's plain why one isn't there.
+const hiddenEmpty = computed(() => {
+  if (showEmpty.value) return 0;
+  const text = filter.value.trim().toLowerCase();
+  return (summary.value?.signals ?? []).filter((s) => s.count === 0 && (s.kind !== 'other' || isPoseType(s.type)) && (text === '' || s.key.toLowerCase().includes(text))).length;
+});
+
 // --- The signal tree: the signals' own paths, folders and all ---
 
 interface TreeNode {
@@ -243,8 +262,11 @@ const treeRows = computed<TreeRow[]>(() => {
         shownFolder = only;
         name += ` / ${only.name}`;
       }
-      // The top level starts open; everything opens while filtering.
-      const open = filtering || (depth === 0 ? !toggled.value.has(shownFolder.path) : toggled.value.has(shownFolder.path));
+      // The top level starts open; everything opens while filtering, but
+      // can still be closed (closedWhileFiltering, until the filter changes).
+      const open = filtering
+        ? !closedWhileFiltering.value.has(shownFolder.path)
+        : depth === 0 ? !toggled.value.has(shownFolder.path) : toggled.value.has(shownFolder.path);
       rows.push({ type: 'folder', path: shownFolder.path, name, depth, count: shownFolder.count, open, signal: shownFolder.signal });
       const own = shownFolder.signal;
       if (own) rows.push({ type: 'signal', signal: own, name: own.kind === 'other' ? '(pose)' : '(value)', depth: depth + 1 });
@@ -256,11 +278,17 @@ const treeRows = computed<TreeRow[]>(() => {
   return rows;
 });
 
+// Folders closed while filtering: everything that matches starts open, and
+// what isn't wanted can be closed. Forgotten when the filter changes.
+const closedWhileFiltering = ref(new Set<string>());
+watch(filter, () => (closedWhileFiltering.value = new Set()));
+
 function toggleFolder(path: string) {
-  const next = new Set(toggled.value);
+  const which = filter.value.trim() !== '' ? closedWhileFiltering : toggled;
+  const next = new Set(which.value);
   if (next.has(path)) next.delete(path);
   else next.add(path);
-  toggled.value = next;
+  which.value = next;
 }
 
 const withValues = computed(() => (summary.value?.signals ?? []).filter((s) => s.kind !== 'other' && s.count > 0).length);
@@ -298,6 +326,7 @@ function describeAlignment(hoot: HootSessionStatus['hoots'][number]): string {
 
 // --- Opening a log ---
 
+let fitMatchPending = false;
 async function openLog() {
   pause();
   pin.value = null;
@@ -313,7 +342,10 @@ async function openLog() {
   series.value = new Map();
   // Back to the log the chart was last on (another page, or the app opened
   // again): as it was left. Live follows again.
-  if (isLive.value || plotStore.logId !== selectedLog.value) plotStore.setView(null);
+  // A log opened afresh is fitted to its match once its phases are known
+  // (fitMatchPending, loadEvents); one returned to keeps its span.
+  fitMatchPending = isLive.value || plotStore.logId !== selectedLog.value;
+  if (fitMatchPending) plotStore.setView(null);
   if (!selectedLog.value) return;
   plotStore.logId = selectedLog.value;
   opening.value = true;
@@ -457,6 +489,60 @@ function setAxis(key: string, choice: string) {
       : { axis: choice };
   message.value = plotStore.place(key, trace.kind, target);
 }
+
+// Right-clicking a signal in the list: a menu of where it goes (each axis,
+// a new one on either side, a band above or below), or off the chart. The
+// same places as dragging it onto the chart's drop zones.
+const axisMenu = ref<{ signal: SignalInfo; x: number; y: number } | null>(null);
+function openAxisMenu(event: MouseEvent, signal: SignalInfo) {
+  if (signal.kind === 'other') return;
+  event.preventDefault();
+  // Kept inside the window: the menu is about 260 px tall at most.
+  axisMenu.value = { signal, x: Math.min(event.clientX, window.innerWidth - 230), y: Math.min(event.clientY, window.innerHeight - 280) };
+}
+function closeAxisMenu() {
+  axisMenu.value = null;
+}
+const axisMenuChoices = computed(() => {
+  const menu = axisMenu.value;
+  if (!menu) return [];
+  const trace = plotStore.trace(menu.signal.key);
+  const at = trace ? (trace.axis === 'lanes' ? `band-${trace.band}` : trace.axis) : '';
+  const choices: { value: string; label: string; current: boolean }[] = [];
+  if (menu.signal.kind !== 'string') {
+    for (const axis of [...leftAxes.value, ...rightAxes.value]) {
+      const units = axisUnits(axis.id);
+      choices.push({ value: axis.id, label: `${plotStore.axisName(axis.id)}${units ? ` (${units})` : ''}`, current: at === axis.id });
+    }
+    choices.push({ value: 'new-left', label: 'New left axis', current: false }, { value: 'new-right', label: 'New right axis', current: false });
+  }
+  choices.push({ value: 'band-top', label: 'Band above the chart', current: at === 'band-top' }, { value: 'band-bottom', label: 'Band below the chart', current: at === 'band-bottom' });
+  return choices;
+});
+function chooseAxis(choice: string) {
+  const menu = axisMenu.value;
+  axisMenu.value = null;
+  if (!menu) return;
+  if (choice === 'remove') {
+    plotStore.remove(menu.signal.key);
+    return;
+  }
+  const target: PlotTarget = choice === 'new-left' || choice === 'new-right'
+    ? { newAxis: choice === 'new-left' ? 'left' : 'right' as AxisSide }
+    : choice === 'band-top' || choice === 'band-bottom'
+      ? { band: choice.slice(5) as BandSide }
+      : { axis: choice };
+  place(menu.signal, target);
+}
+function onMenuKey(event: KeyboardEvent) {
+  if (event.key === 'Escape' && axisMenu.value) closeAxisMenu();
+}
+window.addEventListener('keydown', onMenuKey);
+window.addEventListener('blur', closeAxisMenu);
+onUnmounted(() => {
+  window.removeEventListener('keydown', onMenuKey);
+  window.removeEventListener('blur', closeAxisMenu);
+});
 
 // --- Reading what's on the chart ---
 
@@ -781,7 +867,8 @@ function applySavedView(view: SavedView) {
   if (view.span.type === 'phase' && review.value && !isLive.value) {
     const phases = review.value.phases;
     const wanted = view.span.phase === 'match' ? phases : phases.filter((p) => p.name === (view.span as { phase: string }).phase);
-    if (wanted.length) zoomTo([Math.min(...wanted.map((p) => p.start)), Math.max(...wanted.map((p) => p.end))]);
+    if (view.span.phase === 'match') fitMatch();
+    else if (wanted.length) zoomTo([Math.min(...wanted.map((p) => p.start)), Math.max(...wanted.map((p) => p.end))]);
   } else if (view.span.type === 'all' && !isLive.value) {
     plotStore.setView(null);
   }
@@ -837,12 +924,25 @@ async function loadEvents() {
     const found = await window.diagnostics.getEvents(id);
     if (summary.value?.id !== id) return;
     review.value = found;
+    // Fitted to the match the first time its phases are known, unless
+    // it's been zoomed meanwhile.
+    if (fitMatchPending && found.phases.length) {
+      fitMatchPending = false;
+      if (!plotStore.view) fitMatch();
+    }
     if (found.pending) eventsTimer = setTimeout(loadEvents, 1500);
   } catch (error) {
     message.value = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   }
 }
 onUnmounted(() => clearTimeout(eventsTimer));
+
+// The match, from auto's start to the endgame's end, and a few seconds
+// either side (matchFit).
+const matchSpan = computed(() => (review.value && !isLive.value ? matchFit(review.value.phases, full.value) : null));
+function fitMatch() {
+  if (matchSpan.value) zoomTo(matchSpan.value);
+}
 
 // Brings a time (and as much of what lasts from it as fits) into view,
 // leaving the span shown as it was if it's there already.
@@ -1082,6 +1182,10 @@ watch(() => route.query.session, (session) => {
           </span>
         </label>
         <div v-if="logs && logs.length" class="log-filter" role="group" aria-label="Which logs to list">
+          <select id="log-team" v-model="teamChoice" aria-label="Team">
+            <option value="">All teams</option>
+            <option v-for="robot in logRobots" :key="robot" :value="robot">{{ robotLabel(robot) }}</option>
+          </select>
           <select id="log-event" v-model="logFilter.event" aria-label="Event">
             <option :value="null">All events</option>
             <option v-for="event in logEvents" :key="event" :value="event">{{ event }}</option>
@@ -1092,7 +1196,7 @@ watch(() => route.query.session, (session) => {
           </label>
         </div>
         <p v-if="filterHidesAll" class="hint small">No logs match the filter.</p>
-        <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're downloaded from the robot on the Download page, or imported on the Storage page.</p>
+        <p v-if="logs && logs.length === 0" class="hint">No data logs here yet. They're downloaded from the robot, or imported, on the Log Import page.</p>
         <p v-else-if="logs && !isLive" class="hint small">
           Logs in the data folder's <span class="path">logs</span>, downloaded or put there by hand: data logs, Hoot logs, and
           Driver Station logs with a robot connected.
@@ -1162,6 +1266,7 @@ watch(() => route.query.session, (session) => {
           <template v-for="row in treeRows" :key="row.type === 'folder' ? `f${row.path}` : `s${row.signal.key}`">
             <button v-if="row.type === 'folder'" class="folder" :style="{ paddingLeft: `${row.depth * 14 + 4}px` }"
               :aria-expanded="row.open" :draggable="!!row.signal" @click="toggleFolder(row.path)"
+              @contextmenu="row.signal && openAxisMenu($event, row.signal)"
               @dragstart="row.signal && onDragStart($event, row.signal.key)" @dragend="onDragEnd">
               <span class="chevron" :class="{ closed: !row.open }">▾</span>
               <span class="signal-name">{{ row.name }}</span>
@@ -1169,12 +1274,31 @@ watch(() => route.query.session, (session) => {
             </button>
             <div v-else class="signal" draggable="true" :title="row.signal.key"
               :style="{ paddingLeft: `${row.depth * 14 + 20}px` }"
-              @dragstart="onDragStart($event, row.signal.key)" @dragend="onDragEnd" @click="place(row.signal)">
+              @dragstart="onDragStart($event, row.signal.key)" @dragend="onDragEnd" @click="place(row.signal)"
+              @contextmenu="openAxisMenu($event, row.signal)">
               <span class="swatch" :style="{ background: plotStore.trace(row.signal.key) ? colorOf(plotStore.trace(row.signal.key)!.color) : 'transparent' }"></span>
               <span class="signal-name">{{ row.name }}</span>
               <span class="leaf-value small" :title="leafText(row.signal)">{{ leafText(row.signal) }}</span>
             </div>
           </template>
+        </div>
+        <p v-if="hiddenEmpty > 0" id="hidden-empty" class="hint small"
+          title="The robot never wrote a value for them in this log: DogLog writes one only when it changes, and a continuation log (Q30.2) starts empty.">
+          {{ hiddenEmpty }} {{ hiddenEmpty === 1 ? 'signal' : 'signals' }} with no values hidden.
+          <button type="button" class="link-button" @click="showEmpty = true">Show</button>
+        </p>
+        <!-- Right-click a signal: where it goes on the chart. -->
+        <div v-if="axisMenu" class="menu-backdrop" @click="closeAxisMenu" @contextmenu.prevent="closeAxisMenu" @wheel="closeAxisMenu">
+          <div id="axis-menu" class="axis-menu" role="menu" :style="{ left: `${axisMenu.x}px`, top: `${axisMenu.y}px` }" @click.stop>
+            <p class="menu-title small" :title="axisMenu.signal.key">{{ axisMenu.signal.name }}</p>
+            <button v-for="choice in axisMenuChoices" :key="choice.value" type="button" role="menuitemradio" :aria-checked="choice.current"
+              :class="{ current: choice.current }" @click="chooseAxis(choice.value)">
+              <span class="tick">{{ choice.current ? '✓' : '' }}</span>{{ choice.label }}
+            </button>
+            <button v-if="plotStore.trace(axisMenu.signal.key)" type="button" role="menuitem" class="remove" @click="chooseAxis('remove')">
+              <span class="tick"></span>Remove from the chart
+            </button>
+          </div>
         </div>
       </template>
     </aside>
@@ -1200,6 +1324,9 @@ watch(() => route.query.session, (session) => {
           </svg>
         </md-outlined-icon-button>
         <md-outlined-button id="zoom-all" :disabled="!summary || (!plotStore.view && !isLive)" @click="zoomTo(full, 'all')">Show all</md-outlined-button>
+        <md-outlined-button v-if="!isLive" id="zoom-match" :disabled="!matchSpan"
+          :title="matchSpan ? 'The match: from the start of auto to the end of the endgame, and 5 s either side' : 'The robot was never enabled in this log'"
+          @click="fitMatch">Match</md-outlined-button>
         <md-outlined-button v-if="isLive && !following" id="follow" @click="follow">Follow live</md-outlined-button>
         <span v-if="summary && following" id="view-range" class="hint">
           {{ liveWindow === null ? 'Everything kept' : `The last ${formatSpan(liveWindow)}` }}, following
@@ -1312,11 +1439,6 @@ watch(() => route.query.session, (session) => {
         </select>
         <TimeTape id="scrub" :full="full" :view="view" :time="tapeTime" :phases="review?.phases ?? []" :enabled="review?.enabled ?? []"
           @seek="scrub" @zoom="zoomTo" />
-        <span id="playhead" class="hint small playhead">
-          <template v-if="pin !== null">{{ pin.toFixed(2) }} s<template v-if="phaseClock(review?.phases ?? [], pin)">
-            · {{ phaseClock(review?.phases ?? [], pin) }}</template></template>
-          <template v-else>Click the tape or the chart to pin a moment</template>
-        </span>
       </div>
 
       <p v-if="message" class="error-text">{{ message }}</p>
@@ -1527,9 +1649,10 @@ watch(() => route.query.session, (session) => {
   gap: 6px 12px;
 }
 
+/* Team and event share a row, wide enough to read; the check wraps below. */
 .log-filter select {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 110px;
+  min-width: 110px;
 }
 
 .log-filter .check {
@@ -1620,6 +1743,67 @@ select {
   background: rgba(127, 127, 127, 0.15);
 }
 
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.axis-menu {
+  position: fixed;
+  min-width: 200px;
+  max-width: 260px;
+  padding: 4px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 8px;
+  background: var(--tile-background-color);
+  color: inherit;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.axis-menu .menu-title {
+  margin: 2px 8px 4px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.axis-menu button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.axis-menu button:hover,
+.axis-menu button:focus-visible {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+.axis-menu .current {
+  font-weight: 600;
+}
+
+.axis-menu .remove {
+  border-top: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 0 0 6px 6px;
+}
+
+.axis-menu .tick {
+  width: 14px;
+}
+
 .signal-name {
   flex: 1;
   overflow-wrap: anywhere;
@@ -1694,9 +1878,14 @@ select {
   flex: 1;
 }
 
+/* Framed as reports' charts are, so it's plain where scrolling zooms the
+   chart and where it scrolls the page. */
 .chart-wrap {
   position: relative;
   min-height: 460px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 8px;
+  padding: 8px 8px 4px;
 }
 
 .empty {
@@ -1803,11 +1992,6 @@ select {
   fill: currentColor;
 }
 
-
-.playhead {
-  min-width: 170px;
-  font-variant-numeric: tabular-nums;
-}
 
 .back-row {
   display: flex;

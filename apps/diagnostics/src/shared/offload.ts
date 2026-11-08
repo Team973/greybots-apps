@@ -150,6 +150,9 @@ export interface OffloadRunSummary {
   tooOld: number;
   bytes: number;
   errors: string[];
+  // The robot went away part way through: the rest comes with the next
+  // download. Missing from summaries made before it was kept.
+  interrupted?: boolean;
 }
 
 // How one part of a download (the robot, or Driver Station logs) is going.

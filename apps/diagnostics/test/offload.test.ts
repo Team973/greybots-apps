@@ -126,6 +126,59 @@ async function main() {
     assert.equal(regrown.changed.length, 1);
     assert.ok(regrown.changed[0].endsWith('FRC_20261107_030907_mttd_P5.wpilog'));
     assert.deepEqual(first.changed, [], 'nothing was here before the first run');
+    assert.equal(first.interrupted, false);
+
+    // --- Newest first, whatever kind; each match's files announced once all here ---
+    {
+      const matchesDir = await fs.mkdtemp(join(tmpdir(), 'diagnostics-offload-'));
+      try {
+        const at = (time: string) => `2026-11-07T${time}:00.000Z`;
+        const robotTree = {
+          '/home/lvuser/logs': {
+            files: [
+              { name: 'FRC_20261107_010000_mttd_Q2.wpilog', size: 10, modified: at('01:05') },
+              { name: 'mttd_Q2_rio_2026-11-07_01-00-01.hoot', size: 10, modified: at('01:05') },
+              { name: 'FRC_20261107_030000_mttd_Q10.wpilog', size: 10, modified: at('03:05') },
+              { name: 'mttd_Q10_rio_2026-11-07_03-00-01.hoot', size: 10, modified: at('03:05') },
+              { name: 'FRC_20261107_032000_mttd_Q11.wpilog', size: 10, modified: at('03:25') },
+              // Named by the roboRIO's unset clock, written during Q11.
+              { name: 'rio_2024-12-18_14-02-24.hoot', size: 10, modified: at('03:25') }
+            ]
+          }
+        };
+        const reader = new FakeRobot(robotTree);
+        const done: { match: string; files: number; matches: number }[] = [];
+        // The order files were taken to be pulled.
+        const taken: string[] = [];
+        const result = await offloadLogs(matchesDir, {
+          ...job(reader),
+          onMatchDone: ({ match, localPaths, matches }) => done.push({ match: `${match.type[0].toUpperCase()}${match.number}`, files: localPaths.length, matches })
+        }, (progress) => { for (const file of progress.active) if (!taken.includes(file)) taken.push(file); }, now);
+        assert.deepEqual(result.errors, []);
+        assert.deepEqual(taken.slice(0, 2).sort(), ['FRC_20261107_032000_mttd_Q11.wpilog', 'rio_2024-12-18_14-02-24.hoot'], 'the newest match first');
+        assert.ok(taken.indexOf('FRC_20261107_030000_mttd_Q10.wpilog') < taken.indexOf('FRC_20261107_010000_mttd_Q2.wpilog'));
+        assert.ok(taken.indexOf('mttd_Q10_rio_2026-11-07_03-00-01.hoot') < taken.indexOf('FRC_20261107_010000_mttd_Q2.wpilog'), 'Hoot logs do not wait behind older data logs');
+        assert.deepEqual(done.map((d) => d.match).sort(), ['Q10', 'Q11', 'Q2']);
+        assert.ok(done.every((d) => d.matches === 3));
+        assert.deepEqual(done.find((d) => d.match === 'Q10')!.files, 2);
+      } finally {
+        await fs.rm(matchesDir, { recursive: true, force: true });
+      }
+    }
+
+    // A match isn't announced while the robot's gone part way.
+    {
+      const cutDir = await fs.mkdtemp(join(tmpdir(), 'diagnostics-offload-'));
+      try {
+        const reader = new FakeRobot(tree());
+        reader.dropAfter = 1;
+        const done: string[] = [];
+        await offloadLogs(cutDir, { ...job(reader), onMatchDone: ({ match }) => done.push(String(match.number)) }, () => {}, now);
+        assert.deepEqual(done, []);
+      } finally {
+        await fs.rm(cutDir, { recursive: true, force: true });
+      }
+    }
 
     // --- Too old ---
     const old = await offloadLogs(directory, job(new FakeRobot(tree()), new Date('2026-12-01T00:00:00Z')), () => {}, now);
@@ -151,6 +204,8 @@ async function main() {
       flaky.dropAfter = 1;
       const result = await offloadLogs(dropped, job(flaky), () => {}, now);
       assert.ok(result.errors.includes('Lost the connection to the robot.'), result.errors.join('; '));
+      assert.equal(result.interrupted, true, 'said once, as an interruption');
+      assert.equal(result.errors.filter((e) => e !== 'Lost the connection to the robot.').length, 0, 'not an error a file');
       assert.ok(result.copied < 5);
     } finally {
       await fs.rm(dropped, { recursive: true, force: true });
