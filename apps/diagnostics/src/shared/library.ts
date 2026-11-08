@@ -13,6 +13,7 @@ import type { MatchInfo, MatchType } from './offload';
 import type { VisionSummary } from './vision';
 import { panelKeys, type PieMeasure, type PlotPanel } from './plots';
 import type { SignalKind } from './signals';
+import type { SymmetryPairSpec, SymmetryRow } from './symmetry';
 
 export type LibraryKind = 'view' | 'template' | 'pipeline';
 
@@ -120,7 +121,10 @@ export type ReportSection =
   | { type: 'vision'; title: string }
   // Every CAN device listed: in the Hoot logs, logging, and without faults
   // (devices.ts). Its errors are the report's.
-  | { type: 'devices'; title: string; devices: DeviceSpec[] };
+  | { type: 'devices'; title: string; devices: DeviceSpec[] }
+  // Pairs that should match (left and right motors): each one's mean, and
+  // how far apart they were on average and at most (symmetry.ts).
+  | { type: 'symmetry'; title: string; pairs: SymmetryPairSpec[] };
 
 // What a pie adds up, as a pie plot's (plots.ts): `voltage` is the signal
 // every current is multiplied by for energy, or '' for each current's own.
@@ -209,7 +213,8 @@ export const sectionLabels: Record<ReportSectionType, string> = {
   events: 'Events',
   monitors: 'Monitors (automatic checks)',
   vision: 'Vision system',
-  devices: 'Device health'
+  devices: 'Device health',
+  symmetry: 'Symmetry (left vs. right, or command vs. feedback)'
 };
 
 export const maxNameLength = 120;
@@ -264,7 +269,8 @@ export type RenderedSection =
   | { type: 'monitors'; title: string; results: MonitorResult[] }
   // `recorded`: when the log was, for which season's field to draw.
   | { type: 'vision'; title: string; summary: VisionSummary; alarms: MonitorAlarm[]; recorded?: string }
-  | { type: 'devices'; title: string; health: DeviceHealth };
+  | { type: 'devices'; title: string; health: DeviceHealth }
+  | { type: 'symmetry'; title: string; rows: SymmetryRow[] };
 
 export interface Report {
   id: string;
@@ -343,6 +349,12 @@ export function templateKeys(sections: ReportSection[], scope?: ReportScope): st
   for (const section of sections) {
     if (section.type === 'chart') for (const trace of section.view.traces) keys.add(trace.key);
     if (section.type === 'stats') for (const key of section.keys) keys.add(key);
+    if (section.type === 'symmetry') {
+      for (const pair of section.pairs) {
+        keys.add(pair.a).add(pair.b);
+        if (pair.onlyWhile?.key) keys.add(pair.onlyWhile.key);
+      }
+    }
     if (section.type === 'pie') {
       for (const slice of section.slices) for (const key of slice.keys) keys.add(key);
       if (section.measure === 'energy' && section.voltage) keys.add(section.voltage);

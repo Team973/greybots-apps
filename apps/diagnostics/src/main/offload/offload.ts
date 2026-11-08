@@ -3,7 +3,7 @@ import { dirname, extname, join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { isUnnamedLog, parseLogName, type OffloadedFile, type OffloadProgress, type RobotLogLocation } from '@shared/offload';
+import { isUnnamedLog, parseLogName, type MatchInfo, type OffloadedFile, type OffloadProgress, type RobotLogLocation } from '@shared/offload';
 import { logPathSegments } from '@shared/storage-layout';
 import { indexKey, loadIndex, storeIndex, type OffloadIndex } from './offload-index';
 import type { ClearCandidate } from './clear';
@@ -20,6 +20,16 @@ export interface OffloadJob {
   locations: RobotLogLocation[];
   // Files recorded before this are left where they are. Null for all.
   since: Date | null;
+  // Called once each match's files are all here (matchDone), so its
+  // reports can be made while the rest come: its files' paths in the data
+  // folder, and how many matches this download is pulling in all.
+  onMatchDone?: (match: MatchDone) => void;
+}
+
+export interface MatchDone {
+  match: MatchInfo;
+  localPaths: string[];
+  matches: number;
 }
 
 export interface OffloadResult {
@@ -34,6 +44,9 @@ export interface OffloadResult {
   // Every file pulled this time, as it was where it came from: what may be
   // cleared off the robot afterwards (clear.ts).
   pulled: ClearCandidate[];
+  // The connection to the robot went away part way through: files not
+  // pulled (or part pulled) come with the next download.
+  interrupted: boolean;
 }
 
 // How many files are pulled at once. Each file from the robot already keeps
@@ -55,6 +68,12 @@ function recordedTime(file: FoundFile, now: Date): Date {
   const named = parseLogName(file.name).recorded;
   if (named) return named;
   return file.modified.getTime() >= earliestBelievableTime ? file.modified : now;
+}
+
+// When the robot last wrote a file, for pulling the newest first: its own
+// time when that's believable, else when its name says it was recorded.
+export function fileTime(file: FoundFile, now: Date): number {
+  return file.modified.getTime() >= earliestBelievableTime ? file.modified.getTime() : recordedTime(file, now).getTime();
 }
 
 async function sizeOf(path: string): Promise<number | null> {
@@ -145,7 +164,7 @@ export async function offloadLogs(
   now = new Date(),
   store?: IndexStore
 ): Promise<OffloadResult> {
-  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [], changed: [], pulled: [] };
+  const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [], changed: [], pulled: [], interrupted: false };
   const own = !store;
   const { index, writer } = store ?? (await openIndexStore(dataDirectory));
   const absolute = (localPath: string) => join(dataDirectory, ...localPath.split('/'));
@@ -181,10 +200,45 @@ export async function offloadLogs(
 
   // --- What to pull, as it's found ---
 
-  // Pulled in the job's location order, newest first within each, among
-  // what's been found so far: the match that just finished is the one wanted
-  // soonest, and data logs shouldn't wait behind Hoot logs.
+  // Pulled newest first, among what's been found so far, whatever folder
+  // it's in: the match that just finished is the one wanted soonest, and its
+  // data log and Hoot logs come together. Newest by when the robot last
+  // wrote the file (a Hoot log can be named with the roboRIO's unset clock),
+  // then in the job's location order.
   const queue: Download[] = [];
+  const newest = (download: Download) => fileTime(download.file, now);
+
+  // Each match's files (by the match in their names), so its reports can be
+  // made as soon as they're all here: once the search is over, none of its
+  // files is still to come, and no file without a match in its name that
+  // the robot wrote while it was on (a Hoot log named by the clock) is
+  // either.
+  const matches = new Map<string, { match: MatchInfo; pending: number; localPaths: string[]; from: number; to: number; done: boolean }>();
+  const unnamedPending = new Set<Download>();
+  const matchOf = (download: Download) => {
+    const match = parseLogName(download.file.name).match;
+    return match ? { match, key: `${match.event.toUpperCase()}|${match.type}|${match.number}|${match.suffix ?? 0}` } : null;
+  };
+  const matchSlackMs = 60_000;
+  const announceMatches = () => {
+    if (searching || !job.onMatchDone) return;
+    for (const group of matches.values()) {
+      if (group.done || group.pending > 0) continue;
+      const overlapping = [...unnamedPending].some((d) => {
+        const t = newest(d);
+        return t >= group.from - matchSlackMs && t <= group.to + matchSlackMs;
+      });
+      if (overlapping) continue;
+      group.done = true;
+      job.onMatchDone({ match: group.match, localPaths: group.localPaths, matches: matches.size });
+    }
+  };
+  const settle = (download: Download) => {
+    const found = matchOf(download);
+    if (found) matches.get(found.key)!.pending -= 1;
+    else unnamedPending.delete(download);
+    if (job.reader.connected) announceMatches();
+  };
   let searching = true;
   let waiting: (() => void)[] = [];
   const wake = () => {
@@ -193,11 +247,22 @@ export async function offloadLogs(
     for (const resolve of ready) resolve();
   };
   const enqueue = (download: Download) => {
-    const at = queue.findIndex((other) => other.order > download.order ||
-      (other.order === download.order && other.file.modified.getTime() < download.file.modified.getTime()));
+    const time = newest(download);
+    const at = queue.findIndex((other) => newest(other) < time || (newest(other) === time && other.order > download.order));
     queue.splice(at === -1 ? queue.length : at, 0, download);
     progress.filesTotal += 1;
     progress.bytesTotal += download.file.size;
+    const found = matchOf(download);
+    if (found) {
+      const group = matches.get(found.key) ?? { match: found.match, pending: 0, localPaths: [], from: Infinity, to: -Infinity, done: false };
+      group.pending += 1;
+      group.localPaths.push(download.localPath);
+      group.from = Math.min(group.from, recordedTime(download.file, now).getTime());
+      group.to = Math.max(group.to, time);
+      matches.set(found.key, group);
+    } else {
+      unnamedPending.add(download);
+    }
   };
   // The next file to pull, waiting for the search if there's none yet; null
   // once the search is over and nothing is left.
@@ -298,6 +363,7 @@ export async function offloadLogs(
       progress.searching = false;
       report();
       wake();
+      if (!lostConnection) announceMatches();
     }
   })();
 
@@ -363,21 +429,37 @@ export async function offloadLogs(
       }
       progress.active.push(download.file.name);
       report();
+      let pulled = false;
       try {
         await pull(download);
+        pulled = true;
       } catch (error) {
-        // The partial download is kept, for the next run to finish.
-        result.errors.push(`${download.file.path}: ${(error as Error).message}`);
+        // The partial download is kept, for the next run to finish. With the
+        // robot gone, it's one interruption, said once (below), not an
+        // error a file.
+        if (job.reader.connected) result.errors.push(`${download.file.path}: ${(error as Error).message}`);
+        else lostConnection = true;
       } finally {
         progress.active.splice(progress.active.indexOf(download.file.name), 1);
         progress.filesDone += 1;
         report();
+        // A match with a file that didn't come isn't all here: its reports
+        // wait for the end of the download (or the next one).
+        if (pulled) settle(download);
+        else {
+          const found = matchOf(download);
+          if (found) matches.get(found.key)!.done = true;
+          else unnamedPending.delete(download);
+        }
       }
     }
   };
   await Promise.all([search, ...Array.from({ length: parallelFiles }, worker)]);
 
-  if (lostConnection) result.errors.push('Lost the connection to the robot.');
+  if (lostConnection) {
+    result.interrupted = true;
+    result.errors.push('Lost the connection to the robot.');
+  }
   if (own) await writer.flush();
   return result;
 }

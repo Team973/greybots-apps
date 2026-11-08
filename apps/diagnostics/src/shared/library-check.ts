@@ -105,6 +105,24 @@ function cleanSection(raw: Raw): ReportSection | null {
           .slice(0, 100)
           .map((d) => ({ device: d.device as string, label: text(d.label), bus: d.bus === 'rio' ? 'rio' as const : 'canivore' as const }))
       };
+    case 'symmetry':
+      return {
+        type: 'symmetry',
+        title: text(raw.title),
+        pairs: (Array.isArray(raw.pairs) ? raw.pairs : [])
+          .filter(isObject)
+          .slice(0, 20)
+          .map((pair) => ({
+            label: text(pair.label),
+            a: text(pair.a, 500),
+            b: text(pair.b, 500),
+            activeAbove: typeof pair.activeAbove === 'number' && Number.isFinite(pair.activeAbove) && pair.activeAbove > 0 ? pair.activeAbove : null,
+            magnitude: pair.magnitude === true,
+            ...(isObject(pair.onlyWhile) && typeof pair.onlyWhile.key === 'string' && pair.onlyWhile.key.trim()
+              ? { onlyWhile: { key: text(pair.onlyWhile.key, 500).trim(), value: text(pair.onlyWhile.value) } }
+              : {})
+          }))
+      };
     default:
       return null;
   }

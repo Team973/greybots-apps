@@ -14,7 +14,7 @@ import type { PipelineRun, PipelineStatus } from './reports';
 import type { ReportExport, ReportImport } from './report-files';
 import type { Settings, SettingsErrors } from './settings';
 import type { GroupedSignals, SignalInfo, SignalRange, SignalSeries, SignalValue } from './signals';
-import type { UsbExportSummary, UsbStatus } from './usb';
+import type { ExportedLog, UsbExportSummary, UsbStatus } from './usb';
 
 export interface AppInfo {
   version: string;
@@ -204,6 +204,8 @@ export interface DiagnosticsApi {
   chooseUsbFolder(): Promise<string | null>;
   // Stops a copy to a drive part way; exportToUsb then resolves, cancelled.
   cancelUsbExport(): Promise<void>;
+  // What's been copied to drives since the app opened, newest first.
+  getRecentExports(): Promise<ExportedLog[]>;
   getSignalLogs(): Promise<SignalLogFile[]>;
   // Moves a log's files to the Recycle Bin and forgets its notes and
   // caches. Kept: Driver Station logs another log also has.
@@ -306,6 +308,7 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'exportToUsb',
   'chooseUsbFolder',
   'cancelUsbExport',
+  'getRecentExports',
   'getSignalLogs',
   'deleteLog',
   'openSignalLog',

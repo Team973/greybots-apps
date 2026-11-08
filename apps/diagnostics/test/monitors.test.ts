@@ -89,6 +89,25 @@ assert.equal(persistent([[2, 5]], 0.5, on(1, 1.6)).length, 0);
   assert.equal(run({ [`${R}/intakeArm/leftMinusRightMotorRot`]: twist }, { ...gates, enabled: [[10, 20]] }).get('intake-arm-twist')!.alarms.length, 0);
 }
 
+// --- The intake arm skipping: past its hard stop by more than the bound, an error ---
+{
+  const stop = monitorSettings.armSkip.hardStop;
+  const arms = (left: Series, right: Series) => ({ [`${R}/intakeArm/left/currentPositionMotorRot`]: left, [`${R}/intakeArm/right/currentPositionMotorRot`]: right });
+  const atStop = step(stop, stop, 0, 0);
+  // At the stop, or just past it (homing pushing into it): fine.
+  assert.equal(run(arms(atStop, step(stop, stop + 1, 3, 6))).get('intake-arm-skip')!.alarms.length, 0);
+  // Right reads 8 rotations past it for 2 s: skipped.
+  const skipped = run(arms(atStop, step(stop, stop + 8, 3, 5))).get('intake-arm-skip')!;
+  assert.equal(skipped.alarms.length, 1);
+  assert.equal(skipped.alarms[0].severity, 'error');
+  assert.match(skipped.alarms[0].title, /right past its hard stop/);
+  assert.match(skipped.alarms[0].detail, /8\.00 past the hard stop/);
+  // Not while disabled.
+  assert.equal(run(arms(atStop, step(stop, stop + 8, 3, 5)), { ...gates, enabled: [[10, 20]] }).get('intake-arm-skip')!.alarms.length, 0);
+  // Without the arm's positions it isn't checked.
+  assert.equal(run({}).get('intake-arm-skip')!.checked, false);
+}
+
 // --- Path tracking, in auto, and not from a stale value ---
 {
   const errors = (x: Series, y: Series) => ({

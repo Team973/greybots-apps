@@ -6,7 +6,7 @@ import type { SignalLogFile } from '@shared/ipc';
 import { reportSummary, type Report, type ReportSummary } from '@shared/library';
 import type { MatchInfo } from '@shared/offload';
 import { isReport, reportFileNames } from '@shared/report-files';
-import { defaultCardFilter, duplicateReports, filterCards, groupProblems, logCards, missingTemplates } from '@shared/report-cards';
+import { cardRobots, defaultCardFilter, duplicateReports, filterCards, groupProblems, logCards, missingTemplates, robotLabel } from '@shared/report-cards';
 
 function log(id: string, match: MatchInfo | null, recorded: string): SignalLogFile {
   return { id, localPath: id, name: id, robot: 'frc973', size: 1, recorded, match, hoots: [], dsLogs: [] };
@@ -63,6 +63,18 @@ assert.deepEqual(ids({ event: 'caven1' }), []);
 // Search: the log's title, and its reports' names.
 assert.deepEqual(ids({ query: 'power' }), ['q12.wpilog']);
 assert.deepEqual(ids({ analyzedOnly: false, query: 'e3' }), ['e3.wpilog']);
+// A robot (team): only its logs.
+assert.deepEqual(cardRobots(cards), ['frc973']);
+assert.deepEqual(ids({ analyzedOnly: false, robot: 'frc973' }), ids({ analyzedOnly: false }));
+assert.deepEqual(ids({ analyzedOnly: false, robot: 'frc9973' }), []);
+{
+  const theirs = logCards([{ ...cards[1].log!, id: 'theirs.wpilog', robot: 'frc9973' }, { ...cards[1].log!, id: 'sim.wpilog', robot: 'sim' }], []);
+  const both = [...cards, ...theirs];
+  assert.deepEqual(cardRobots(both), ['frc973', 'frc9973', 'sim'], 'by team number, then other names');
+  assert.deepEqual(filterCards(both, { ...defaultCardFilter, analyzedOnly: false, robot: 'frc9973' }).map((c) => c.id), ['theirs.wpilog']);
+}
+assert.equal(robotLabel('frc973'), 'Team 973');
+assert.equal(robotLabel('sim'), 'sim');
 
 // --- What a log is missing ---
 const templates = [

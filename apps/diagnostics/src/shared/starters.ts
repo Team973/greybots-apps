@@ -14,6 +14,7 @@ import type { DeviceSpec } from './devices';
 import type { EventKind } from './events';
 import type { LibraryItem, Pipeline, ReportSection, ReportTemplate, SavedView, ViewBody, ViewSpan, ViewTrace } from './library';
 import type { PiePanel } from './plots';
+import type { SymmetryPairSpec } from './symmetry';
 
 const robot = '/Robot/robot';
 const stats = '/Robot/SystemStats';
@@ -62,7 +63,14 @@ export const starterRevisions: Record<string, string> = {
 // Starters added since the first ones: put in a library once by
 // themselves (see upgradeStarters), and not again if someone deletes them.
 //   The Path Tracking view, and the Vision System and Device Health templates.
-export const newStarters: string[] = ['5f0c2a10-0001-4000-8000-000000000010', '5f0c2a10-0002-4000-8000-000000000012', '5f0c2a10-0002-4000-8000-000000000013'];
+//   The Network Connectivity, Intake, Shooter and Drivetrain templates, and
+//   their views (Network, Radio, Intake Arm, Intake Rollers, Shooter
+//   Flywheel, Kickers, and Swerve Module 0 to 3).
+export const newStarters: string[] = [
+  '5f0c2a10-0001-4000-8000-000000000010', '5f0c2a10-0002-4000-8000-000000000012', '5f0c2a10-0002-4000-8000-000000000013',
+  ...[11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((n) => `5f0c2a10-0001-4000-8000-${String(n).padStart(12, '0')}`),
+  ...[14, 15, 16, 17].map((n) => `5f0c2a10-0002-4000-8000-${String(n).padStart(12, '0')}`)
+];
 
 const base = (id: string, kind: LibraryItem['kind'], name: string, description: string) => ({
   id,
@@ -144,6 +152,65 @@ views.push(
     [`${robot}/drive/controller/driveWithTrajectory/Y Position Error`, 'L'],
     [`${robot}/drive/controller/driveWithTrajectory/Theta Position Error`, 'R']
   ], { type: 'phase', phase: 'auto' })]
+);
+
+// For the Network Connectivity, Intake, Shooter and Drivetrain reports
+// (newStarters).
+const ds = 'DS log';
+const arm = `${robot}/intakeArm`;
+const intake = `${robot}/intake`;
+const swerveModule = (m: number) => `${robot}/drive/swerve/mod${m}`;
+views.push(
+  ['5f0c2a10-0001-4000-8000-000000000011', 'Network', "The Driver Station's link to the robot: trip time and packet loss, and whether the robot and its radio were there.", body([
+    [`${ds}/Trip time`, 'L'],
+    [`${ds}/Packet loss`, 'R'],
+    [`${ds}/Robot connected`, 'band'],
+    ['/Robot/RadioStatus/Connected', 'band']
+  ], { type: 'phase', phase: 'match' })],
+  ['5f0c2a10-0001-4000-8000-000000000012', 'Radio', 'Wi-Fi signal and bandwidth, as the Driver Station has them (only on a field).', body([
+    [`${ds}/Wi-Fi signal`, 'L'],
+    [`${ds}/Bandwidth`, 'R']
+  ], { type: 'phase', phase: 'match' })],
+  ['5f0c2a10-0001-4000-8000-000000000013', 'Intake Arm', "The intake arm's two motors: each one's position against the target, and their current.", body([
+    [`${arm}/left/currentPositionMotorRot`, 'L'],
+    [`${arm}/right/currentPositionMotorRot`, 'L'],
+    [`${arm}/targetPositionMotorRot`, 'L'],
+    [`${arm}/left/motor/statorCurrent`, 'R'],
+    [`${arm}/right/motor/statorCurrent`, 'R'],
+    [`${arm}/state`, 'band', 'string']
+  ])],
+  ['5f0c2a10-0001-4000-8000-000000000014', 'Intake Rollers', "The intake rollers' two motors' current, and the rollers' speed against target.", body([
+    [`${intake}/leftRollerMotor/statorCurrent`, 'L'],
+    [`${intake}/rightRollerMotor/statorCurrent`, 'L'],
+    [`${intake}/currentVelocityRPS`, 'R'],
+    [`${intake}/targetVelocityRPS`, 'R'],
+    [`${intake}/state`, 'band', 'string']
+  ])],
+  ['5f0c2a10-0001-4000-8000-000000000015', 'Shooter Flywheel', "The flywheel's command vs. feedback (target and actual speed), and its two motors' current.", body([
+    [`${robot}/shooter/targetLinearVelocityMPS`, 'L'],
+    [`${robot}/shooter/currentLinearVelocityMPS`, 'L'],
+    [`${robot}/shooter/motorLeader/statorCurrent`, 'R'],
+    [`${robot}/shooter/motorFollower/statorCurrent`, 'R'],
+    [`${robot}/superstructure/isShooterAtSpeed`, 'band'],
+    [`${robot}/shooter/state`, 'band', 'string']
+  ])],
+  ['5f0c2a10-0001-4000-8000-000000000016', 'Kickers', "The upper and lower kickers' command vs. feedback (target and actual speed), and their current.", body([
+    [`${robot}/upperKicker/targetLinearVelocityMPS`, 'L'],
+    [`${robot}/upperKicker/currentLinearVelocityMPS`, 'L'],
+    [`${robot}/lowerKicker/targetLinearVelocityMPS`, 'L'],
+    [`${robot}/lowerKicker/currentLinearVelocityMPS`, 'L'],
+    [`${robot}/upperKicker/motor/statorCurrent`, 'R'],
+    [`${robot}/lowerKicker/motor/statorCurrent`, 'R']
+  ])],
+  // Each swerve module: its drive's speed (left axis) and its angle (right
+  // axis), each against what it was told.
+  ...[0, 1, 2, 3].map((m): [string, string, string, ViewBody] => [`5f0c2a10-0001-4000-8000-${String(17 + m).padStart(12, '0')}`,
+    `Swerve Module ${m}`, `Module ${m}: its drive speed, command vs. feedback (left axis), and its angle, command vs. feedback (right axis).`, body([
+      [`${swerveModule(m)}/drive/targetVelMPS`, 'L'],
+      [`${swerveModule(m)}/drive/currentVelMPS`, 'L'],
+      [`${swerveModule(m)}/steer/targetPosRot`, 'R'],
+      [`${swerveModule(m)}/steer/currentPosRot`, 'R']
+    ])])
 );
 
 const view = (name: string) => {
@@ -293,6 +360,72 @@ const templates: [string, string, string, ReportTemplate['scope'], ReportSection
     ...energyPies(' (Hoot)', talonCurrent, '')
   ]]
 ];
+
+// Pairs for symmetry sections: two signals that should match.
+const pair = (label: string, a: string, b: string, activeAbove: number | null = null, magnitude = false): SymmetryPairSpec =>
+  ({ label, a, b, activeAbove, magnitude });
+// A mechanism's command against its feedback: what it was told, against
+// what it did, while either is above `activeAbove` (so sitting still isn't
+// counted as tracking well), and only while its state is `state` if given
+// (the shooter's, kickers' and rollers' targets are worked out even while
+// they're off, so only in ClosedLoop are they held to them).
+const commanded = (label: string, target: string, actual: string, activeAbove: number | null, state?: string): SymmetryPairSpec =>
+  ({ ...pair(label, target, actual, activeAbove), ...(state ? { onlyWhile: { key: state, value: 'ClosedLoop' } } : {}) });
+
+templates.push(
+  ['5f0c2a10-0002-4000-8000-000000000014', 'Network Connectivity', "Was the robot reachable all match? The Driver Station's trip time and packet loss, the radio, and every network problem: the robot lost, a poor link, NetworkTables clients leaving.", { type: 'match' }, [
+    { type: 'summary' },
+    { type: 'events', title: 'Network events', kinds: ['network'], problemsOnly: false },
+    chart('Network', 'Trip time and packet loss'),
+    { type: 'stats', title: 'The link', keys: [`${ds}/Trip time`, `${ds}/Packet loss`, `${ds}/Wi-Fi signal`, `${ds}/Bandwidth`] },
+    chart('Radio', 'Wi-Fi signal and bandwidth (on a field)')
+  ]],
+  ['5f0c2a10-0002-4000-8000-000000000015', 'Intake', "The intake while the robot is enabled: are the arm's two motors and the two rollers alike (position and current), and did the arm skip (read past its hard stop)?", { type: 'enabled' }, [
+    { type: 'summary' },
+    { type: 'monitors', title: 'Intake checks', ids: ['intake-arm-skip', 'intake-arm-twist', 'pair-intake-arm', 'pair-intake-rollers'] },
+    { type: 'symmetry', title: 'Intake arm: left vs. right', pairs: [
+      pair('Position', `${arm}/left/currentPositionMotorRot`, `${arm}/right/currentPositionMotorRot`),
+      pair('Current (stator), while running', `${arm}/left/motor/statorCurrent`, `${arm}/right/motor/statorCurrent`, 5, true),
+      pair('Current (supply), while running', `${arm}/left/motor/supplyCurrent`, `${arm}/right/motor/supplyCurrent`, 2, true)
+    ] },
+    chart('Intake Arm', 'Intake arm'),
+    { type: 'stats', title: 'Intake arm position', keys: [`${arm}/left/currentPositionMotorRot`, `${arm}/right/currentPositionMotorRot`, `${arm}/leftMinusRightMotorRot`] },
+    { type: 'symmetry', title: 'Intake rollers: left vs. right', pairs: [
+      pair('Current (stator), while running', `${intake}/leftRollerMotor/statorCurrent`, `${intake}/rightRollerMotor/statorCurrent`, 5, true),
+      pair('Current (supply), while running', `${intake}/leftRollerMotor/supplyCurrent`, `${intake}/rightRollerMotor/supplyCurrent`, 2, true),
+      pair('Speed, while running', `${intake}/leftRollerMotor/velocity`, `${intake}/rightRollerMotor/velocity`, 1, true)
+    ] },
+    chart('Intake Rollers', 'Intake rollers'),
+    { type: 'symmetry', title: 'Rollers: command vs. feedback', pairs: [
+      commanded('Roller speed, in closed loop', `${intake}/targetVelocityRPS`, `${intake}/currentVelocityRPS`, null, `${intake}/state`)
+    ] }
+  ]],
+  ['5f0c2a10-0002-4000-8000-000000000016', 'Shooter', "The shooter while the robot is enabled: the flywheel's and kickers' command vs. feedback, and whether its two motors share the load.", { type: 'enabled' }, [
+    { type: 'summary' },
+    { type: 'symmetry', title: 'Command vs. feedback', pairs: [
+      commanded('Flywheel, in closed loop', `${robot}/shooter/targetLinearVelocityMPS`, `${robot}/shooter/currentLinearVelocityMPS`, null, `${robot}/shooter/state`),
+      commanded('Upper kicker, in closed loop', `${robot}/upperKicker/targetLinearVelocityMPS`, `${robot}/upperKicker/currentLinearVelocityMPS`, null, `${robot}/upperKicker/state`),
+      commanded('Lower kicker, in closed loop', `${robot}/lowerKicker/targetLinearVelocityMPS`, `${robot}/lowerKicker/currentLinearVelocityMPS`, null, `${robot}/lowerKicker/state`)
+    ] },
+    chart('Shooter Flywheel', 'Flywheel: command vs. feedback'),
+    chart('Kickers', 'Kickers: command vs. feedback'),
+    { type: 'stats', title: 'Speed error', keys: [`${robot}/shooter/velocityErrorMPS`, `${robot}/shooter/filteredMotorError`, `${robot}/upperKicker/filteredMotorError`, `${robot}/lowerKicker/filteredMotorError`] },
+    { type: 'symmetry', title: 'Flywheel motors: leader vs. follower', pairs: [
+      pair('Current (stator), while running', `${robot}/shooter/motorLeader/statorCurrent`, `${robot}/shooter/motorFollower/statorCurrent`, 5, true),
+      pair('Speed, while running', `${robot}/shooter/motorLeader/velocity`, `${robot}/shooter/motorFollower/velocity`, 1, true)
+    ] },
+    { type: 'monitors', title: 'Shooter checks', ids: ['pair-shooter'] }
+  ]],
+  ['5f0c2a10-0002-4000-8000-000000000017', 'Drivetrain', "Each swerve module while the robot is enabled: its drive speed and angle, command vs. feedback, and whether a module or wheel was unlike the rest.", { type: 'enabled' }, [
+    { type: 'summary' },
+    { type: 'symmetry', title: 'Command vs. feedback', pairs: [0, 1, 2, 3].flatMap((m) => [
+      commanded(`Module ${m} drive speed`, `${swerveModule(m)}/drive/targetVelMPS`, `${swerveModule(m)}/drive/currentVelMPS`, 0.1),
+      commanded(`Module ${m} angle`, `${swerveModule(m)}/steer/targetPosRot`, `${swerveModule(m)}/steer/currentPosRot`, null)
+    ]) },
+    ...[0, 1, 2, 3].map((m) => chart(`Swerve Module ${m}`, `Module ${m}: drive speed (left axis) and angle (right axis), command vs. feedback`)),
+    { type: 'monitors', title: 'Drivetrain checks', ids: ['swerve-outlier', 'wheel-slip', 'wheel-drag'] }
+  ]]
+);
 
 const pipeline: Pipeline = {
   ...base('5f0c2a10-0003-4000-8000-000000000001', 'pipeline', 'After each qualification match',

@@ -33,8 +33,9 @@ export interface MonitorAlarm {
   detail: string;
   // A signal to plot to see it.
   key: string | null;
-  // Shown as a warning, or only as information (a surf's near miss).
-  severity?: 'warning' | 'info';
+  // Shown as a warning (the default), an error (the intake arm skipping),
+  // or only as information (a surf's near miss).
+  severity?: 'error' | 'warning' | 'info';
 }
 
 export interface MonitorResult {
@@ -58,6 +59,20 @@ export const monitorSettings = {
   ] as { id: string; name: string; a: [string, string]; b: [string, string] }[],
   pair: { share: 0.3, amps: 10, runningAmps: 5, persist: 1 },
   twist: { key: `${robot}/intakeArm/leftMinusRightMotorRot`, rotations: 2.0, persist: 0.5 },
+  // The intake arm skipping (its gears or belt slipping a tooth): either
+  // motor's position more than `buffer` (a share of it) past the arm's
+  // configured hard stop, which the arm can't really be. The configured stop
+  // is the deployed end, where homing drives the arm and sets its position
+  // (HOMED_PRESET, 28.65 motor rotations, in the robot code's
+  // config-common.jsonc); it's soft, so a little past it is fine. An error.
+  // Reading past it while homing says it had skipped before; homing puts it
+  // right.
+  armSkip: {
+    arms: [['left', `${robot}/intakeArm/left/currentPositionMotorRot`], ['right', `${robot}/intakeArm/right/currentPositionMotorRot`]] as [string, string][],
+    hardStop: 28.65,
+    buffer: 0.05,
+    persist: 0.1
+  },
   swerve: {
     current: (m: number) => `${robot}/drive/swerve/mod${m}/Drive Motor/statorCurrent`,
     velocity: (m: number) => `${robot}/drive/swerve/mod${m}/drive/currentVelMPS`,
@@ -133,6 +148,7 @@ export const monitorSettings = {
 export const monitorCatalog: { id: string; name: string }[] = [
   ...monitorSettings.pairs.map((p) => ({ id: p.id, name: `Paired-motor imbalance: ${p.name}` })),
   { id: 'intake-arm-twist', name: 'Intake arm twist' },
+  { id: 'intake-arm-skip', name: 'Intake arm skipping (past its hard stop)' },
   { id: 'swerve-outlier', name: 'Swerve module outlier' },
   { id: 'path-position', name: 'Path tracking (position)' },
   { id: 'path-heading', name: 'Path tracking (heading)' },
@@ -372,6 +388,31 @@ export function runMonitors(lookup: Lookup, gates: Gates, available: readonly st
         const v = valueAt(found[0].series, t);
         return v === null ? null : { on: Math.abs(v) > s.twist.rotations, value: Math.abs(v), detail: () => `left − right ${fmt(v, 2)} rot` };
       }).map((a) => ({ start: a.start, end: a.end, title: 'Intake arm twisted', detail: `${a.detail}, for ${seconds(a)}`, key: found[0].key }));
+    }
+  }
+
+  // The intake arm past its hard stop: it skipped.
+  {
+    const skip = s.armSkip;
+    const { result, found } = need('intake-arm-skip', 'Intake arm skipping', skip.arms.map(([, key]) => key));
+    if (result.checked) {
+      skip.arms.forEach(([side], i) => {
+        const alarms = persistent(gates.enabled, skip.persist, (t) => {
+          const v = valueAt(found[i].series, t);
+          if (v === null) return null;
+          const past = v - skip.hardStop;
+          return { on: past > Math.abs(skip.hardStop) * skip.buffer, value: past, detail: () => `read ${fmt(v, 2)} rot, ${fmt(past, 2)} past the hard stop (${skip.hardStop})` };
+        });
+        result.alarms.push(...alarms.map((a): MonitorAlarm => ({
+          start: a.start,
+          end: a.end,
+          title: `Intake arm ${side} past its hard stop (skipped?)`,
+          detail: `up to ${a.detail}, for ${seconds(a)}`,
+          key: found[i].key,
+          severity: 'error'
+        })));
+      });
+      result.alarms.sort((a, b) => a.start - b.start);
     }
   }
 

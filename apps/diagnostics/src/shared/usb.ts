@@ -90,6 +90,26 @@ export interface UsbExportProgress {
   current: string;
 }
 
+// A file copied to a drive (or folder), or found there already, for the
+// Log Export page's list. Kept only while the app is open.
+export interface ExportedLog {
+  // Its path in the data folder (logs/frc973/...).
+  localPath: string;
+  size: number;
+  at: string;
+  // The GreybotsDiagnostics-logs folder it went into.
+  destination: string;
+}
+
+// What a copy put on a drive, ahead of what was copied before: each file
+// once per place it went (copied again, it moves to the top), the newest
+// `max` kept.
+export function mergeExported(kept: ExportedLog[], added: ExportedLog[], max = 500): ExportedLog[] {
+  const key = (f: ExportedLog) => `${f.destination}\n${f.localPath}`;
+  const fresh = new Set(added.map(key));
+  return [...added, ...kept.filter((f) => !fresh.has(key(f)))].slice(0, max);
+}
+
 export interface UsbExportSummary {
   startedAt: string;
   finishedAt: string;
@@ -109,9 +129,29 @@ export interface UsbExportSummary {
 export interface UsbAutoImport {
   drive: string;
   at: string;
-  // 'importing' while it runs; 'nothing' when the drive had no new logs.
-  state: 'importing' | 'done' | 'nothing' | 'error';
+  // 'importing' while it runs; 'nothing' when the drive had no new logs;
+  // 'interrupted' when the drive was taken out part way.
+  state: 'importing' | 'done' | 'nothing' | 'error' | 'interrupted';
   message: string;
+  // Log files brought in, skipped (here already), and not brought in.
+  // Missing while it's importing, and from before they were counted.
+  counts?: UsbImportCounts;
+}
+
+export interface UsbImportCounts {
+  loaded: number;
+  skipped: number;
+  failed: number;
+}
+
+// An import's files as counts; `skipped` adds those left out before it
+// started (here already).
+export function usbImportCounts(summary: ImportSummary, skippedBefore = 0): UsbImportCounts {
+  return {
+    loaded: summary.files.filter((f) => f.outcome === 'copied').length,
+    skipped: skippedBefore + summary.files.filter((f) => f.outcome !== 'copied' && f.outcome !== 'conflict' && f.outcome !== 'error').length,
+    failed: summary.files.filter((f) => f.outcome === 'conflict' || f.outcome === 'error').length
+  };
 }
 
 export interface UsbStatus {

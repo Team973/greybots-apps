@@ -15,14 +15,14 @@ import { BrowserWindow, dialog, Notification, utilityProcess, type UtilityProces
 import { promises as fs } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 
-import { filesOfLogs, usbImportFolders, type UsbAutoImport, type UsbDrive, type UsbStatus, describeUsbImport } from '@shared/usb';
-import type { UsbExportProgress, UsbExportSummary } from '@shared/usb';
+import { filesOfLogs, usbImportFolders, type UsbAutoImport, type UsbDrive, type UsbStatus, describeUsbImport, usbImportCounts } from '@shared/usb';
+import { mergeExported, type ExportedLog, type UsbExportProgress, type UsbExportSummary } from '@shared/usb';
 import { importExtensions } from './import/importer';
 import { importStatus, runImport } from './import-service';
 import { loadSettings } from './settings-store';
 import { signalLogs } from './signals-service';
 import { dataDirectory } from './storage';
-import { copyLogsToDrive } from './usb/copy-to-drive';
+import { copyLogsToDrive, exportFolderIn } from './usb/copy-to-drive';
 import { usbDrives } from './usb/drives';
 import { addSeen, loadSeen, seenKey, storedKey, storedLogs } from './usb/seen';
 import copyFilesPath from './workers/copy-files?modulePath';
@@ -35,6 +35,14 @@ let exporting = false;
 let exportProgress: UsbExportProgress | null = null;
 let lastExport: UsbExportSummary | null = null;
 let autoImport: UsbAutoImport | null = null;
+
+// What's been copied to drives since the app opened, newest first: each
+// file once per place it went (copied again, it moves to the top). For the
+// Log Export page; not kept when the app closes.
+let exportedLogs: ExportedLog[] = [];
+export function recentExports(): ExportedLog[] {
+  return [...exportedLogs];
+}
 
 // Drives already looked in since they were plugged in; forgotten when taken
 // out, so plugging one in again looks again.
@@ -99,7 +107,7 @@ async function importFromDrive(drive: UsbDrive): Promise<boolean> {
   await addSeen(directory, unseen.filter((file) => !fresh.includes(file)).map((file) => seenKey(pathOnDrive(drive, file.path), file.size)));
   const at = new Date().toISOString();
   if (fresh.length === 0) {
-    autoImport = { drive: drive.label, at, state: 'nothing', message: 'No logs on it that aren\'t already here.' };
+    autoImport = { drive: drive.label, at, state: 'nothing', message: 'No logs on it that aren\'t already here.', counts: { loaded: 0, skipped: found.length, failed: 0 } };
     return true;
   }
 
@@ -119,7 +127,10 @@ async function importFromDrive(drive: UsbDrive): Promise<boolean> {
     .filter((f) => f.outcome !== 'error' && sizes.has(f.from))
     .map((f) => seenKey(pathOnDrive(drive, f.from), sizes.get(f.from)!)));
   const message = describeUsbImport(result);
-  autoImport = { drive: drive.label, at: result.finishedAt, state: 'done', message };
+  const counts = usbImportCounts(result, found.length - fresh.length);
+  // The drive gone by the end, with files not brought in: taken out part way.
+  const gone = !(await fs.stat(drive.root).then(() => true, () => false));
+  autoImport = { drive: drive.label, at: result.finishedAt, state: gone && counts.failed > 0 ? 'interrupted' : 'done', message, counts };
   notify(`From USB drive ${drive.label}: ${message}`);
   return true;
 }
@@ -171,6 +182,9 @@ export async function exportToUsb(logIds: string[], destination: string): Promis
     const wanted = new Set(logIds);
     const logs = (await signalLogs(settings)).filter((log) => wanted.has(log.id));
     const copiedKeys: string[] = [];
+    // Each file on the drive now, for the Log Export page's list.
+    const exported: ExportedLog[] = [];
+    const exportFolder = exportFolderIn(destination);
     const cancel = new AbortController();
     const copier = await startCopier();
     cancelExport = () => {
@@ -181,10 +195,15 @@ export async function exportToUsb(logIds: string[], destination: string): Promis
       (progress) => { exportProgress = progress; },
       // Copied to a drive's root: known there, so plugging it in here again
       // doesn't import them back.
-      (path, size) => { if (drive && destination === drive.root) copiedKeys.push(seenKey(path, size)); },
+      (path, size) => {
+        if (drive && destination === drive.root) copiedKeys.push(seenKey(path, size));
+        // The path below the export folder is its path in the data folder.
+        exported.push({ localPath: path.slice(path.indexOf('/') + 1), size, at: new Date().toISOString(), destination: exportFolder });
+      },
       { signal: cancel.signal, copyFile: (from, to) => copier.copy(from, to) })
       .finally(() => copier.stop());
     await addSeen(directory, copiedKeys).catch(() => {});
+    exportedLogs = mergeExported(exportedLogs, exported.reverse());
     lastExport = { startedAt, finishedAt: new Date().toISOString(), ...result };
     return lastExport;
   } finally {

@@ -39,6 +39,7 @@ import type { Settings } from '@shared/settings';
 import { matchKey, type KeyMatch } from '@shared/signal-match';
 import { integrateProduct, pairedVoltage, type SignalInfo, type SignalSeries } from '@shared/signals';
 import { reportPathSegments } from '@shared/storage-layout';
+import { compareSymmetry, spansWhereText, type SymmetryRow } from '@shared/symmetry';
 import { getLibraryItem, listLibrary } from './library-store';
 import { loadNotes } from './notes-store';
 import { loadSettings } from './settings-store';
@@ -479,6 +480,45 @@ export async function makeReport(settings: Settings, template: ReportTemplate, l
       case 'devices':
         sections.push({ type: 'devices', title: section.title, health: deviceHealth(section.devices) });
         break;
+      case 'symmetry': {
+        const rows: SymmetryRow[] = [];
+        for (const pair of section.pairs) {
+          const a = resolve(context, pair.a);
+          const b = resolve(context, pair.b);
+          // Read whole, so the value held into each span is there.
+          const read = async (key: string | null) => {
+            const series = key ? await readSignal(settings, logId, key, {}).catch(() => null) : null;
+            return series && series.values instanceof Float64Array ? { times: series.times, values: series.values } : null;
+          };
+          const [sa, sb] = [await read(a), await read(b)];
+          // Only while a state signal has a value, if the pair says.
+          const gateKey = pair.onlyWhile ? resolve(context, pair.onlyWhile.key) : null;
+          const gate = gateKey ? await readSignal(settings, logId, gateKey, {}).catch(() => null) : null;
+          const gateMissing = pair.onlyWhile && (!gate || gate.kind !== 'string') ? pair.onlyWhile.key : '';
+          const within = pair.onlyWhile && gate && !gateMissing ? spansWhereText({ times: gate.times, values: gate.values as string[] }, pair.onlyWhile.value, spans) : spans;
+          const compared = sa && sb && !gateMissing ? compareSymmetry(sa, sb, within, pair) : null;
+          const info = a ? signals.get(a) : b ? signals.get(b) : undefined;
+          rows.push({
+            label: pair.label || `${labelOf(signals.get(a ?? ''), a ?? pair.a)} vs. ${labelOf(signals.get(b ?? ''), b ?? pair.b)}`,
+            a: sa ? a : null,
+            b: sb ? b : null,
+            aLabel: a ? labelOf(signals.get(a), a) : pair.a,
+            bLabel: b ? labelOf(signals.get(b), b) : pair.b,
+            unit: info?.unit ?? '',
+            condition: pair.onlyWhile && gateKey ? `while ${labelOf(signals.get(gateKey), gateKey)} is ${pair.onlyWhile.value}` : '',
+            missing: gateMissing,
+            seconds: compared?.seconds ?? 0,
+            meanA: compared?.meanA ?? null,
+            meanB: compared?.meanB ?? null,
+            meanGap: compared?.meanGap ?? null,
+            meanAbsGap: compared?.meanAbsGap ?? null,
+            maxAbsGap: compared?.maxAbsGap ?? null,
+            maxAt: compared?.maxAt ?? null
+          });
+        }
+        sections.push({ type: 'symmetry', title: section.title, rows });
+        break;
+      }
     }
   }
 
@@ -688,7 +728,7 @@ export async function logIdsNow(settings: Settings): Promise<Set<string>> {
 // the auto reports, and logs whose files were pulled again because they
 // grew (a log still being written when it was first pulled) have their
 // reports run again.
-export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import', changed: string[] = []): Promise<void> {
+export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import', changed: string[] = [], handled: Set<string> = new Set()): Promise<void> {
   const settings = await loadSettings();
   if (changed.length > 0) {
     forgetFiles(changed);
@@ -697,11 +737,31 @@ export async function afterNewLogs(before: Set<string>, how: 'offload' | 'import
     const logs = (await signalLogs(settings)).filter((log) => before.has(log.id) && files(log).some((path) => path !== null && grown.has(path)));
     if (logs.length > 0) rerunReports(logs.map((log) => log.id)).catch(() => {});
   }
-  const added = [...(await logIdsNow(settings))].filter((id) => !before.has(id));
+  // Less those already run on as their match came in (afterMatchDownloaded).
+  const added = [...(await logIdsNow(settings))].filter((id) => !before.has(id) && !handled.has(id));
   if (added.length === 0) return;
   const pipeline = theAutoReport(await listLibrary(settings, 'pipeline'));
   if (!pipeline?.enabled || !(how === 'offload' ? pipeline.onOffload : pipeline.onImport)) return;
   runPipelines(added, how).catch(() => {});
+}
+
+// While a download goes on: one match's files are all here, so its new
+// logs go through the auto report now, not at the end of the download, in
+// turn with any already running. `handled` collects the logs run on, which
+// the end of the download (afterNewLogs) leaves out. When the download
+// brings several matches and the auto report runs on only the newest of
+// several (or none), it's left to the end, which knows them all.
+export async function afterMatchDownloaded(before: Set<string>, handled: Set<string>, localPaths: string[], matches: number): Promise<void> {
+  const settings = await loadSettings();
+  const pipeline = theAutoReport(await listLibrary(settings, 'pipeline'));
+  if (!pipeline?.enabled || !pipeline.onOffload) return;
+  if (matches > 1 && pipeline.several !== 'all') return;
+  const paths = new Set(localPaths);
+  const files = (log: SignalLogFile) => [log.localPath, ...log.hoots.map((h) => h.localPath), ...log.dsLogs.flatMap((d) => [d.localPath, d.eventsPath])];
+  const logs = (await signalLogs(settings)).filter((log) => !before.has(log.id) && !handled.has(log.id) && files(log).some((path) => path !== null && paths.has(path)));
+  if (logs.length === 0) return;
+  for (const log of logs) handled.add(log.id);
+  runPipelines(logs.map((log) => log.id), 'offload').catch(() => {});
 }
 
 // Runs each of these logs' reports again, from the template each was made

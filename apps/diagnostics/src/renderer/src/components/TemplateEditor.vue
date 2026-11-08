@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import { deviceLines, parseDeviceLines } from '@shared/devices';
 import { eventKinds, type EventKind } from '@shared/events';
 import { monitorCatalog } from '@shared/monitors';
+import type { SymmetryPairSpec } from '@shared/symmetry';
 import {
   pieMeasureLabels,
   scopeLabels,
@@ -50,10 +51,22 @@ function newSection(type: ReportSectionType): ReportSection {
     case 'monitors': return { type, title: 'Monitors', ids: [] };
     case 'vision': return { type, title: 'Vision system' };
     case 'devices': return { type, title: 'Device health', devices: [] };
+    case 'symmetry': return { type, title: 'Symmetry', pairs: [{ label: '', a: '', b: '', activeAbove: null, magnitude: false }] };
   }
 }
 
 const viewBody = (view: SavedView) => JSON.parse(JSON.stringify({ axes: view.axes, traces: view.traces, span: view.span, eventKinds: view.eventKinds }));
+
+// A symmetry pair's threshold: a number above 0, or none (always compared).
+function setActiveAbove(pair: SymmetryPairSpec, text: string) {
+  const value = Number(text);
+  pair.activeAbove = text.trim() && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// A symmetry pair's condition: a text signal and its value, or none.
+function setOnlyWhile(pair: SymmetryPairSpec, key: string, value: string) {
+  pair.onlyWhile = key.trim() ? { key: key.trim(), value: value.trim() } : null;
+}
 
 function add() {
   draft.value.sections.push(newSection(adding.value));
@@ -217,6 +230,36 @@ const canSave = () => draft.value.name.trim() !== '';
           all through the span, with no fault while it's on: any of those is an error (current limits and sticky faults are information).
         </p>
       </template>
+      <template v-else-if="section.type === 'symmetry'">
+        <input v-model="section.title" aria-label="Symmetry title" maxlength="120" />
+        <div v-for="(pair, j) in section.pairs" :key="j" class="pair">
+          <input v-model="pair.label" :aria-label="`Pair ${j + 1} name`" placeholder="Name (Intake rollers' current)" maxlength="120" />
+          <input v-model.trim="pair.a" :aria-label="`Pair ${j + 1} first signal`" placeholder="First signal (left)" maxlength="500" />
+          <input v-model.trim="pair.b" :aria-label="`Pair ${j + 1} second signal`" placeholder="Second signal (right)" maxlength="500" />
+          <span class="pair-options">
+            <label class="choice small">Only while either is above
+              <input type="number" min="0" step="any" class="narrow" :value="pair.activeAbove ?? ''" :aria-label="`Pair ${j + 1}: only while either is above`"
+                @change="setActiveAbove(pair, ($event.target as HTMLInputElement).value)" />
+            </label>
+            <label class="choice small"><input v-model="pair.magnitude" type="checkbox" /> By size (ignore the sign)</label>
+            <label class="choice small">Only while
+              <input class="state-key" :value="pair.onlyWhile?.key ?? ''" placeholder="a state signal (empty: always)" maxlength="500"
+                :aria-label="`Pair ${j + 1}: only while this signal`" @change="setOnlyWhile(pair, ($event.target as HTMLInputElement).value, pair.onlyWhile?.value ?? '')" />
+              is
+              <input class="narrow" :value="pair.onlyWhile?.value ?? ''" placeholder="ClosedLoop" maxlength="120" :disabled="!pair.onlyWhile"
+                :aria-label="`Pair ${j + 1}: is this value`" @change="setOnlyWhile(pair, pair.onlyWhile?.key ?? '', ($event.target as HTMLInputElement).value)" />
+            </label>
+            <button type="button" class="icon" :aria-label="`Remove pair ${j + 1}`" @click="section.pairs.splice(j, 1)">✕</button>
+          </span>
+        </div>
+        <button type="button" class="small-button" @click="section.pairs.push({ label: '', a: '', b: '', activeAbove: null, magnitude: false })">Add a pair</button>
+        <p class="hint small">
+          Two signals that should match, such as a mechanism's left and right motors: each one's mean over the report's span, and how far apart
+          they were on average and at most. Or a command vs. its feedback (a target vs. the speed reached). Leave the threshold empty to
+          compare them all the time; tick by size for motors that run opposite ways; name a state to compare them only in it (a flywheel's
+          target is worked out even while it's off).
+        </p>
+      </template>
       <template v-else-if="section.type === 'vision'">
         <input v-model="section.title" aria-label="Vision title" maxlength="120" />
         <p class="hint small">Each camera the robot reads: frames used and thrown out, when (a heatmap), and its measurements against the fused pose.</p>
@@ -308,6 +351,31 @@ select option {
 
 .condition input {
   flex: 1;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.pair-options {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.narrow {
+  width: 100px;
+  margin-left: 6px;
+}
+
+.state-key {
+  width: 220px;
+  margin: 0 6px;
 }
 
 .slice {

@@ -10,12 +10,16 @@ import TextInput from '@greybots/common/components/TextInput.vue';
 import type { ConnectionReport } from '@shared/ipc';
 import type { OffloadProgress, OffloadStatus } from '@shared/offload';
 import { robotAddresses } from '@shared/robot-address';
+import ImportedLogsCard from '@/components/ImportedLogsCard.vue';
+import ImportLogsCard from '@/components/ImportLogsCard.vue';
 import SaveStatus from '@/components/SaveStatus.vue';
+import UsbImportCard from '@/components/UsbImportCard.vue';
 import { formatBytes, formatTime } from '@/format';
 import { useSettingsDraft } from '@/settings-draft';
 
-// The robot: how to reach it (saved as it's changed), whether it's there,
-// and pulling its logs.
+// Logs coming in: the robot (how to reach it, saved as it's changed,
+// whether it's there, and pulling its logs), files dropped or picked, USB
+// drives, and the latest logs brought in.
 
 const { draft, errors, saveState, edit, typed } = useSettingsDraft();
 const manual = computed(() => draft.value.addressMode === 'manual');
@@ -82,8 +86,14 @@ function runSeconds(run: NonNullable<OffloadStatus['lastRun']>): number {
   return Math.max(0, Math.round((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000));
 }
 
+// The latest imported logs, reloaded when a download or import finishes.
+const importedLogs = ref<InstanceType<typeof ImportedLogsCard> | null>(null);
+const reloadImported = () => importedLogs.value?.reload();
+
 async function refresh() {
+  const wasRunning = status.value?.running ?? false;
   status.value = await window.diagnostics.getOffloadStatus();
+  if (wasRunning && !status.value.running) reloadImported();
   measureSpeeds(status.value.jobs);
 }
 
@@ -135,11 +145,13 @@ onUnmounted(() => clearTimeout(timer));
 
 <template>
   <section class="card">
-    <h2>Robot</h2>
-    <template v-if="status">
-      <p v-if="status.robotHost" id="robot-status" class="success-text">Robot connected at {{ status.robotHost }}.</p>
-      <p v-else id="robot-status" class="hint">No robot connected.</p>
-    </template>
+    <div class="card-head">
+      <h2>Robot</h2>
+      <template v-if="status">
+        <span v-if="status.robotHost" id="robot-status" class="badge ok">Connected at {{ status.robotHost }}</span>
+        <span v-else id="robot-status" class="badge idle">No robot</span>
+      </template>
+    </div>
 
     <div class="field-row">
       <NumberInput id="team-number" :model-value="draft.teamNumber" label="Team number"
@@ -148,14 +160,10 @@ onUnmounted(() => clearTimeout(timer));
     <p v-if="errors.teamNumber" class="error-text">{{ errors.teamNumber }}</p>
 
     <div class="field-row">
-      <div>
-        Use a set address
-        <p class="hint">For a robot that isn't at its usual team address, or a simulator.</p>
-      </div>
+      <span title="For a robot that isn't at its usual team address, or a simulator.">Use a set address</span>
       <Switch id="manual-address-switch" :model-value="manual"
         @update:model-value="edit({ addressMode: $event ? 'manual' : 'team' })"></Switch>
     </div>
-
     <template v-if="manual">
       <TextInput id="manual-address" :model-value="draft.manualAddress" label="IP address or hostname"
         @update:model-value="typed({ manualAddress: $event })"></TextInput>
@@ -163,66 +171,54 @@ onUnmounted(() => clearTimeout(timer));
     </template>
 
     <div class="field-row">
-      <div>
-        Find the robot by mDNS
-        <p class="hint">Looks for the robot by its name on the network, as well as its address.</p>
-      </div>
-      <Switch id="mdns-switch" :model-value="draft.mdnsEnabled"
-        @update:model-value="edit({ mdnsEnabled: $event })"></Switch>
+      <span title="Looks for the robot by its name on the network, as well as its address.">Find the robot by mDNS</span>
+      <Switch id="mdns-switch" :model-value="draft.mdnsEnabled" @update:model-value="edit({ mdnsEnabled: $event })"></Switch>
     </div>
     <SaveStatus id="connection-saved" :state="saveState" />
-
-    <p class="hint">The robot is looked for at:</p>
-
-    <table class="plain">
-      <tbody>
-        <tr v-for="address in addresses" :key="address.host">
-          <td>{{ address.label }}</td>
-          <td class="path">{{ address.host }}</td>
-        </tr>
-      </tbody>
-    </table>
 
     <div class="card-actions">
       <md-outlined-button id="check-connection" :disabled="checking" @click="checkConnection">
         {{ checking ? 'Checking…' : 'Check connection' }}
       </md-outlined-button>
       <template v-if="report && !checking">
-        <span v-if="report.reachable" id="connection-result" class="success-text">Robot reached.</span>
-        <span v-else id="connection-result" class="error-text">No robot found.</span>
+        <span v-if="report.reachable" id="connection-result" class="badge ok">Robot reached</span>
+        <span v-else id="connection-result" class="badge bad">No robot found</span>
       </template>
+      <span class="hint small" :title="addresses.map((a) => `${a.label}: ${a.host}`).join('\n')">
+        {{ addresses.map((a) => a.host).join(' · ') }}
+      </span>
     </div>
 
-    <table v-if="report" class="plain">
-      <thead>
-        <tr>
-          <th>Address</th>
-          <th>Service</th>
-          <th>Result</th>
-        </tr>
-      </thead>
-      <tbody>
-        <template v-for="address in report.addresses" :key="address.host">
-          <tr v-for="port in address.ports" :key="`${address.host}:${port.port}`">
-            <td class="path">{{ address.host }}</td>
-            <td>{{ port.service }} ({{ port.port }})</td>
-            <td v-if="port.open" class="success-text">Open ({{ port.milliseconds }} ms)</td>
-            <td v-else>{{ port.error }}</td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
+    <details v-if="report" class="small">
+      <summary>Each address</summary>
+      <table class="plain">
+        <tbody>
+          <template v-for="address in report.addresses" :key="address.host">
+            <tr v-for="port in address.ports" :key="`${address.host}:${port.port}`">
+              <td class="path">{{ address.host }}</td>
+              <td>{{ port.service }} ({{ port.port }})</td>
+              <td v-if="port.open" class="success-text">Open ({{ port.milliseconds }} ms)</td>
+              <td v-else>{{ port.error }}</td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </details>
   </section>
 
   <section class="card">
-    <h2>Download</h2>
+    <h2 title="Logs already on this computer aren't pulled again. What's come in is under Latest imported logs, below.">Download</h2>
+    <div class="field-row">
+      <span title="As soon as the robot connects.">Download automatically</span>
+      <Switch id="auto-offload-switch" :model-value="draft.autoOffload" @update:model-value="edit({ autoOffload: $event })"></Switch>
+    </div>
+    <div class="field-row">
+      <span title="Older logs stay on the robot.">Logs from the last</span>
+      <NumberInput id="offload-days" :model-value="draft.offloadDays" label="Days (0: all)"
+        @update:model-value="typed({ offloadDays: $event })"></NumberInput>
+    </div>
+    <p v-if="errors.offloadDays" class="error-text">{{ errors.offloadDays }}</p>
     <template v-if="status">
-      <p class="hint">
-        <template v-if="status.autoOffload">Logs are downloaded automatically when the robot connects.</template>
-        <template v-else>Automatic download is off in <RouterLink to="/settings">Settings</RouterLink>.</template>
-        Logs already on this computer aren't pulled again. What's been pulled is on the
-        <RouterLink to="/storage">Storage</RouterLink> page.
-      </p>
 
       <p v-if="stageText" id="offload-stage">{{ stageText }}</p>
 
@@ -255,16 +251,17 @@ onUnmounted(() => clearTimeout(timer));
         <span v-if="startMessage" class="error-text">{{ startMessage }}</span>
       </div>
 
-      <div v-if="status.lastRun && !status.running" id="last-run">
-        <p>
-          Last download {{ formatTime(status.lastRun.finishedAt) }}{{ status.lastRun.automatic ? ' (automatic)' : '' }}:
-          {{ status.lastRun.copied }} copied ({{ formatBytes(status.lastRun.bytes) }}),
-          {{ status.lastRun.skipped }} already here<template v-if="status.lastRun.tooOld">,
-          {{ status.lastRun.tooOld }} older than the Settings limit not pulled</template>.
-          Took {{ runSeconds(status.lastRun) }} s.
-        </p>
-        <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
+      <div v-if="status.lastRun && !status.running" id="last-run" class="badges"
+        :title="`Last download ${formatTime(status.lastRun.finishedAt)}${status.lastRun.automatic ? ' (automatic)' : ''}: ${formatBytes(status.lastRun.bytes)} in ${runSeconds(status.lastRun)} s`">
+        <span v-if="status.lastRun.interrupted" id="interrupted" class="badge bad" title="The rest comes with the next download.">Download interrupted</span>
+        <span class="badge ok">{{ status.lastRun.copied }} downloaded</span>
+        <span class="badge warn">{{ status.lastRun.skipped }} already here</span>
+        <span v-if="status.lastRun.tooOld" class="badge idle" title="Older than the days set above: left on the robot.">{{ status.lastRun.tooOld }} too old</span>
       </div>
+      <details v-if="status.lastRun && !status.running && status.lastRun.errors.length" class="small">
+        <summary>What went wrong</summary>
+        <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
+      </details>
     </template>
   </section>
 
@@ -301,6 +298,10 @@ onUnmounted(() => clearTimeout(timer));
       <p v-for="error in status.lastClear.errors" :key="error" class="error-text">{{ error }}</p>
     </div>
   </section>
+
+  <ImportLogsCard @imported="reloadImported" />
+  <UsbImportCard />
+  <ImportedLogsCard ref="importedLogs" />
 
   <AppDialog :open="clearOpen" title="Delete these logs from the robot?" @close="clearOpen = false">
     <template v-if="status?.clearable">

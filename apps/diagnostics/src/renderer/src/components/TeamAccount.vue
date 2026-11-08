@@ -60,11 +60,8 @@ onUnmounted(() => clearInterval(timer));
 
 <template>
   <section id="account-section" class="card">
-    <h2>Team account</h2>
-    <p class="hint">
-      Signed in with a greybots-apps account, saved views, report templates and auto reports are shared with the team, and
-      theirs come here. Members and above share; only leads and admins delete what's shared. Reports and notes stay on this computer.
-    </p>
+    <h2 title="Signed in, saved views, report templates and auto reports are shared with the team. Members and above share; only leads and admins delete what's shared. Reports and notes stay on this computer.">Team account</h2>
+    <p class="hint">Shares views, templates and auto reports with the team.</p>
     <template v-if="account?.signedIn">
       <p id="account-who">
         Signed in as <strong>{{ account.name ?? account.email }}</strong>
@@ -84,8 +81,8 @@ onUnmounted(() => clearInterval(timer));
       <md-filled-button type="submit" :disabled="busy || !email || !password" @click="signIn">{{ busy ? 'Signing in…' : 'Sign in' }}</md-filled-button>
     </form>
     <p v-if="account?.problem" id="account-problem" class="error-text small">{{ account.problem }}</p>
-    <p v-if="account && !account.signedIn" class="hint small">
-      Accounts are made in the other greybots apps (GreyScout, Preflight); a lead or admin gives each a Diagnostics role on the People page.
+    <p v-if="account && !account.signedIn" class="hint small"
+      title="Accounts are made in the other greybots apps (GreyScout, Preflight); a lead or admin gives each a Diagnostics role on the People page.">
       <!-- Passwords are reset on the hub; this opens it in the browser. -->
       <a id="forgot-password" :href="forgotPasswordUrl" target="_blank" rel="noreferrer">Forgot your password?</a>
     </p>

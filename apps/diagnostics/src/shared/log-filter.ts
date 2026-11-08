@@ -9,18 +9,34 @@ export interface LogFilter {
   // Only logs from a match on the field (practice, qualification or
   // playoff): ones FMS named. Pit, test and practice-field runs aren't.
   realMatches: boolean;
+  // One robot's (team's) logs, frc973, or null for every robot's. Left out
+  // by filters saved before there was one: every robot's.
+  robot?: string | null;
 }
 
-export const noLogFilter: LogFilter = { event: null, realMatches: false };
+export const noLogFilter: LogFilter = { event: null, realMatches: false, robot: null };
 
 const sameEvent = (a: string, b: string) => a.toUpperCase() === b.toUpperCase();
 
 export function filterLogs(logs: SignalLogFile[], filter: LogFilter): SignalLogFile[] {
   return logs.filter((log) => {
+    if (filter.robot && log.robot !== filter.robot) return false;
     if ((filter.realMatches || filter.event) && !log.match) return false;
     if (filter.event && !sameEvent(log.match!.event, filter.event)) return false;
     return true;
   });
+}
+
+// The robots (teams) the logs are of: teams by number, then any other name.
+export function robotsIn(logs: { robot: string }[]): string[] {
+  const team = (robot: string) => Number(/^frc(\d+)$/i.exec(robot)?.[1] ?? Infinity);
+  return [...new Set(logs.map((log) => log.robot).filter(Boolean))].sort((a, b) => team(a) - team(b) || (team(a) === Infinity ? a.localeCompare(b) : 0));
+}
+
+// A robot as people say it: frc973 is Team 973.
+export function robotLabel(robot: string): string {
+  const team = /^frc(\d+)$/i.exec(robot);
+  return team ? `Team ${team[1]}` : robot;
 }
 
 // The events the logs are from, upper-cased, in order.
