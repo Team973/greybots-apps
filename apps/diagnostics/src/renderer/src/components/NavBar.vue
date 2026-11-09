@@ -46,6 +46,7 @@ const interrupted = computed(() => !!offload.value && !offload.value.running && 
     <span class="spacer"></span>
     <RouterLink to="/signals" class="nav-button">Signals</RouterLink>
     <RouterLink to="/reports" class="nav-button">Reports</RouterLink>
+    <RouterLink to="/autos" class="nav-button">Autos</RouterLink>
     <RouterLink to="/import" class="nav-button">Log Import</RouterLink>
     <RouterLink to="/export" class="nav-button">Log Export</RouterLink>
     <RouterLink to="/settings" class="nav-button">Settings</RouterLink>

@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
+import AutosView from '@/views/AutosView.vue';
 import LogExportView from '@/views/LogExportView.vue';
 import LogImportView from '@/views/LogImportView.vue';
 import PrintReportView from '@/views/PrintReportView.vue';
@@ -22,6 +23,8 @@ const router = createRouter({
     { path: '/', redirect: '/signals' },
     { path: '/signals', name: 'signals', component: SignalsView, meta: { title: 'Signals' } },
     { path: '/reports', name: 'reports', component: ReportsView, meta: { title: 'Reports' } },
+    // Autos compared: several robots' autonomous paths on one field.
+    { path: '/autos', name: 'autos', component: AutosView, meta: { title: 'Autos' } },
     // Logs in: from the robot, files, and USB drives.
     { path: '/import', name: 'log-import', component: LogImportView, meta: { title: 'Log Import' } },
     // Logs out: to USB drives, and the data folder.
