@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 
-import { phaseClock, phaseLabels, type MatchPhase } from '@shared/events';
+import { phaseClock, phaseLabels, type ClockMode, type MatchPhase } from '@shared/events';
 import type { SignalSeries } from '@shared/signals';
 import type { ChartSnapshot } from '@/chart-image';
 
@@ -48,7 +48,9 @@ const props = withDefaults(defineProps<{
   selectedMarker?: string | null;
   // What the pinned readout's called: 'Pinned at', or while playing back, 'Playing at'.
   pinLabel?: string;
-}>(), { markers: () => [], phases: () => [], selectedMarker: null, pinLabel: 'Pinned at' });
+  // How times in a phase read (a report's choice); left out, elapsed with no word.
+  clockMode?: ClockMode;
+}>(), { markers: () => [], phases: () => [], selectedMarker: null, pinLabel: 'Pinned at', clockMode: undefined });
 
 // The pinned moment, in seconds, or null. The page moves it too (playing
 // back, jumping to an event).
@@ -286,7 +288,7 @@ const shownPhases = computed(() => props.phases
     return { ...p, x: from, width: Math.max(0, to - from), label: phaseLabels[p.name] };
   }));
 
-const phaseText = (t: number) => phaseClock(props.phases, t);
+const phaseText = (t: number) => phaseClock(props.phases, t, props.clockMode);
 
 // Every signal's value at time t, from what's been read (the span shown).
 function rowsAt(t: number) {

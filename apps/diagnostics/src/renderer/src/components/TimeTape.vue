@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
-import { phaseClock, tapeLabels, tapeSegments, type MatchPhase, type TapeKind } from '@shared/events';
+import { phaseClock, tapeLabels, tapeSegments, type ClockMode, type MatchPhase, type TapeKind } from '@shared/events';
 
 // The playback tape, in two parts, both coloured by what the robot was
 // doing (disabled, auto, teleop, endgame):
@@ -21,6 +21,8 @@ const props = defineProps<{
   time: number | null;
   phases: MatchPhase[];
   enabled: [number, number][];
+  // How times in a phase read (a report's choice); left out, elapsed with no word.
+  clockMode?: ClockMode;
 }>();
 
 export type TapeGesture = 'wheel' | 'pan' | 'select' | 'all';
@@ -172,7 +174,7 @@ function onOverviewUp(event: PointerEvent) {
 }
 
 const clock = (t: number) => {
-  const phase = phaseClock(props.phases, t);
+  const phase = phaseClock(props.phases, t, props.clockMode);
   return `${t.toFixed(2)} s${phase ? ` · ${phase}` : ''}`;
 };
 const spanText = (seconds: number) => (seconds >= 120 ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s` : `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`);

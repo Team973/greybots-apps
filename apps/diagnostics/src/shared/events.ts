@@ -134,12 +134,22 @@ export function brownoutCount(events: LogEvent[]): { brownouts: number; flags: n
 }
 
 // "Teleop 1:05": the phase a time is in and how far into it, or ''.
-export function phaseClock(phases: MatchPhase[], t: number): string {
+// How a phase's clock reads: time into the phase ("Teleop 0:42 elapsed"),
+// or time left in it as the match clock counts down ("Teleop 1:38
+// remaining"). Without a mode, elapsed with no word, as the Signals page shows it.
+export type ClockMode = 'elapsed' | 'remaining';
+
+export function phaseClock(phases: MatchPhase[], t: number, mode?: ClockMode): string {
   const at = phaseAt(phases, t);
   if (!at) return '';
-  const seconds = Math.max(0, at.into);
-  return `${phaseLabels[at.phase.name]} ${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+  // Left: rounded up, as a countdown shows it (0:01 until it's over).
+  const seconds = mode === 'remaining' ? Math.ceil(Math.max(0, at.phase.end - t) - 1e-9) : Math.floor(Math.max(0, at.into));
+  const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  return `${phaseLabels[at.phase.name]} ${time}${mode ? ` ${mode}` : ''}`;
 }
+
+// Reports of a match count down (as the match clock does); others count up.
+export const defaultClockMode = (isMatch: boolean): ClockMode => (isMatch ? 'remaining' : 'elapsed');
 
 // The battery's problems: brownouts, and faults, alerts and messages about
 // the battery, its voltage sagging (a device's undervoltage or supply
