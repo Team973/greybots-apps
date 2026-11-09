@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
-import { eventKinds, phaseAt, phaseClock, tapeLabels, type LogEvent, type TapeKind } from '@shared/events';
+import { defaultClockMode, eventKinds, phaseAt, phaseClock, tapeLabels, type ClockMode, type LogEvent, type TapeKind } from '@shared/events';
 import type { RenderedSection, Report, ReportLine, ReportPieSlice } from '@shared/library';
 import type { SignalSeries } from '@shared/signals';
 import PieChart, { sharePercent, type DonutSlice } from '@/components/PieChart.vue';
@@ -23,6 +23,12 @@ import type { SymmetryRow } from '@shared/symmetry';
 // in the light theme, sized for the page, kept whole across pages.
 
 const props = defineProps<{ report: Report; paper?: boolean }>();
+
+// How times in a phase read ("Teleop 1:38 remaining", or "0:42 elapsed"):
+// a match's report counts down as the match clock does, others count up.
+// Switched in the report's head; each report opened starts at its default.
+const clockMode = ref<ClockMode>(defaultClockMode(!!props.report.match));
+watch(() => props.report.id, () => (clockMode.value = defaultClockMode(!!props.report.match)));
 const viewMode = useViewModeStore();
 const dark = computed(() => !props.paper && viewMode.isDarkMode);
 
@@ -198,7 +204,7 @@ const binCount = (camera: VisionCamera, bin: number, state: VisionState) => {
 // How long a cell is (reports made before cells were a second have longer).
 const binLength = (bins: [number, number][]) => `${Number((bins[0][1] - bins[0][0]).toFixed(1))} s`;
 const binTime = (bin: [number, number]) => {
-  const clock = phaseClock(props.report.phases, bin[0]);
+  const clock = phaseClock(props.report.phases, bin[0], clockMode.value);
   return `${bin[0].toFixed(0)}–${bin[1].toFixed(0)} s${clock ? ` · ${clock}` : ''}`;
 };
 
@@ -415,7 +421,7 @@ const percent = (share: number | null) => (share === null ? '—' : `${Math.roun
 const meters = (value: number | null) => (value === null ? '—' : `${value.toFixed(2)} m`);
 
 const at = (t: number) => {
-  const clock = phaseClock(props.report.phases, t);
+  const clock = phaseClock(props.report.phases, t, clockMode.value);
   return clock ? `${t.toFixed(1)} s · ${clock}` : `${t.toFixed(1)} s`;
 };
 </script>
@@ -423,7 +429,14 @@ const at = (t: number) => {
 <template>
   <article class="report" :class="{ paper }">
     <header class="report-head">
-      <h2>{{ report.name }}</h2>
+      <div class="head-row">
+        <h2>{{ report.name }}</h2>
+        <!-- Times in the match's phases: time left in each, or time into it. -->
+        <div v-if="report.phases.length && !paper" id="clock-mode" class="clock-toggle" role="radiogroup" aria-label="Phase times">
+          <button v-for="mode in (['remaining', 'elapsed'] as const)" :key="mode" type="button" role="radio" :aria-checked="clockMode === mode"
+            :class="{ on: clockMode === mode }" @click="clockMode = mode">{{ mode === 'remaining' ? 'Remaining' : 'Elapsed' }}</button>
+        </div>
+      </div>
       <p class="hint small">
         Run {{ formatTime(report.generated) }} · {{ report.by }} · from the template “{{ report.template.name }}”
       </p>
@@ -465,9 +478,9 @@ const at = (t: number) => {
         <h4>{{ section.title }}</h4>
         <!-- Framed, so it's plain where scrolling zooms the chart and where it scrolls the page. -->
         <div v-if="section.lines.length" class="chart-frame">
-          <PlotChart v-model:pin="pins[i]" :lines="charts[i]!.lines" :axes="charts[i]!.axes" :view="viewOf(i, section)" :full="section.view"
+          <PlotChart :clock-mode="clockMode" v-model:pin="pins[i]" :lines="charts[i]!.lines" :axes="charts[i]!.axes" :view="viewOf(i, section)" :full="section.view"
             :height="paper ? 240 : 300" :phases="report.phases" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
-          <TimeTape v-if="!paper" :full="section.view" :view="viewOf(i, section)" :time="pins[i] ?? null" :phases="report.phases"
+          <TimeTape :clock-mode="clockMode" v-if="!paper" :full="section.view" :view="viewOf(i, section)" :time="pins[i] ?? null" :phases="report.phases"
             :enabled="report.spans" @seek="(t) => seek(i, section, t)" @zoom="(next, gesture) => zoom(i, section, next, gesture)" />
         </div>
         <p v-else class="hint small">None of this chart's signals are in the log.</p>
@@ -775,14 +788,14 @@ const at = (t: number) => {
           <template v-if="visionCharts[i]">
             <div class="chart-frame">
               <h4 class="sub">Distance from the fused pose</h4>
-              <PlotChart :lines="visionCharts[i]!.distance" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
+              <PlotChart :clock-mode="clockMode" :lines="visionCharts[i]!.distance" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
                 :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
                 @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
               <h4 class="sub">Heading from the fused pose</h4>
-              <PlotChart :lines="visionCharts[i]!.heading" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
+              <PlotChart :clock-mode="clockMode" :lines="visionCharts[i]!.heading" :axes="gapAxes" :view="visionView(i)" :full="visionCharts[i]!.full"
                 :height="paper ? 180 : 220" :phases="report.phases" :pin="visionPin(i)"
                 @update:pin="visionPins[i] = $event" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
-              <TimeTape v-if="!paper" :full="visionCharts[i]!.full" :view="visionView(i)" :time="visionPin(i)" :phases="report.phases"
+              <TimeTape :clock-mode="clockMode" v-if="!paper" :full="visionCharts[i]!.full" :view="visionView(i)" :time="visionPin(i)" :phases="report.phases"
                 :enabled="report.spans" @seek="(t) => (visionPins[i] = t)" @zoom="(next, gesture) => visionZoom(i, next, gesture)" />
             </div>
             <p class="legend small">
@@ -837,6 +850,38 @@ const at = (t: number) => {
 .report-head h2 {
   margin: 0 0 4px;
   font-size: 1.25rem;
+}
+
+.head-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+/* Remaining | Elapsed, as one control. */
+.clock-toggle {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.clock-toggle button {
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.clock-toggle button.on {
+  background: rgba(42, 120, 214, 0.18);
+  font-weight: 600;
 }
 
 .small {

@@ -2,7 +2,7 @@
 // colours, which are routine, and notes as events, so they're marked,
 // listed and jumped to like the rest.
 
-import { phaseClock, type Annotation, type EventKind, type EventSeverity, type LogEvent, type MatchPhase } from '@shared/events';
+import { phaseClock, type Annotation, type ClockMode, type EventKind, type EventSeverity, type LogEvent, type MatchPhase } from '@shared/events';
 
 // Status colours, kept for events and used for nothing else: red for
 // errors, amber for warnings, blue for information. Every event is named beside its mark, so
@@ -71,7 +71,7 @@ export function shownEvent(event: LogEvent, filter: EventFilter): boolean {
 }
 
 // "123.4 s · Teleop 0:42".
-export function eventTime(t: number, phases: MatchPhase[]): string {
-  const clock = phaseClock(phases, t);
+export function eventTime(t: number, phases: MatchPhase[], mode?: ClockMode): string {
+  const clock = phaseClock(phases, t, mode);
   return clock ? `${t.toFixed(1)} s · ${clock}` : `${t.toFixed(1)} s`;
 }

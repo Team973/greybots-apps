@@ -1,7 +1,7 @@
 // Log review: merging spans, modes and match phases, faults, notes' files.
 
 import assert from 'node:assert/strict';
-import { brownoutCount, matchFit, mergeSpans, phaseClock, phaseAt, tapeSegments, type LogEvent } from '@shared/events';
+import { brownoutCount, defaultClockMode, matchFit, mergeSpans, phaseClock, phaseAt, tapeSegments, type LogEvent } from '@shared/events';
 import { brownoutDetail, enabledSpans, eventsFrom, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
 import { notesPathSegments } from '@shared/storage-layout';
 const series = (times: number[], values: number[] | string[]) => ({ key: 'k', kind: typeof values[0] === 'string' ? 'string' : 'number', times: Float64Array.from(times), values: typeof values[0] === 'string' ? values : Float64Array.from(values as number[]), downsampled: false, stats: null }) as never;
@@ -24,6 +24,14 @@ assert.equal(matchPhases([{ time: 0, mode: 'teleop' }, { time: 50, mode: 'disabl
 assert.equal(phaseAt(phases, 250)!.phase.name, 'endgame');
 assert.equal(phaseClock(phases, 195), 'Teleop 1:05');
 assert.equal(phaseClock(phases, 20), '');
+// A report's choice: time into the phase, or left in it (a countdown, rounded up).
+assert.equal(phaseClock(phases, 195, 'elapsed'), 'Teleop 1:05 elapsed');
+assert.equal(phaseClock(phases, 195, 'remaining'), 'Teleop 1:15 remaining');
+assert.equal(phaseClock(phases, 112.5, 'remaining'), 'Auto 0:13 remaining');
+assert.equal(phaseClock(phases, 260, 'remaining'), 'Endgame 0:10 remaining', 'the endgame, not teleop');
+assert.equal(phaseClock(phases, 270, 'remaining'), 'Endgame 0:00 remaining');
+assert.equal(defaultClockMode(true), 'remaining', 'a match counts down');
+assert.equal(defaultClockMode(false), 'elapsed');
 // Faults.
 assert.equal(faultTitle('TalonFX-59/Fault_SupplyCurrLimit'), 'TalonFX-59: supply current limit');
 assert.equal(faultTitle('TalonFX-60/Fault_RotorFault1'), 'TalonFX-60: rotor fault1');
