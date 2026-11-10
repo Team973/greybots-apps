@@ -213,6 +213,59 @@ export function matchFit(phases: MatchPhase[], full: [number, number], margin = 
   return end > start ? [start, end] : null;
 }
 
+// Zooming the tape to fit: a phase, the stretch under the pointer, the
+// match, or the whole log. A phase gets a second either side so its edges
+// show.
+export const phaseFitMarginSeconds = 1;
+export interface TapeZoom {
+  label: string;
+  view: [number, number];
+}
+const within = (full: [number, number], start: number, end: number, margin: number): [number, number] | null => {
+  const from = Math.max(full[0], start - margin);
+  const to = Math.min(full[1], end + margin);
+  return to > from ? [from, to] : null;
+};
+
+// What right-clicking the tape at `t` offers: the phase there (and the
+// teleop an endgame is part of), or the disabled or enabled stretch; then
+// the match and the whole log.
+export function tapeZoomChoices(full: [number, number], phases: MatchPhase[], enabled: [number, number][], t: number): TapeZoom[] {
+  const choices: TapeZoom[] = [];
+  const add = (label: string, view: [number, number] | null) => {
+    if (view && !choices.some((c) => c.view[0] === view[0] && c.view[1] === view[1])) choices.push({ label, view });
+  };
+  const segment = tapeSegments(full, phases, enabled).find((s) => t >= s.start && t <= s.end);
+  if (segment) {
+    if (segment.kind === 'disabled' || segment.kind === 'enabled') {
+      add(`Zoom to this ${segment.kind} stretch`, within(full, segment.start, segment.end, 0));
+    } else {
+      // The whole phase, not just the piece under the pointer (teleop's
+      // cut in two around an endgame on the tape).
+      const here = phases.filter((p) => t >= p.start && t <= p.end);
+      const order = (p: MatchPhase) => (p.name === segment.kind ? 0 : 1);
+      for (const phase of here.sort((a, b) => order(a) - order(b))) {
+        add(`Zoom to ${phaseLabels[phase.name].toLowerCase()}`, within(full, phase.start, phase.end, phaseFitMarginSeconds));
+      }
+    }
+  }
+  add('Zoom to the match', matchFit(phases, full));
+  add('Show all', [full[0], full[1]]);
+  return choices;
+}
+
+// Double-clicking the tape at `t`: the phase or stretch there (the first
+// of tapeZoomChoices); when that's already what's shown, out to the match;
+// when that's shown too (or there's no match), everything.
+export function tapeDoubleClickView(full: [number, number], phases: MatchPhase[], enabled: [number, number][],
+  view: [number, number], t: number): [number, number] {
+  const showing = (span: [number, number]) => Math.abs(view[0] - span[0]) < 1e-3 && Math.abs(view[1] - span[1]) < 1e-3;
+  const here = tapeZoomChoices(full, phases, enabled, t)[0]?.view;
+  if (here && !showing(here)) return here;
+  const match = matchFit(phases, full);
+  return match && !showing(match) ? match : [full[0], full[1]];
+}
+
 // The phase a time is in, and how far into it.
 export function phaseAt(phases: MatchPhase[], t: number): { phase: MatchPhase; into: number } | null {
   // Endgame is inside teleop: it wins.

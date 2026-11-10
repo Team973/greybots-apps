@@ -1,7 +1,7 @@
 // Log review: merging spans, modes and match phases, faults, notes' files.
 
 import assert from 'node:assert/strict';
-import { brownoutCount, defaultClockMode, matchFit, mergeSpans, phaseClock, phaseAt, tapeSegments, type LogEvent } from '@shared/events';
+import { brownoutCount, defaultClockMode, matchFit, mergeSpans, phaseClock, phaseAt, tapeDoubleClickView, tapeSegments, tapeZoomChoices, type LogEvent } from '@shared/events';
 import { brownoutDetail, enabledSpans, eventsFrom, faultSeverity, faultTitle, matchPhases, hootModes, modeEvents, spansWhere } from '@main/signals/events';
 import { notesPathSegments } from '@shared/storage-layout';
 const series = (times: number[], values: number[] | string[]) => ({ key: 'k', kind: typeof values[0] === 'string' ? 'string' : 'number', times: Float64Array.from(times), values: typeof values[0] === 'string' ? values : Float64Array.from(values as number[]), downsampled: false, stats: null }) as never;
@@ -120,3 +120,34 @@ assert.deepEqual(enabledSpans([{ time: 0, mode: 'disabled' }], 100), []);
   // Not a match (no endgame): every phase.
   assert.deepEqual(matchFit([{ name: 'teleop' as const, start: 50, end: 60 }, { name: 'teleop' as const, start: 80, end: 90 }], [0, 100]), [45, 95]);
 }
+
+// Zooming the tape to fit: right-clicking offers the phase there (a second
+// either side), the teleop an endgame is in, a stretch, the match, everything.
+{
+  const phases = [
+    { name: 'auto' as const, start: 100, end: 120 },
+    { name: 'teleop' as const, start: 123, end: 263 },
+    { name: 'endgame' as const, start: 233, end: 263 }
+  ];
+  const enabled: [number, number][] = [[100, 120], [123, 263]];
+  const at = (t: number) => tapeZoomChoices([0, 400], phases, enabled, t).map((c) => [c.label, c.view]);
+  assert.deepEqual(at(110), [['Zoom to auto', [99, 121]], ['Zoom to the match', [95, 268]], ['Show all', [0, 400]]]);
+  assert.deepEqual(at(150)[0], ['Zoom to teleop', [122, 264]]);
+  assert.deepEqual(at(250).slice(0, 2), [['Zoom to endgame', [232, 264]], ['Zoom to teleop', [122, 264]]]);
+  assert.deepEqual(at(50)[0], ['Zoom to this disabled stretch', [0, 100]]);
+  // Not past the log.
+  assert.deepEqual(tapeZoomChoices([100.5, 300], phases, enabled, 110)[0].view, [100.5, 121]);
+  // No phases: a stretch and everything.
+  assert.deepEqual(tapeZoomChoices([0, 50], [], [[10, 20]], 15).map((c) => c.label), ['Zoom to this enabled stretch', 'Show all']);
+  // Double-click: the phase or stretch there, then out to the match, and
+  // everything only once the match is shown (or there's none).
+  const dbl = (view: [number, number], t: number) => tapeDoubleClickView([0, 400], phases, enabled, view, t);
+  assert.deepEqual(dbl([0, 400], 110), [99, 121], 'auto');
+  assert.deepEqual(dbl([0, 400], 150), [122, 264], 'teleop');
+  assert.deepEqual(dbl([0, 400], 250), [232, 264], 'endgame');
+  assert.deepEqual(dbl([0, 400], 50), [0, 100], 'disabled');
+  assert.deepEqual(dbl([99, 121], 110), [95, 268], 'auto again: the match');
+  assert.deepEqual(dbl([232, 264], 250), [95, 268], 'endgame again: the match');
+  assert.deepEqual(dbl([95, 268], 110), [99, 121], 'from the match: the phase');
+  assert.deepEqual(tapeDoubleClickView([0, 50], [], [[10, 20]], [0, 50], 15), [10, 20]);
+  assert.deepEqual(tapeDoubleClickView([0, 50], [], [[10, 20]], [10, 20], 15), [0, 50], 'no match: everything');}

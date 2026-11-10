@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 
-import { phaseClock, tapeLabels, tapeSegments, type ClockMode, type MatchPhase, type TapeKind } from '@shared/events';
+import { phaseClock, tapeDoubleClickView, tapeLabels, tapeSegments, tapeZoomChoices, type ClockMode, type MatchPhase, type TapeKind, type TapeZoom } from '@shared/events';
 
 // The playback tape, in two parts, both coloured by what the robot was
 // doing (disabled, auto, teleop, endgame):
@@ -10,7 +10,8 @@ import { phaseClock, tapeLabels, tapeSegments, type ClockMode, type MatchPhase, 
 //   or click elsewhere on the strip to move it there;
 // - the tape, a strip of film of the span shown, zoomed as it is: click or
 //   drag to move the moment shown; scroll to zoom, Shift+scroll to pan,
-//   double-click for everything.
+//   double-click to fit the phase or stretch there (again for everything),
+//   right-click for a menu of those, the match and everything.
 // The span is the line chart's: zooming either zooms both, and every tab
 // (the line chart, the field, the 3D robot, the console) shows the moment.
 
@@ -121,6 +122,37 @@ function onWheel(event: WheelEvent) {
   emit('zoom', clamp([at - (at - props.view[0]) * factor, at + (props.view[1] - at) * factor]), 'wheel');
 }
 const showAll = () => emit('zoom', [props.full[0], props.full[1]], 'all');
+// A span to fit: everything is 'all', as the Show all button; anything
+// else a chosen span.
+function fit(view: [number, number]) {
+  if (view[0] <= props.full[0] && view[1] >= props.full[1]) showAll();
+  else emit('zoom', clamp(view), 'select');
+}
+const onDoubleClick = (event: MouseEvent) =>
+  fit(tapeDoubleClickView(props.full, props.phases, props.enabled, props.view, tapeTime(event.clientX)));
+
+// Right-click: fit the phase (or stretch) there, the match, or everything.
+const zoomMenu = ref<{ x: number; y: number; choices: TapeZoom[] } | null>(null);
+function openZoomMenu(event: MouseEvent) {
+  event.preventDefault();
+  const choices = tapeZoomChoices(props.full, props.phases, props.enabled, tapeTime(event.clientX));
+  // Kept inside the window: each choice is about 30 px tall.
+  zoomMenu.value = {
+    x: Math.min(event.clientX, window.innerWidth - 220),
+    y: Math.min(event.clientY, window.innerHeight - 12 - choices.length * 32),
+    choices
+  };
+}
+const closeZoomMenu = () => (zoomMenu.value = null);
+function chooseZoom(choice: TapeZoom) {
+  closeZoomMenu();
+  fit(choice.view);
+}
+const onMenuKey = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && zoomMenu.value) closeZoomMenu();
+};
+window.addEventListener('keydown', onMenuKey);
+onUnmounted(() => window.removeEventListener('keydown', onMenuKey));
 
 // The arrow keys step a tenth of a second (Shift: a second); Home and End;
 // + and - zoom about the moment.
@@ -199,7 +231,7 @@ const spanText = (seconds: number) => (seconds >= 120 ? `${Math.floor(seconds / 
     <div ref="tape" class="tape" role="slider" tabindex="0" aria-label="Time" :aria-valuemin="full[0]" :aria-valuemax="full[1]"
       :aria-valuenow="time ?? undefined" :aria-valuetext="time === null ? 'Nothing pinned' : clock(time)"
       @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp" @pointerleave="hover = null"
-      @wheel.prevent="onWheel" @dblclick="showAll" @keydown="onKey">
+      @wheel.prevent="onWheel" @dblclick="onDoubleClick" @contextmenu="openZoomMenu" @keydown="onKey">
       <div class="film">
         <div v-for="(segment, i) in tapeSegmentsShown" :key="i" class="segment" :class="segment.kind"
           :style="{ left: segment.left, width: segment.width, background: tapeColors[segment.kind] }" :title="segment.title">
@@ -220,6 +252,15 @@ const spanText = (seconds: number) => (seconds >= 120 ? `${Math.floor(seconds / 
       </span>
       <span>{{ clock(view[1]) }}</span>
     </div>
+
+    <Teleport to="body">
+      <div v-if="zoomMenu" class="menu-backdrop" @click="closeZoomMenu" @contextmenu.prevent="closeZoomMenu" @wheel="closeZoomMenu">
+        <div class="zoom-menu" role="menu" :style="{ left: `${zoomMenu.x}px`, top: `${zoomMenu.y}px` }" @click.stop>
+          <button v-for="choice in zoomMenu.choices" :key="choice.label" type="button" role="menuitem"
+            :class="{ divided: choice.label === 'Zoom to the match' }" @click="chooseZoom(choice)">{{ choice.label }}</button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -415,6 +456,49 @@ const spanText = (seconds: number) => (seconds >= 120 ? `${Math.floor(seconds / 
   font-size: 0.75rem;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
+}
+
+/* --- The right-click menu --- */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.zoom-menu {
+  position: fixed;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid rgba(127, 127, 127, 0.6);
+  border-radius: 8px;
+  background: var(--tile-background-color);
+  color: var(--text-color, inherit);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.zoom-menu button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.zoom-menu button:hover,
+.zoom-menu button:focus-visible {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+.zoom-menu button.divided {
+  margin-top: 2px;
+  border-top: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 0 0 6px 6px;
 }
 
 .all-button {
