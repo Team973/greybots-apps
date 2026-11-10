@@ -2,7 +2,7 @@
 // path to another alliance or side the way the season's field is symmetric.
 
 import assert from 'node:assert/strict';
-import { movePose, movesFor, placementOf, poseAt, symmetryFor, trailBefore, type AutoPath } from '@shared/auto-compare';
+import { delayPath, movePose, movesFor, placementOf, poseAt, symmetryFor, trailBefore, type AutoPath } from '@shared/auto-compare';
 import type { Pose } from '@shared/plots';
 
 const field = { length: 16.541, width: 8.069 };
@@ -69,6 +69,18 @@ assert.equal(symmetryFor('2024'), 'mirror');
   assert.equal(poseAt(path, 9)!.x, 4, 'after its last: where it ended');
   assert.equal(poseAt({ times: [], poses: [] }, 1), null);
   assert.deepEqual(trailBefore(path, 2.5, 1.5).map((p) => p.x), [2, 3]);
+}
+
+// --- Started later: waiting where it began ---
+{
+  const path: AutoPath = { times: [0, 1, 2], poses: [pose(1, 1), pose(2, 1), pose(3, 1)] };
+  const late = delayPath(path, 2.5);
+  assert.deepEqual(late.times, [2.5, 3.5, 4.5]);
+  assert.equal(poseAt(late, 1)!.x, 1, 'still at the start');
+  assert.equal(poseAt(late, 3.6)!.x, 2);
+  assert.equal(delayPath(path, 0), path);
+  assert.equal(delayPath(path, -3), path, 'no earlier than auto');
+  assert.equal(delayPath(path, NaN), path);
 }
 
 console.log('auto-compare: ok');

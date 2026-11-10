@@ -105,6 +105,14 @@ export interface AutoPath {
   poses: Pose[];
 }
 
+// A path started `seconds` later: waiting where it began until then, to
+// try autos with different delays against each other. Not before auto
+// starts (a negative delay is none).
+export function delayPath(path: AutoPath, seconds: number): AutoPath {
+  const delay = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  return delay === 0 ? path : { times: path.times.map((t) => t + delay), poses: path.poses };
+}
+
 // Where it was `t` seconds into its auto: the last pose at or before, or
 // the first before it had one, or null with none.
 export function poseAt(path: AutoPath, t: number): Pose | null {
