@@ -4,6 +4,7 @@ import '@material/web/button/outlined-button';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 
 import {
+  delayPath,
   describePlacement,
   movePose,
   movesFor,
@@ -41,6 +42,9 @@ interface Row {
   // Where to try it: an alliance and side, or as it ran (null).
   alliance: Alliance | null;
   side: FieldSide | null;
+  // Seconds after auto starts that this robot sets off (waiting where it
+  // began until then), to try combinations of delays.
+  offset: number;
   color: number;
   hidden: boolean;
 }
@@ -56,12 +60,16 @@ interface Loaded {
 }
 
 const maxRows = 6;
+// The longest delay, seconds: an auto period.
+const maxOffset = 20;
 const storageKey = 'autos.rows';
 
 function loadRows(): Row[] {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) ?? '[]') as Row[];
-    return Array.isArray(saved) ? saved.filter((r) => r && typeof r.id === 'string').slice(0, maxRows) : [];
+    return Array.isArray(saved)
+      ? saved.filter((r) => r && typeof r.id === 'string').slice(0, maxRows).map((r) => ({ ...r, offset: Number.isFinite(r.offset) ? r.offset : 0 }))
+      : [];
   } catch {
     return [];
   }
@@ -155,6 +163,7 @@ function addRow() {
     key: '',
     alliance: null,
     side: null,
+    offset: 0,
     color: [...Array(palette.light.length).keys()].find((c) => !used.has(c)) ?? 0,
     hidden: false
   });
@@ -182,14 +191,22 @@ const moved = computed(() => rows.value.map((row) => {
   const start = data.path.poses[0];
   const ran = placementOf(start, field.value);
   const moves = movesFor(start, field.value, symmetryFor(season.value), { alliance: row.alliance, side: row.side });
-  const path: AutoPath = { times: data.path.times, poses: data.path.poses.map((p) => movePose(p, moves, field.value)) };
+  const path = delayPath({ times: data.path.times, poses: data.path.poses.map((p) => movePose(p, moves, field.value)) }, row.offset);
   return { ran, now: placementOf(path.poses[0], field.value), path };
 }));
 
 // --- Playing them together, from each auto's start ---
 
 const t = ref(0);
-const longest = computed(() => Math.max(15, ...rows.value.map((row) => loaded[row.id]?.autoLength ?? 0)));
+// Long enough for every auto, after its delay.
+const longest = computed(() => Math.max(15, ...rows.value.map((row) => {
+  const length = loaded[row.id]?.autoLength;
+  return length ? length + Math.max(0, row.offset || 0) : 0;
+})));
+function setOffset(row: Row, value: string) {
+  const seconds = Number(value);
+  row.offset = Number.isFinite(seconds) ? Math.min(maxOffset, Math.max(0, seconds)) : 0;
+}
 const playing = ref(false);
 let frame = 0;
 let last = 0;
@@ -265,6 +282,7 @@ onMounted(async () => {
           <th>Pose</th>
           <th>Alliance</th>
           <th>Side</th>
+          <th title="Seconds after auto starts that the robot sets off">Start offset</th>
           <th></th>
         </tr>
       </thead>
@@ -303,6 +321,11 @@ onMounted(async () => {
               <option value="left">Left</option>
               <option value="right">Right</option>
             </select>
+          </td>
+          <td class="offset">
+            <input type="number" :value="row.offset" min="0" :max="maxOffset" step="0.5" aria-label="Start offset, seconds"
+              title="Seconds after auto starts that the robot sets off" @change="setOffset(row, ($event.target as HTMLInputElement).value)" />
+            <span class="hint small">s</span>
           </td>
           <td class="status">
             <span v-if="loaded[row.id]?.state === 'loading'" class="badge busy">Reading…</span>
@@ -370,6 +393,22 @@ onMounted(async () => {
   border-radius: 6px;
   font: inherit;
   font-size: 0.9rem;
+  color: inherit;
+  background: var(--tile-background-color);
+  border: 1px solid rgba(127, 127, 127, 0.6);
+}
+
+.offset {
+  white-space: nowrap;
+}
+
+.offset input {
+  width: 64px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
   color: inherit;
   background: var(--tile-background-color);
   border: 1px solid rgba(127, 127, 127, 0.6);
