@@ -6,6 +6,7 @@ import type { AccountStatus } from './account';
 import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { ImportStatus, ImportSummary } from './import';
 import type { Annotation, SessionEvents } from './events';
+import type { EventZipOptions, EventZipStatus, EventZipSummary } from './event-zip';
 import type { LibraryItem, LibraryItemOf, LibraryKind, Report, ReportSummary } from './library';
 import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
@@ -206,6 +207,15 @@ export interface DiagnosticsApi {
   cancelUsbExport(): Promise<void>;
   // What's been copied to drives since the app opened, newest first.
   getRecentExports(): Promise<ExportedLog[]>;
+  // Zips an event's logs (event-zip.ts) where the person picks: a save
+  // dialog first. Resolves when done, to how it went, a reason it didn't
+  // start, or null if the dialog was cancelled.
+  saveEventZip(options: EventZipOptions): Promise<EventZipSummary | string | null>;
+  getEventZipStatus(): Promise<EventZipStatus>;
+  // Stops a zip part way; what was written is removed.
+  cancelEventZip(): Promise<void>;
+  // Shows the last zip made in the file manager.
+  showEventZip(): Promise<void>;
   getSignalLogs(): Promise<SignalLogFile[]>;
   // Moves a log's files to the Recycle Bin and forgets its notes and
   // caches. Kept: Driver Station logs another log also has.
@@ -309,6 +319,10 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'chooseUsbFolder',
   'cancelUsbExport',
   'getRecentExports',
+  'saveEventZip',
+  'getEventZipStatus',
+  'cancelEventZip',
+  'showEventZip',
   'getSignalLogs',
   'deleteLog',
   'openSignalLog',

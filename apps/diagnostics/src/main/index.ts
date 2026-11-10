@@ -32,6 +32,7 @@ import {
 } from './signals-service';
 import { dataDirectory, ensureStorageLayout, openDataDirectory, storageInfo } from './storage';
 import { cancelUsbExport, chooseUsbFolder, exportToUsb, recentExports, usbStatus, watchUsbDrives } from './usb-service';
+import { cancelEventZip, eventZipStatus, saveEventZip } from './event-zip-service';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -219,6 +220,19 @@ const handlers: DiagnosticsApi = {
   },
   async getRecentExports() {
     return recentExports();
+  },
+  async saveEventZip(options) {
+    return saveEventZip(options && typeof options === 'object' ? options : {});
+  },
+  async getEventZipStatus() {
+    return eventZipStatus();
+  },
+  async cancelEventZip() {
+    cancelEventZip();
+  },
+  async showEventZip() {
+    const zip = eventZipStatus().last;
+    if (zip && !zip.cancelled && !zip.problem) shell.showItemInFolder(zip.path);
   },
   async chooseDataDirectory() {
     const options: Electron.OpenDialogOptions = {
