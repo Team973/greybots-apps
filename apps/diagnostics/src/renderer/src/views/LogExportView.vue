@@ -4,8 +4,18 @@ import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import NumberInput from '@greybots/common/components/Number.vue';
 
+import {
+  defaultEventZipOptions,
+  eventZipFiles,
+  eventZipName,
+  logsForEventZip,
+  type EventZipOptions,
+  type EventZipStatus,
+  type EventZipSummary
+} from '@shared/event-zip';
 import type { SignalLogFile } from '@shared/ipc';
-import { eventsIn } from '@shared/log-filter';
+import { eventsIn, robotLabel, robotsIn } from '@shared/log-filter';
+import { robotFolderName } from '@shared/offload';
 import {
   defaultUsbExportFilter,
   logsToExport,
@@ -18,6 +28,7 @@ import {
   type UsbStatus
 } from '@shared/usb';
 import { formatBytes, formatTime } from '@/format';
+import { useSettingsStore } from '@/stores/settings-store';
 
 // Logs going out: copying them to a USB drive (or a folder), and what's
 // been copied since the app opened. The data folder is in Settings.
@@ -134,6 +145,94 @@ async function copyToUsb() {
 const copyHelp = `Into a ${usbExportFolder} folder on it, filed as they are here, each log with its Hoot and Driver Station logs. ` +
   "Plugged into another computer running this app, they're imported on their own. Logs already on the drive are skipped.";
 
+// --- An event's logs in one zip ---
+
+// The team: the default team's, as Reports and Signals are, if it has logs
+// here; or every team's.
+const settingsStore = useSettingsStore();
+const zipRobots = computed(() => robotsIn(logs.value.filter((log) => log.match)));
+const zipOptions = ref<EventZipOptions>(defaultEventZipOptions(''));
+let zipRobotChosen = false;
+watch([zipRobots, () => settingsStore.loaded], ([robots]) => {
+  if (zipRobotChosen && (zipOptions.value.robot === null || robots.includes(zipOptions.value.robot))) return;
+  const preferred = settingsStore.loaded ? robotFolderName(settingsStore.settings) : '';
+  zipOptions.value = { ...zipOptions.value, robot: robots.includes(preferred) ? preferred : robots[0] ?? null };
+}, { immediate: true });
+const zipRobot = computed({
+  get: () => zipOptions.value.robot ?? '',
+  set: (robot: string) => {
+    zipRobotChosen = true;
+    zipOptions.value = { ...zipOptions.value, robot: robot || null };
+  }
+});
+
+// The team's events, newest first (by their latest match), defaulting to
+// the newest.
+const zipEvents = computed(() => {
+  const latest = new Map<string, number>();
+  for (const log of logs.value) {
+    if (zipOptions.value.robot && log.robot !== zipOptions.value.robot) continue;
+    const event = log.match?.event.toUpperCase();
+    const at = Date.parse(log.recorded);
+    if (event) latest.set(event, Math.max(latest.get(event) ?? -Infinity, Number.isNaN(at) ? -Infinity : at));
+  }
+  return [...latest].sort((a, b) => b[1] - a[1]).map(([event]) => event);
+});
+watch(zipEvents, (events) => {
+  if (!events.includes(zipOptions.value.event)) zipOptions.value = { ...zipOptions.value, event: events[0] ?? '' };
+}, { immediate: true });
+const zipLogs = computed(() => (zipOptions.value.event ? logsForEventZip(logs.value, zipOptions.value) : []));
+const zipFiles = computed(() => eventZipFiles(zipLogs.value, zipOptions.value));
+const zipBytes = computed(() => zipFiles.value.reduce((total, file) => total + file.size, 0));
+const zipRunLabels: Record<RunKind, string> = {
+  practice: 'Practice matches',
+  qualification: 'Qualification matches',
+  elimination: 'Playoff matches',
+  none: "Not a match, on the event's days"
+};
+
+function setZipKind(kind: RunKind, on: boolean) {
+  const kinds = zipOptions.value.kinds.filter((k) => k !== kind);
+  zipOptions.value = { ...zipOptions.value, kinds: on ? [...kinds, kind] : kinds };
+}
+
+const zip = ref<EventZipStatus | null>(null);
+const zipMessage = ref('');
+const zipResult = ref<EventZipSummary | null>(null);
+const zipCancelling = ref(false);
+let zipTimer: ReturnType<typeof setInterval> | undefined;
+
+async function refreshZip() {
+  zip.value = await window.diagnostics.getEventZipStatus();
+}
+
+async function saveZip() {
+  zipMessage.value = '';
+  zipCancelling.value = false;
+  const saving = window.diagnostics.saveEventZip({ ...zipOptions.value, kinds: [...zipOptions.value.kinds] });
+  // Progress while it's written; the save dialog comes first.
+  zipTimer = setInterval(() => void refreshZip().catch(() => {}), copyingRefreshMs);
+  try {
+    const result = await saving;
+    if (typeof result === 'string') zipMessage.value = result;
+    else if (result) zipResult.value = result;
+  } catch (error) {
+    zipMessage.value = (error as Error).message;
+  } finally {
+    clearInterval(zipTimer);
+    await refreshZip();
+  }
+}
+
+async function cancelZip() {
+  zipCancelling.value = true;
+  await window.diagnostics.cancelEventZip();
+}
+
+const showZip = () => window.diagnostics.showEventZip();
+const zipFileName = (path: string) => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+const zipHelp = 'Each log with its Hoot and Driver Station logs, filed by team and day as they are here, so the zip imports back on the Log Import page.';
+
 // --- Recently exported logs: since the app opened, a page at a time ---
 
 const exported = ref<ExportedLog[]>([]);
@@ -148,15 +247,18 @@ async function loadExports() {
 }
 
 onMounted(async () => {
+  if (!settingsStore.loaded) await settingsStore.load();
   logs.value = await window.diagnostics.getSignalLogs();
-  await Promise.all([refreshUsb(), loadExports()]);
+  await Promise.all([refreshUsb(), loadExports(), refreshZip()]);
   exportResult.value = usb.value?.lastExport ?? null;
+  zipResult.value = zip.value?.last ?? null;
   scheduleUsb();
 });
 
 onUnmounted(() => {
   unmounted = true;
   clearTimeout(usbTimer);
+  clearInterval(zipTimer);
 });
 </script>
 
@@ -225,6 +327,73 @@ onUnmounted(() => {
       <p v-if="exportResult.problem" class="error-text">{{ exportResult.problem }}</p>
       <p v-for="failure in exportResult.failed" :key="failure.path" class="error-text"><span class="path">{{ failure.path }}</span>: {{ failure.message }}</p>
     </details>
+  </section>
+
+  <section id="event-zip" class="card">
+    <div class="card-head">
+      <h2>Zip an event</h2>
+    </div>
+    <p v-if="zipEvents.length === 0" class="hint">No match logs yet: an event's logs can be zipped once there are some.</p>
+    <template v-else>
+      <div class="usb-filter" role="group" aria-label="Which logs to zip">
+        <label class="field">
+          Team
+          <select id="zip-team" v-model="zipRobot">
+            <option value="">All teams</option>
+            <option v-for="robot in zipRobots" :key="robot" :value="robot">{{ robotLabel(robot) }}</option>
+          </select>
+        </label>
+        <label class="field">
+          Event
+          <select id="zip-event" v-model="zipOptions.event">
+            <option v-for="event in zipEvents" :key="event" :value="event">{{ event }}</option>
+          </select>
+        </label>
+        <fieldset class="kinds">
+          <legend>Runs</legend>
+          <label v-for="run in runKinds" :key="run.kind" class="check">
+            <input :id="'zip-kind-' + run.kind" type="checkbox" :checked="zipOptions.kinds.includes(run.kind)"
+              @change="setZipKind(run.kind, ($event.target as HTMLInputElement).checked)" />
+            {{ zipRunLabels[run.kind] }}
+          </label>
+        </fieldset>
+        <fieldset class="kinds">
+          <legend>With each log</legend>
+          <label class="check"><input id="zip-hoots" v-model="zipOptions.hoots" type="checkbox" /> Hoot logs</label>
+          <label class="check"><input id="zip-ds" v-model="zipOptions.driverStation" type="checkbox" /> Driver Station logs</label>
+        </fieldset>
+      </div>
+
+      <div class="card-actions">
+        <md-filled-button id="zip-save" :disabled="zip?.running || zipFiles.length === 0" :title="zipHelp" @click="saveZip">
+          {{ zip?.running ? 'Zipping…' : 'Save zip…' }}
+        </md-filled-button>
+        <span id="zip-summary" class="hint small">
+          {{ plural(zipLogs.length, 'log') }}, {{ plural(zipFiles.length, 'file') }}<template v-if="zipFiles.length">, {{ formatBytes(zipBytes) }} before zipping</template>
+          · {{ eventZipName(zipOptions.event, zipOptions.robot) }}
+        </span>
+      </div>
+
+      <div v-if="zip?.running && zip.progress" id="zip-progress" class="progress">
+        <div class="badges">
+          <span class="badge busy">Zipping {{ zip.progress.filesDone }}/{{ zip.progress.filesTotal }}</span>
+          <span class="hint small path">{{ zip.progress.current }}</span>
+          <md-outlined-button id="zip-cancel" :disabled="zipCancelling" @click="cancelZip">{{ zipCancelling ? 'Cancelling…' : 'Cancel' }}</md-outlined-button>
+        </div>
+        <progress :value="zip.progress.bytesDone" :max="Math.max(zip.progress.bytesTotal, 1)"></progress>
+      </div>
+      <p v-if="zipMessage" class="error-text">{{ zipMessage }}</p>
+      <div v-if="zipResult && !zip?.running" id="zip-result" class="badges" :title="formatTime(zipResult.finishedAt) + ': ' + zipResult.path">
+        <span v-if="zipResult.cancelled" class="badge warn">Cancelled</span>
+        <span v-else-if="zipResult.problem" class="badge bad" :title="zipResult.problem">Failed: {{ zipResult.problem }}</span>
+        <template v-else>
+          <span class="badge ok">Saved {{ zipFileName(zipResult.path) }}</span>
+          <span class="hint small">{{ plural(zipResult.files, 'file') }}, {{ formatBytes(zipResult.bytesOut) }}</span>
+          <span v-if="zipResult.missing.length" class="badge warn" :title="zipResult.missing.join(', ')">{{ zipResult.missing.length }} missing</span>
+          <md-outlined-button id="zip-show" @click="showZip">Show in folder</md-outlined-button>
+        </template>
+      </div>
+    </template>
   </section>
 
   <section id="exported-logs" class="card">
