@@ -5,7 +5,6 @@ import NewTicketDialog from '@/components/NewTicketDialog.vue';
 import TicketRow from '@/components/TicketRow.vue';
 import { errorMessage } from '@/lib/db';
 import { formatSessionTime } from '@/lib/dates';
-import { fetchBalances, type PointBalance } from '@/lib/points';
 import { fetchNextSession, fetchPlan, seedPlan, type Session } from '@/lib/sessions';
 import { fetchTickets, fetchTicketsByIds, isInterested, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
@@ -18,7 +17,6 @@ const auth = useAuthStore();
 const session = ref<Session | null>(null);
 const planTickets = ref<Ticket[]>([]);
 const myTickets = ref<Ticket[]>([]);
-const balance = ref<PointBalance | null>(null);
 const loaded = ref(false);
 const error = ref('');
 const creating = ref(false);
@@ -49,9 +47,7 @@ async function load() {
     } else {
       planTickets.value = [];
     }
-    const [tickets, balances] = await Promise.all([fetchTickets({ status: 'active', involving: auth.userId! }), fetchBalances()]);
-    myTickets.value = tickets;
-    balance.value = balances.find((b) => b.user_id === auth.userId) ?? null;
+    myTickets.value = await fetchTickets({ status: 'active', involving: auth.userId! });
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
@@ -110,12 +106,6 @@ onMounted(load);
         </ul>
         <p v-else class="empty">{{ myTickets.length ? 'Everything of yours is in the session plan.' : "You don't own and aren't assigned to any open tickets." }}</p>
       </section>
-
-      <RouterLink to="/points" class="panel points-tile">
-        <span class="muted">Your GreyPoints</span>
-        <span class="points-value">{{ balance?.balance ?? 0 }}</span>
-        <span class="muted">{{ balance?.season_earned ?? 0 }} earned this season · {{ balance?.earned ?? 0 }} all time</span>
-      </RouterLink>
     </template>
 
     <NewTicketDialog :open="creating" @close="creating = false" @created="load" />
@@ -154,17 +144,5 @@ h3 {
   cursor: pointer;
   opacity: 0.8;
   margin-bottom: 6px;
-}
-
-.points-tile {
-  gap: 2px;
-  color: inherit;
-  text-decoration: none;
-}
-
-.points-value {
-  font-size: 2.2rem;
-  font-weight: 700;
-  line-height: 1.1;
 }
 </style>

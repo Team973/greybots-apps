@@ -23,8 +23,6 @@ export interface Ticket {
     close_reason: CloseReason | null;
     closed_at: string | null;
     closed_by: string | null;
-    bounty: number | null;
-    bounty_set_by: string | null;
     created_by: string | null;
     created_at: string;
     updated_at: string;
@@ -40,7 +38,6 @@ export interface TicketDraft {
     assignee_ids: string[];
     due_date: string | null;
     status: Exclude<TicketStatus, 'closed'>;
-    bounty: number | null;
 }
 
 export const statusLabels: Record<TicketStatus, string> = {
@@ -50,9 +47,9 @@ export const statusLabels: Record<TicketStatus, string> = {
 };
 
 export const closeReasons: { key: CloseReason; label: string; hint: string }[] = [
-    { key: 'complete', label: 'Complete', hint: 'The work is done. Pays out the bounty.' },
+    { key: 'complete', label: 'Complete', hint: 'The work is done.' },
     { key: 'duplicate', label: 'Duplicate', hint: 'Another ticket covers it.' },
-    { key: 'wont_do', label: "Won't do", hint: "It's not happening. No points." }
+    { key: 'wont_do', label: "Won't do", hint: "It's not happening." }
 ];
 
 export const closeReasonLabels: Record<CloseReason, string> = {
@@ -60,16 +57,6 @@ export const closeReasonLabels: Record<CloseReason, string> = {
     duplicate: 'Duplicate',
     wont_do: "Won't do"
 };
-
-// The bounties a ticket can carry (workshop_bounty_options() in the
-// database): bigger for harder or more urgent work.
-export const bountyOptions: { points: number; label: string }[] = [
-    { points: 5, label: 'Quick task' },
-    { points: 10, label: 'Small' },
-    { points: 25, label: 'Medium' },
-    { points: 50, label: 'Large' },
-    { points: 100, label: 'Huge' }
-];
 
 export function statusText(ticket: Pick<Ticket, 'status' | 'close_reason'>): string {
     return ticket.status === 'closed' && ticket.close_reason ? closeReasonLabels[ticket.close_reason] : statusLabels[ticket.status];
@@ -84,33 +71,6 @@ export function isInterested(ticket: Pick<Ticket, 'owner_id' | 'assignee_ids'>, 
     return !!userId && (ticket.owner_id === userId || ticket.assignee_ids.includes(userId));
 }
 
-// Bounties are set by leads and admins who aren't the owner or an assignee.
-export function canSetBounty(ticket: Pick<Ticket, 'owner_id' | 'assignee_ids'>, userId: string | null, isLead: boolean): boolean {
-    return isLead && !isInterested(ticket, userId);
-}
-
-// How a bounty is shared out (workshop_bounty_split() in the database): the
-// assignees split it equally, with any remainder going a point each to the
-// first ones; an owner who isn't an assignee takes 10% (at least 1) off the
-// top; with no assignees, the owner gets all of it.
-export function bountySplit(bounty: number | null, ownerId: string | null, assigneeIds: string[]): { userId: string; points: number }[] {
-    if (!bounty || bounty <= 0) return [];
-    const assignees = [...new Set(assigneeIds)];
-    if (assignees.length === 0) return ownerId ? [{ userId: ownerId, points: bounty }] : [];
-    const shares: { userId: string; points: number }[] = [];
-    let ownerShare = 0;
-    if (ownerId && !assignees.includes(ownerId)) {
-        ownerShare = Math.max(1, Math.floor(bounty / 10));
-        shares.push({ userId: ownerId, points: ownerShare });
-    }
-    const rest = bounty - ownerShare;
-    assignees.forEach((userId, i) => {
-        const points = Math.floor(rest / assignees.length) + (i < rest % assignees.length ? 1 : 0);
-        if (points > 0) shares.push({ userId, points });
-    });
-    return shares;
-}
-
 export function emptyDraft(): TicketDraft {
     return {
         title: '',
@@ -120,8 +80,7 @@ export function emptyDraft(): TicketDraft {
         owner_id: null,
         assignee_ids: [],
         due_date: null,
-        status: 'open',
-        bounty: null
+        status: 'open'
     };
 }
 
@@ -134,8 +93,7 @@ export function draftOf(ticket: Ticket): TicketDraft {
         owner_id: ticket.owner_id,
         assignee_ids: [...ticket.assignee_ids],
         due_date: ticket.due_date,
-        status: ticket.status === 'closed' ? 'open' : ticket.status,
-        bounty: ticket.bounty
+        status: ticket.status === 'closed' ? 'open' : ticket.status
     };
 }
 
@@ -183,34 +141,27 @@ function fields(draft: TicketDraft) {
 
 export async function createTicket(draft: TicketDraft): Promise<Ticket> {
     if (!draft.title.trim()) throw new Error('Give the ticket a title.');
-    const row = { ...fields(draft), ...(draft.bounty ? { bounty: draft.bounty } : {}) };
-    return unwrap(await supabase.from('WorkshopTicket').insert(row).select().single()) as Ticket;
+    return unwrap(await supabase.from('WorkshopTicket').insert(fields(draft)).select().single()) as Ticket;
 }
 
-// Saves what changed. The bounty is only sent when it changed, so someone who
-// can't set it can still edit the rest. Returns the ticket as the database
-// left it (which can have cleared the bounty).
+// Saves the ticket. Returns it as the database left it.
 export async function updateTicket(ticket: Ticket, draft: TicketDraft): Promise<Ticket> {
     if (!draft.title.trim()) throw new Error('Give the ticket a title.');
-    const changes: Record<string, unknown> = fields(draft);
-    if ((draft.bounty ?? null) !== ticket.bounty) changes.bounty = draft.bounty ?? null;
+    return unwrap(await supabase.from('WorkshopTicket').update(fields(draft)).eq('id', ticket.id).select().single()) as Ticket;
+}
+
+export async function patchTicket(ticket: Ticket, changes: Partial<Pick<Ticket, 'status' | 'milestone_id'>>): Promise<Ticket> {
     return unwrap(await supabase.from('WorkshopTicket').update(changes).eq('id', ticket.id).select().single()) as Ticket;
 }
 
-export async function patchTicket(ticket: Ticket, changes: Partial<Pick<Ticket, 'status' | 'milestone_id' | 'bounty'>>): Promise<Ticket> {
-    return unwrap(await supabase.from('WorkshopTicket').update(changes).eq('id', ticket.id).select().single()) as Ticket;
+// Leads and admins only. (The database stamps when and by whom.)
+export async function closeTicket(ticket: Ticket, reason: CloseReason): Promise<Ticket> {
+    return unwrap(
+        await supabase.from('WorkshopTicket').update({ status: 'closed', close_reason: reason }).eq('id', ticket.id).select().single()
+    ) as Ticket;
 }
 
-// Leads and admins only. A completed ticket pays out its bounty; `bounty`
-// lets the closer settle it at the same time (when they're allowed to).
-export async function closeTicket(ticket: Ticket, reason: CloseReason, bounty?: number | null): Promise<Ticket> {
-    // (The database stamps when and by whom.)
-    const changes: Record<string, unknown> = { status: 'closed', close_reason: reason };
-    if (bounty !== undefined && bounty !== ticket.bounty) changes.bounty = bounty;
-    return unwrap(await supabase.from('WorkshopTicket').update(changes).eq('id', ticket.id).select().single()) as Ticket;
-}
-
-// Leads and admins only. Takes back any points it paid out.
+// Leads and admins only.
 export async function reopenTicket(ticket: Ticket): Promise<Ticket> {
     return unwrap(await supabase.from('WorkshopTicket').update({ status: 'open' }).eq('id', ticket.id).select().single()) as Ticket;
 }

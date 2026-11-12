@@ -2686,15 +2686,10 @@ CREATE TABLE IF NOT EXISTS public."WorkshopTicket" (
     "close_reason" text CHECK ("close_reason" IN ('complete', 'duplicate', 'wont_do')),
     "closed_at" timestamp with time zone,
     "closed_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
-    -- GreyPoints for completing it, from a fixed list (see
-    -- workshop_bounty_options()), and who set it.
-    "bounty" integer CHECK ("bounty" IN (5, 10, 25, 50, 100)),
-    "bounty_set_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
     "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL,
     "created_at" timestamp with time zone NOT NULL DEFAULT now(),
     "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
-    CONSTRAINT "WorkshopTicket_closed_check" CHECK (("status" = 'closed') = ("close_reason" IS NOT NULL AND "closed_at" IS NOT NULL)),
-    CONSTRAINT "WorkshopTicket_bounty_set_by_check" CHECK ("bounty" IS NULL OR "bounty_set_by" IS NOT NULL)
+    CONSTRAINT "WorkshopTicket_closed_check" CHECK (("status" = 'closed') = ("close_reason" IS NOT NULL AND "closed_at" IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS "workshop_ticket_milestone_idx" ON public."WorkshopTicket" ("milestone_id");
@@ -2702,20 +2697,11 @@ CREATE INDEX IF NOT EXISTS "workshop_ticket_owner_idx" ON public."WorkshopTicket
 CREATE INDEX IF NOT EXISTS "workshop_ticket_assignees_idx" ON public."WorkshopTicket" USING gin ("assignee_ids");
 CREATE INDEX IF NOT EXISTS "workshop_ticket_status_idx" ON public."WorkshopTicket" ("status");
 
-COMMENT ON COLUMN public."WorkshopTicket"."bounty" IS 'GreyPoints paid out when the ticket is closed as complete. Never set by the owner or an assignee.';
-
--- The bounty values a ticket can have, smallest first.
-CREATE OR REPLACE FUNCTION "public"."workshop_bounty_options"() RETURNS integer[]
-    LANGUAGE "sql" IMMUTABLE
-    AS $$ SELECT ARRAY[5, 10, 25, 50, 100] $$;
-
 -- Who's allowed to do what to a ticket.
 -- * Members and above open and edit tickets; observers can't (RLS).
 -- * Only leads and admins close or reopen one, and a closed ticket can't be
 --   edited until it's reopened (except to move it to another milestone, which
 --   is also what deleting its milestone does).
--- * The bounty is set by a lead or admin who isn't the owner or an assignee,
---   and is cleared if whoever set it later becomes the owner or an assignee.
 CREATE OR REPLACE FUNCTION "public"."enforce_workshop_ticket"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -2723,7 +2709,6 @@ CREATE OR REPLACE FUNCTION "public"."enforce_workshop_ticket"() RETURNS "trigger
 DECLARE
   actor_id uuid := auth.uid();
   actor_is_lead boolean := public.workshop_role() IN ('lead', 'admin');
-  actor_interested boolean;
   unmoved public."WorkshopTicket";
 BEGIN
   -- Each person once, in the order they were added.
@@ -2738,8 +2723,6 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  actor_interested := COALESCE(actor_id = NEW."owner_id", false) OR actor_id = ANY (NEW."assignee_ids");
-
   IF TG_OP = 'INSERT' THEN
     IF NEW."status" = 'closed' THEN
       RAISE EXCEPTION 'A new ticket can''t start out closed';
@@ -2749,17 +2732,6 @@ BEGIN
     NEW."close_reason" := NULL;
     NEW."closed_at" := NULL;
     NEW."closed_by" := NULL;
-    IF NEW."bounty" IS NOT NULL THEN
-      IF NOT actor_is_lead THEN
-        RAISE EXCEPTION 'Only leads and admins set bounties';
-      END IF;
-      IF actor_interested THEN
-        RAISE EXCEPTION 'You can''t set the bounty on a ticket you own or are assigned to';
-      END IF;
-      NEW."bounty_set_by" := actor_id;
-    ELSE
-      NEW."bounty_set_by" := NULL;
-    END IF;
     NEW."updated_at" := now();
     RETURN NEW;
   END IF;
@@ -2789,8 +2761,7 @@ BEGIN
     NEW."closed_at" := now();
     NEW."closed_by" := actor_id;
   ELSIF OLD."status" = 'closed' AND NEW."status" <> 'closed' THEN
-    -- Reopening. Any points it paid out are taken back (see
-    -- workshop_ticket_points), and paid again when it's next completed.
+    -- Reopening.
     IF NOT actor_is_lead THEN
       RAISE EXCEPTION 'Only leads and admins reopen tickets';
     END IF;
@@ -2801,25 +2772,6 @@ BEGIN
     NEW."close_reason" := NULL;
     NEW."closed_at" := NULL;
     NEW."closed_by" := NULL;
-  END IF;
-
-  -- The bounty.
-  IF NEW."bounty" IS DISTINCT FROM OLD."bounty" THEN
-    IF NOT actor_is_lead THEN
-      RAISE EXCEPTION 'Only leads and admins set bounties';
-    END IF;
-    IF actor_interested THEN
-      RAISE EXCEPTION 'You can''t set the bounty on a ticket you own or are assigned to';
-    END IF;
-    NEW."bounty_set_by" := CASE WHEN NEW."bounty" IS NULL THEN NULL ELSE actor_id END;
-  ELSE
-    NEW."bounty_set_by" := OLD."bounty_set_by";
-  END IF;
-  -- Whoever set the bounty has since become the owner or an assignee: it has
-  -- to be set again by someone with no stake in the ticket.
-  IF NEW."bounty_set_by" IS NOT NULL AND (NEW."bounty_set_by" = NEW."owner_id" OR NEW."bounty_set_by" = ANY (NEW."assignee_ids")) THEN
-    NEW."bounty" := NULL;
-    NEW."bounty_set_by" := NULL;
   END IF;
 
   NEW."updated_at" := now();
@@ -2946,289 +2898,6 @@ GRANT EXECUTE ON FUNCTION public.workshop_seed_session_plan(uuid, boolean) TO au
 GRANT EXECUTE ON FUNCTION public.workshop_seed_session_plan(uuid, boolean) TO service_role;
 
 -- ---------------------------------------------------------------------------
--- GreyPoints
--- ---------------------------------------------------------------------------
-
--- Every point anyone has earned, one row per award. A balance is the sum of a
--- person's awards less what they've spent on rewards.
-CREATE TABLE IF NOT EXISTS public."WorkshopPointAward" (
-    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    "user_id" uuid NOT NULL REFERENCES public."User"("user_id") ON DELETE CASCADE,
-    "points" integer NOT NULL CHECK ("points" <> 0),
-    -- ticket: a completed ticket's bounty (paid out by the database).
-    -- recognition: a team recognition, at a fixed value per level.
-    -- attendance: hours in shop (reserved for the attendance link).
-    -- adjustment: an admin's correction, with a note saying why.
-    "kind" text NOT NULL CHECK ("kind" IN ('ticket', 'recognition', 'attendance', 'adjustment')),
-    "ticket_id" uuid REFERENCES public."WorkshopTicket"("id") ON DELETE CASCADE,
-    "recognition_level" text CHECK ("recognition_level" IN ('shoutout', 'recognition', 'mvp')),
-    "note" text NOT NULL DEFAULT '',
-    "awarded_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
-    "awarded_at" timestamp with time zone NOT NULL DEFAULT now(),
-    CONSTRAINT "WorkshopPointAward_source_check" CHECK (
-        ("kind" = 'ticket') = ("ticket_id" IS NOT NULL)
-        AND ("kind" = 'recognition') = ("recognition_level" IS NOT NULL)
-    )
-);
-
-CREATE INDEX IF NOT EXISTS "workshop_point_award_user_idx" ON public."WorkshopPointAward" ("user_id");
-CREATE INDEX IF NOT EXISTS "workshop_point_award_ticket_idx" ON public."WorkshopPointAward" ("ticket_id");
-
--- What each level of team recognition is worth.
-CREATE OR REPLACE FUNCTION "public"."workshop_recognition_points"("level" text) RETURNS integer
-    LANGUAGE "sql" IMMUTABLE
-    AS $$
-  SELECT CASE level WHEN 'shoutout' THEN 10 WHEN 'recognition' THEN 25 WHEN 'mvp' THEN 50 END;
-$$;
-
--- Awards made by hand: leads and admins give recognitions (to someone else,
--- at the level's value), and admins make adjustments (with a reason). Ticket
--- awards only come from closing a ticket.
-CREATE OR REPLACE FUNCTION "public"."enforce_workshop_point_award"() RETURNS "trigger"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $$
-DECLARE
-  actor_id uuid := auth.uid();
-  actor_role text := public.workshop_role();
-BEGIN
-  -- No auth context (service_role), or paying out a ticket from inside
-  -- workshop_ticket_points (a trigger, so one level deeper than a direct
-  -- insert): no checks.
-  IF actor_id IS NULL OR pg_trigger_depth() > 1 THEN
-    RETURN NEW;
-  END IF;
-
-  NEW."awarded_by" := actor_id;
-  NEW."awarded_at" := now();
-  IF NEW."kind" = 'recognition' THEN
-    IF actor_role NOT IN ('lead', 'admin') THEN
-      RAISE EXCEPTION 'Only leads and admins give recognitions';
-    END IF;
-    IF NEW."user_id" = actor_id THEN
-      RAISE EXCEPTION 'You can''t recognize yourself';
-    END IF;
-    NEW."points" := public.workshop_recognition_points(NEW."recognition_level");
-  ELSIF NEW."kind" = 'adjustment' THEN
-    IF actor_role <> 'admin' THEN
-      RAISE EXCEPTION 'Only admins adjust points';
-    END IF;
-    IF btrim(NEW."note") = '' THEN
-      RAISE EXCEPTION 'Say why the points are being adjusted';
-    END IF;
-  ELSE
-    RAISE EXCEPTION 'Those points can''t be added by hand';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER "enforce_workshop_point_award" BEFORE INSERT ON public."WorkshopPointAward"
-    FOR EACH ROW EXECUTE FUNCTION public.enforce_workshop_point_award();
-
--- How a bounty is split. The assignees share it equally (any remainder goes
--- one point each to the first assignees). An owner who isn't an assignee
--- takes 10% (at least 1 point) off the top; with no assignees, the owner gets
--- all of it.
-CREATE OR REPLACE FUNCTION "public"."workshop_bounty_split"("bounty" integer, "owner_id" uuid, "assignee_ids" uuid[])
-    RETURNS TABLE ("user_id" uuid, "points" integer)
-    LANGUAGE "plpgsql" IMMUTABLE
-    AS $$
-DECLARE
-  n integer := cardinality(assignee_ids);
-  owner_share integer := 0;
-  rest integer;
-BEGIN
-  IF bounty IS NULL OR bounty <= 0 THEN
-    RETURN;
-  END IF;
-  IF n = 0 THEN
-    IF owner_id IS NOT NULL THEN
-      user_id := owner_id;
-      points := bounty;
-      RETURN NEXT;
-    END IF;
-    RETURN;
-  END IF;
-  IF owner_id IS NOT NULL AND NOT (owner_id = ANY (assignee_ids)) THEN
-    owner_share := GREATEST(1, bounty / 10);
-    user_id := owner_id;
-    points := owner_share;
-    RETURN NEXT;
-  END IF;
-  rest := bounty - owner_share;
-  FOR i IN 1..n LOOP
-    user_id := assignee_ids[i];
-    points := rest / n + CASE WHEN i <= rest % n THEN 1 ELSE 0 END;
-    IF points > 0 THEN
-      RETURN NEXT;
-    END IF;
-  END LOOP;
-END;
-$$;
-
--- Pays a ticket's bounty when it's closed as complete, and takes it back if
--- the ticket is reopened.
-CREATE OR REPLACE FUNCTION "public"."workshop_ticket_points"() RETURNS "trigger"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $$
-BEGIN
-  IF OLD."status" = 'closed' AND NEW."status" <> 'closed' THEN
-    DELETE FROM public."WorkshopPointAward" WHERE "ticket_id" = NEW."id";
-  ELSIF OLD."status" <> 'closed' AND NEW."status" = 'closed' AND NEW."close_reason" = 'complete' AND NEW."bounty" IS NOT NULL THEN
-    INSERT INTO public."WorkshopPointAward" ("user_id", "points", "kind", "ticket_id", "note", "awarded_by")
-      SELECT s."user_id", s."points", 'ticket', NEW."id", format('#%s %s', NEW."number", NEW."title"), NEW."closed_by"
-      FROM public.workshop_bounty_split(NEW."bounty", NEW."owner_id", NEW."assignee_ids") s;
-  END IF;
-  RETURN NULL;
-END;
-$$;
-
-CREATE TRIGGER "workshop_ticket_points" AFTER UPDATE OF "status" ON public."WorkshopTicket"
-    FOR EACH ROW EXECUTE FUNCTION public.workshop_ticket_points();
-
--- The rewards marketplace.
-CREATE TABLE IF NOT EXISTS public."WorkshopReward" (
-    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    "name" text NOT NULL CHECK (btrim("name") <> ''),
-    "description" text NOT NULL DEFAULT '',
-    "cost" integer NOT NULL CHECK ("cost" > 0),
-    -- How many can be redeemed in all; null for no limit.
-    "stock" integer CHECK ("stock" >= 0),
-    "active" boolean NOT NULL DEFAULT true,
-    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
-    "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL
-);
-
--- A person cashing points in for a reward. Requested ones wait for a lead to
--- hand the reward over (fulfilled); a cancelled one gives the points back.
-CREATE TABLE IF NOT EXISTS public."WorkshopRedemption" (
-    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    "reward_id" uuid REFERENCES public."WorkshopReward"("id") ON DELETE SET NULL,
-    "user_id" uuid NOT NULL REFERENCES public."User"("user_id") ON DELETE CASCADE,
-    -- As they were when it was redeemed.
-    "reward_name" text NOT NULL,
-    "cost" integer NOT NULL CHECK ("cost" > 0),
-    "status" text NOT NULL DEFAULT 'requested' CHECK ("status" IN ('requested', 'fulfilled', 'cancelled')),
-    "requested_at" timestamp with time zone NOT NULL DEFAULT now(),
-    "resolved_at" timestamp with time zone,
-    "resolved_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS "workshop_redemption_user_idx" ON public."WorkshopRedemption" ("user_id");
-
--- Everyone's points: earned all time, earned this season (calendar year),
--- spent on rewards, and what's left to spend.
-CREATE OR REPLACE VIEW public."WorkshopPointBalance" WITH (security_invoker = true) AS
-  SELECT
-    u."user_id",
-    u."name",
-    COALESCE(a."earned", 0)::integer AS "earned",
-    COALESCE(a."season_earned", 0)::integer AS "season_earned",
-    COALESCE(r."spent", 0)::integer AS "spent",
-    (COALESCE(a."earned", 0) - COALESCE(r."spent", 0))::integer AS "balance"
-  FROM public."User" u
-  LEFT JOIN (
-    SELECT "user_id",
-      sum("points") AS "earned",
-      sum("points") FILTER (WHERE date_trunc('year', "awarded_at") = date_trunc('year', now())) AS "season_earned"
-    FROM public."WorkshopPointAward" GROUP BY "user_id"
-  ) a ON a."user_id" = u."user_id"
-  LEFT JOIN (
-    SELECT "user_id", sum("cost") AS "spent" FROM public."WorkshopRedemption" WHERE "status" <> 'cancelled' GROUP BY "user_id"
-  ) r ON r."user_id" = u."user_id"
-  WHERE u."workshop_role" IN ('observer', 'member', 'lead', 'admin') OR a."earned" IS NOT NULL;
-
--- Redeem a reward for the signed-in person, if they have the points and it's
--- in stock. Done here so two redemptions at once can't overspend.
-CREATE OR REPLACE FUNCTION "public"."workshop_redeem_reward"("p_reward_id" uuid) RETURNS public."WorkshopRedemption"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $$
-DECLARE
-  actor_id uuid := auth.uid();
-  reward public."WorkshopReward";
-  available integer;
-  redeemed integer;
-  result public."WorkshopRedemption";
-BEGIN
-  IF actor_id IS NULL OR public.workshop_role() NOT IN ('member', 'lead', 'admin') THEN
-    RAISE EXCEPTION 'Workshop members redeem rewards' USING ERRCODE = '42501';
-  END IF;
-
-  -- One redemption at a time per person, and per reward.
-  PERFORM 1 FROM public."User" WHERE "user_id" = actor_id FOR UPDATE;
-  SELECT * INTO reward FROM public."WorkshopReward" WHERE "id" = p_reward_id FOR UPDATE;
-  IF NOT FOUND OR NOT reward."active" THEN
-    RAISE EXCEPTION 'That reward isn''t available';
-  END IF;
-
-  IF reward."stock" IS NOT NULL THEN
-    SELECT count(*) INTO redeemed FROM public."WorkshopRedemption" WHERE "reward_id" = reward."id" AND "status" <> 'cancelled';
-    IF redeemed >= reward."stock" THEN
-      RAISE EXCEPTION 'That reward is out of stock';
-    END IF;
-  END IF;
-
-  SELECT
-    COALESCE((SELECT sum("points") FROM public."WorkshopPointAward" WHERE "user_id" = actor_id), 0)
-    - COALESCE((SELECT sum("cost") FROM public."WorkshopRedemption" WHERE "user_id" = actor_id AND "status" <> 'cancelled'), 0)
-  INTO available;
-  IF available < reward."cost" THEN
-    RAISE EXCEPTION 'You need % more points for that', reward."cost" - available;
-  END IF;
-
-  INSERT INTO public."WorkshopRedemption" ("reward_id", "user_id", "reward_name", "cost")
-    VALUES (reward."id", actor_id, reward."name", reward."cost")
-    RETURNING * INTO result;
-  RETURN result;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.workshop_redeem_reward(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.workshop_redeem_reward(uuid) FROM anon;
-GRANT EXECUTE ON FUNCTION public.workshop_redeem_reward(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.workshop_redeem_reward(uuid) TO service_role;
-
--- Resolving a redemption: leads and admins mark a requested one fulfilled or
--- cancel it, and the person who asked can cancel their own while it's still
--- requested. Nothing else about it changes.
-CREATE OR REPLACE FUNCTION "public"."enforce_workshop_redemption_update"() RETURNS "trigger"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $$
-DECLARE
-  actor_id uuid := auth.uid();
-BEGIN
-  IF actor_id IS NULL THEN
-    RETURN NEW;
-  END IF;
-  IF OLD."status" <> 'requested' THEN
-    RAISE EXCEPTION 'That redemption has already been resolved';
-  END IF;
-  IF NEW."status" = 'requested' THEN
-    RETURN OLD;
-  END IF;
-  IF public.workshop_role() NOT IN ('lead', 'admin') AND NOT (actor_id = OLD."user_id" AND NEW."status" = 'cancelled') THEN
-    RAISE EXCEPTION 'Only leads and admins hand out rewards';
-  END IF;
-  NEW."id" := OLD."id";
-  NEW."reward_id" := OLD."reward_id";
-  NEW."user_id" := OLD."user_id";
-  NEW."reward_name" := OLD."reward_name";
-  NEW."cost" := OLD."cost";
-  NEW."requested_at" := OLD."requested_at";
-  NEW."resolved_at" := now();
-  NEW."resolved_by" := actor_id;
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER "enforce_workshop_redemption_update" BEFORE UPDATE ON public."WorkshopRedemption"
-    FOR EACH ROW EXECUTE FUNCTION public.enforce_workshop_redemption_update();
-
--- ---------------------------------------------------------------------------
 -- Access
 -- ---------------------------------------------------------------------------
 
@@ -3238,9 +2907,6 @@ ALTER TABLE public."WorkshopTicket" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSessionSeries" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSession" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSessionTicket" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public."WorkshopPointAward" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public."WorkshopReward" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public."WorkshopRedemption" ENABLE ROW LEVEL SECURITY;
 
 GRANT ALL ON public."WorkshopComponent" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopMilestone" TO authenticated, service_role;
@@ -3248,10 +2914,6 @@ GRANT ALL ON public."WorkshopTicket" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSessionSeries" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSession" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSessionTicket" TO authenticated, service_role;
-GRANT ALL ON public."WorkshopPointAward" TO authenticated, service_role;
-GRANT ALL ON public."WorkshopReward" TO authenticated, service_role;
-GRANT ALL ON public."WorkshopRedemption" TO authenticated, service_role;
-GRANT SELECT ON public."WorkshopPointBalance" TO authenticated, service_role;
 
 -- Everyone in Workshop (observers included) can see everything.
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopComponent" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
@@ -3260,12 +2922,9 @@ CREATE POLICY "Enable read access for Workshop" ON public."WorkshopTicket" FOR S
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSessionSeries" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSession" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSessionTicket" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
-CREATE POLICY "Enable read access for Workshop" ON public."WorkshopPointAward" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
-CREATE POLICY "Enable read access for Workshop" ON public."WorkshopReward" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
-CREATE POLICY "Enable read access for Workshop" ON public."WorkshopRedemption" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 
 -- Tickets: members and above open and edit them (the trigger decides who
--- closes them and sets bounties). Nobody deletes one; it's closed instead.
+-- closes them). Nobody deletes one; it's closed instead.
 CREATE POLICY "Enable insert for members" ON public."WorkshopTicket" FOR INSERT TO authenticated
     WITH CHECK ((SELECT public.workshop_role()) IN ('member', 'lead', 'admin'));
 CREATE POLICY "Enable update for members" ON public."WorkshopTicket" FOR UPDATE TO authenticated
@@ -3273,7 +2932,7 @@ CREATE POLICY "Enable update for members" ON public."WorkshopTicket" FOR UPDATE 
     WITH CHECK ((SELECT public.workshop_role()) IN ('member', 'lead', 'admin'));
 
 -- Leads and admins run the rest: components, milestones, the schedule and
--- session plans, and the rewards on offer.
+-- session plans.
 CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopComponent" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable update for leads and admins" ON public."WorkshopComponent" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 
@@ -3292,22 +2951,6 @@ CREATE POLICY "Enable delete for leads and admins" ON public."WorkshopSession" F
 CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopSessionTicket" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable update for leads and admins" ON public."WorkshopSessionTicket" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable delete for leads and admins" ON public."WorkshopSessionTicket" FOR DELETE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin'));
-
-CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopReward" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
-CREATE POLICY "Enable update for leads and admins" ON public."WorkshopReward" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
-
--- Points: leads and admins add recognitions and admins adjustments (the
--- trigger checks which); admins can remove a hand-made award given by
--- mistake. Ticket awards come and go with the ticket.
-CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopPointAward" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
-CREATE POLICY "Enable delete of hand-made awards for admins" ON public."WorkshopPointAward" FOR DELETE TO authenticated
-    USING ((SELECT public.workshop_role()) = 'admin' AND "kind" IN ('recognition', 'adjustment'));
-
--- Redemptions are made through workshop_redeem_reward(); leads resolve them,
--- and people can cancel their own (the trigger checks which).
-CREATE POLICY "Enable update for leads, admins, and the redeemer" ON public."WorkshopRedemption" FOR UPDATE TO authenticated
-    USING ((SELECT public.workshop_role()) IN ('lead', 'admin') OR ("user_id" = auth.uid() AND (SELECT public.has_app_access('workshop'))))
-    WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin') OR ("user_id" = auth.uid() AND (SELECT public.has_app_access('workshop'))));
 
 -- ---------------------------------------------------------------------------
 -- Diagnostics (see supabase/migrations/20261101120000_diagnostics_library.sql)

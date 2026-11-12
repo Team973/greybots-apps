@@ -36,7 +36,7 @@ export const hubApps: HubApp[] = [
     {
         key: 'workshop',
         name: 'Workshop',
-        description: 'Shop tickets, session plans, milestones, and GreyPoints',
+        description: 'Shop tickets, session plans, and milestones',
         url: clean(import.meta.env.VITE_WORKSHOP_URL || 'https://greybots-workshop.vercel.app'),
         roleColumn: 'workshop_role'
     }

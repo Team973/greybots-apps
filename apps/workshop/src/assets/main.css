@@ -227,7 +227,7 @@
   flex: 1;
 }
 
-/* Small rounded labels: a ticket's status, components, points. */
+/* Small rounded labels: a ticket's status, components. */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -260,12 +260,6 @@
   border-color: rgba(128, 128, 128, 0.6);
   color: inherit;
   opacity: 0.75;
-}
-
-.chip.points {
-  border-color: #b05703;
-  color: #d0711a;
-  font-weight: 600;
 }
 
 .chip.overdue {

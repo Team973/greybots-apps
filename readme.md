@@ -4,7 +4,7 @@ npm-workspaces monorepo:
 
 - `apps/greyscout`: GreyScout, the scouting app
 - `apps/preflight`: Preflight, the offline-first pit crew app (see `apps/preflight/docs/architecture.md`)
-- `apps/workshop`: Workshop, the shop management app: tickets, session plans, milestones, and GreyPoints (see `apps/workshop/README.md`)
+- `apps/workshop`: Workshop, the shop management app: tickets, session plans, and milestones (see `apps/workshop/README.md`)
 - `apps/diagnostics`: Greybots Diagnostics, the robot diagnostics desktop app for Windows, Linux and macOS (see `apps/diagnostics/docs/design.md`)
 - `apps/hub`: the launcher for all the apps
 - `packages/common`: shared Vue components, styles, and the Supabase client

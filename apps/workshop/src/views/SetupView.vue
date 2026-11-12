@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { errorMessage } from '@/lib/db';
-import { recognitionLevels } from '@/lib/points';
-import { bountyOptions } from '@/lib/tickets';
 import { useDirectoryStore, type Component } from '@/stores/directory-store';
 
 // Setup for leads and admins: the components (parts of the team) tickets are
 // tagged with. A component that's no longer used is archived rather than
-// deleted, so old tickets keep their labels. Also lists the fixed GreyPoints
-// values, for reference.
+// deleted, so old tickets keep their labels.
 const directory = useDirectoryStore();
 
 const name = ref('');
@@ -84,29 +81,6 @@ function move(index: number, by: number) {
         <button type="submit" class="button primary" :disabled="busy || !name.trim()">Add</button>
       </form>
     </section>
-
-    <section class="panel">
-      <h2>GreyPoints values</h2>
-      <p class="hint">Fixed, so the system can't be gamed. Bounties are set by a lead or admin who isn't the ticket's owner or an assignee.</p>
-      <div class="values">
-        <div>
-          <h3>Ticket bounties</h3>
-          <ul>
-            <li v-for="b in bountyOptions" :key="b.points">{{ b.label }}: <strong>{{ b.points }}</strong></li>
-          </ul>
-        </div>
-        <div>
-          <h3>Team recognitions</h3>
-          <ul>
-            <li v-for="l in recognitionLevels" :key="l.key">{{ l.label }}: <strong>{{ l.points }}</strong></li>
-          </ul>
-        </div>
-      </div>
-      <p class="hint">
-        A completed ticket's bounty is split equally between its assignees. An owner who isn't an assignee takes 10% off the top; with no
-        assignees, the owner gets it all.
-      </p>
-    </section>
   </div>
 </template>
 
@@ -160,21 +134,5 @@ input[type='color'] {
 .icon-small:disabled {
   opacity: 0.3;
   cursor: default;
-}
-
-.values {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 40px;
-}
-
-.values h3 {
-  margin: 0 0 4px;
-  font-size: 0.95rem;
-}
-
-.values ul {
-  margin: 0;
-  padding-left: 18px;
 }
 </style>
