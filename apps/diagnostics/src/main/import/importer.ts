@@ -211,6 +211,8 @@ export interface ImportOptions {
   // For logs that don't say which team's they are.
   fallbackTeam: number;
   onProgress(progress: ImportProgress): void;
+  // Each file once it's filed (or not), for the transfer log.
+  onFile?(file: ImportedFile): void;
   // What a team in the path is looked for from, when not what was dropped
   // (single files picked out of a USB drive's folders: the drive's root).
   pathBase?: string;
@@ -300,7 +302,10 @@ export async function importLogs(dataDirectory: string, paths: string[], options
 
     // 3. Each to where it goes.
     for (const { candidate, result, part } of staged) {
-      if (!part) continue;
+      if (!part) {
+        options.onFile?.(result);
+        continue;
+      }
       try {
         const source = sources[extensionOf(candidate.name)];
         const robot = `frc${result.team}`;
@@ -314,6 +319,7 @@ export async function importLogs(dataDirectory: string, paths: string[], options
         } else if (there) {
           result.outcome = 'conflict';
           result.message = 'A different file by this name is already there; left as it was.';
+          options.onFile?.(result);
           continue;
         } else {
           await fs.mkdir(dirname(target), { recursive: true });
@@ -333,6 +339,7 @@ export async function importLogs(dataDirectory: string, paths: string[], options
       } catch (error) {
         Object.assign(result, { outcome: 'error', message: (error as Error).message });
       }
+      options.onFile?.(result);
     }
     await storeIndex(dataDirectory, index);
     return { files: staged.map((s) => s.result), problems };

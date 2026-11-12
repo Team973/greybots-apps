@@ -7,6 +7,7 @@ import type { HootLogStatus, HootProgress, OwletStatus } from './hoot';
 import type { ImportStatus, ImportSummary } from './import';
 import type { Annotation, SessionEvents } from './events';
 import type { EventZipOptions, EventZipStatus, EventZipSummary } from './event-zip';
+import type { IoLogPage } from './io-log';
 import type { LibraryItem, LibraryItemOf, LibraryKind, Report, ReportSummary } from './library';
 import type { EarlierRun, LiveStatus } from './live';
 import type { MatchInfo, OffloadedFile, OffloadStatus } from './offload';
@@ -182,8 +183,11 @@ export interface DiagnosticsApi {
   openDataDirectory(): Promise<string>;
   checkConnection(): Promise<ConnectionReport>;
   getOffloadStatus(): Promise<OffloadStatus>;
-  // Starts an offload and resolves when it's done, to why it didn't start or ''.
-  startOffload(): Promise<string>;
+  // Starts an offload and resolves when it's done, to why it didn't start or
+  // ''. Turbo pauses the robot program while it downloads (turbo.ts).
+  startOffload(turbo?: boolean): Promise<string>;
+  // Lets the robot program go again after a turbo download couldn't.
+  resumeRobotCode(): Promise<string>;
   // Deletes from the robot the logs the last download pulled (as
   // OffloadStatus.clearable has them, named by its downloadedAt and how many,
   // so a stale request does nothing). Resolves to why it didn't, or ''.
@@ -216,6 +220,10 @@ export interface DiagnosticsApi {
   cancelEventZip(): Promise<void>;
   // Shows the last zip made in the file manager.
   showEventZip(): Promise<void>;
+  // The transfer log's lines after `after` (0 for all kept), for the Debug page.
+  getIoLog(after: number): Promise<IoLogPage>;
+  // Shows the transfer log's file in the file manager.
+  showIoLog(): Promise<void>;
   getSignalLogs(): Promise<SignalLogFile[]>;
   // Moves a log's files to the Recycle Bin and forgets its notes and
   // caches. Kept: Driver Station logs another log also has.
@@ -309,6 +317,7 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'checkConnection',
   'getOffloadStatus',
   'startOffload',
+  'resumeRobotCode',
   'clearRobotLogs',
   'getOffloadedFiles',
   'importLogs',
@@ -323,6 +332,8 @@ export const ipcChannels: (keyof DiagnosticsApi)[] = [
   'getEventZipStatus',
   'cancelEventZip',
   'showEventZip',
+  'getIoLog',
+  'showIoLog',
   'getSignalLogs',
   'deleteLog',
   'openSignalLog',

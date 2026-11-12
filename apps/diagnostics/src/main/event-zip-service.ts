@@ -16,8 +16,10 @@ import {
   type EventZipStatus,
   type EventZipSummary
 } from '@shared/event-zip';
+import { formatBytes } from '@shared/bytes';
 import { runKinds } from '@shared/usb';
 import { writeZip } from './export/zip-writer';
+import { ioLog } from './io-log';
 import { loadSettings } from './settings-store';
 import { signalLogs } from './signals-service';
 import { dataDirectory } from './storage';
@@ -82,9 +84,19 @@ async function zipTo(path: string, directory: string, files: string[], options: 
   try {
     const result = await writeZip(part, inputs, {
       signal: cancel.signal,
-      onProgress: (p) => { progress = { ...p, filesTotal: files.length, bytesTotal }; }
+      onProgress: (p) => { progress = { ...p, filesTotal: files.length, bytesTotal }; },
+      onFile: (file) => ioLog({
+        area: 'zip',
+        op: 'zip',
+        outcome: file.outcome,
+        path: fromPath.get(file.from) ?? file.from,
+        bytes: file.bytes,
+        ms: file.ms,
+        message: file.message ?? `${formatBytes(file.compressed ?? 0)} zipped, as ${file.name}`
+      })
     });
     await fs.rename(part, path);
+    ioLog({ area: 'zip', op: 'save', outcome: 'ok', path, bytes: result.bytesOut });
     last = {
       path,
       files: result.files,
@@ -97,6 +109,7 @@ async function zipTo(path: string, directory: string, files: string[], options: 
   } catch (error) {
     await fs.rm(part, { force: true }).catch(() => {});
     const cancelled = cancel.signal.aborted;
+    ioLog({ area: 'zip', op: 'save', outcome: 'fail', path, message: cancelled ? 'cancelled; what was written is removed' : (error as Error).message });
     last = {
       path,
       files: 0,

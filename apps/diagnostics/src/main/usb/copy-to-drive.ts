@@ -56,6 +56,8 @@ export interface CopyOptions {
   // How one file is copied; the app's runs in a process of its own, so a
   // cancel stops it part way (usb-service.ts). Rejects when cancelled.
   copyFile?: (from: string, to: string) => Promise<void>;
+  // Each file's outcome, for the transfer log.
+  onIo?: (entry: { outcome: 'ok' | 'skip' | 'fail'; path: string; bytes?: number; ms?: number; message?: string }) => void;
 }
 
 export async function copyLogsToDrive(
@@ -77,7 +79,10 @@ export async function copyLogsToDrive(
   for (const path of files) {
     const stat = await fs.stat(join(dataDirectory, ...path.split('/'))).catch(() => null);
     if (stat?.isFile()) sources.push({ path, size: stat.size, modified: stat.mtime });
-    else result.failed.push({ path, message: 'Not in the data folder any more.' });
+    else {
+      result.failed.push({ path, message: 'Not in the data folder any more.' });
+      options.onIo?.({ outcome: 'fail', path, message: 'Not in the data folder any more.' });
+    }
   }
 
   const progress: UsbExportProgress = {
@@ -126,10 +131,12 @@ export async function copyLogsToDrive(
     progress.current = source.path;
     onProgress({ ...progress });
     const target = join(folder, ...source.path.split('/'));
+    const fileStarted = Date.now();
     try {
       const there = await fs.stat(target).catch(() => null);
       if (there?.size === source.size) {
         result.skipped += 1;
+        options.onIo?.({ outcome: 'skip', path: source.path, bytes: source.size, message: 'already on the drive' });
       } else {
         await fs.mkdir(dirname(target), { recursive: true });
         const part = `${target}.part`;
@@ -158,9 +165,11 @@ export async function copyLogsToDrive(
         result.copied += 1;
         result.bytes += source.size;
         progress.bytesCopied += source.size;
+        options.onIo?.({ outcome: 'ok', path: source.path, bytes: source.size, ms: Date.now() - fileStarted, message: `to ${target}` });
       }
       onFile(`${prefix}/${source.path}`, source.size);
     } catch (error) {
+      options.onIo?.({ outcome: 'fail', path: source.path, bytes: source.size, ms: Date.now() - fileStarted, message: signal?.aborted ? 'cancelled' : (error as Error).message });
       if (signal?.aborted) {
         result.cancelled = true;
         break;

@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import AutosView from '@/views/AutosView.vue';
+import DebugView from '@/views/DebugView.vue';
 import LogExportView from '@/views/LogExportView.vue';
 import LogImportView from '@/views/LogImportView.vue';
 import PrintReportView from '@/views/PrintReportView.vue';
@@ -33,6 +34,7 @@ const router = createRouter({
     { path: '/offload', redirect: '/import' },
     { path: '/download', redirect: '/import' },
     { path: '/storage', redirect: '/export' },
+    { path: '/debug', name: 'debug', component: DebugView, meta: { title: 'Debug' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: 'Settings' } },
     // What Save as PDF prints, in a window of its own (main/index.ts).
     { path: '/print/report/:id', name: 'print-report', component: PrintReportView, meta: { title: 'Report', bare: true } },
@@ -40,8 +42,10 @@ const router = createRouter({
   ]
 });
 
+// The window's title bar: the page, the app and its version, on every page.
+const appTitle = `Greybots Diagnostics ${__APP_VERSION__}`;
 router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} | Greybots Diagnostics` : 'Greybots Diagnostics';
+  document.title = to.meta.title ? `${to.meta.title} | ${appTitle}` : appTitle;
 });
 
 export default router;

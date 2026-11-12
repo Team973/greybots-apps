@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import '@material/web/button/filled-button';
 import '@material/web/button/outlined-button';
 import AppDialog from '@greybots/common/components/AppDialog.vue';
@@ -14,7 +15,7 @@ import ImportedLogsCard from '@/components/ImportedLogsCard.vue';
 import ImportLogsCard from '@/components/ImportLogsCard.vue';
 import SaveStatus from '@/components/SaveStatus.vue';
 import UsbImportCard from '@/components/UsbImportCard.vue';
-import { formatBytes, formatTime } from '@/format';
+import { formatBytes, formatTime, formatWhen } from '@/format';
 import { useSettingsDraft } from '@/settings-draft';
 
 // Logs coming in: the robot (how to reach it, saved as it's changed,
@@ -104,12 +105,33 @@ function schedule() {
   }, status.value?.running ? runningRefreshMs : refreshMs);
 }
 
-async function offloadNow() {
+async function offloadNow(turbo = false) {
   startMessage.value = '';
-  const offload = window.diagnostics.startOffload();
+  errorsOpen.value = false;
+  const offload = window.diagnostics.startOffload(turbo);
   // Shows the run as started straight away rather than at the next refresh.
   await refresh();
   startMessage.value = await offload;
+  await refresh();
+}
+
+// What went wrong with the last download, opened from its failed badge.
+const errorsOpen = ref(false);
+
+// --- Turbo download: the robot program paused while it downloads ---
+const turboHelp = 'Pauses the robot program while its logs download, so the download has the roboRIO to itself, then lets it go again. ' +
+  "Only with the robot disabled and not on a field. Until it's done the robot can't be enabled; rebooting it, Restart Robot Code " +
+  'in the Driver Station, or deploying code also starts it again.';
+const turboBadges: Record<string, { text: string; kind: string }> = {
+  checking: { text: 'Checking the robot is disabled…', kind: 'busy' },
+  paused: { text: 'Robot code paused', kind: 'warn' },
+  resumed: { text: 'Robot code resumed', kind: 'ok' },
+  refused: { text: 'Robot code not paused', kind: 'idle' },
+  'resume-failed': { text: 'Robot code still paused', kind: 'bad' }
+};
+const resumeMessage = ref('');
+async function resumeRobotCode() {
+  resumeMessage.value = await window.diagnostics.resumeRobotCode();
   await refresh();
 }
 
@@ -207,7 +229,7 @@ onUnmounted(() => clearTimeout(timer));
   </section>
 
   <section class="card">
-    <h2 title="Logs already on this computer aren't pulled again. What's come in is under Latest imported logs, below.">Download</h2>
+    <h2 title="Logs already on this computer aren't pulled again. What's come in is under Latest imported logs, below.">Download from Bot</h2>
     <div class="field-row">
       <span title="As soon as the robot connects.">Download automatically</span>
       <Switch id="auto-offload-switch" :model-value="draft.autoOffload" @update:model-value="edit({ autoOffload: $event })"></Switch>
@@ -245,10 +267,19 @@ onUnmounted(() => clearTimeout(timer));
       </div>
 
       <div class="card-actions">
-        <md-filled-button id="offload-now" :disabled="status.running" @click="offloadNow">
+        <md-filled-button id="offload-now" :disabled="status.running" @click="offloadNow()">
           {{ status.running ? 'Downloading…' : 'Download now' }}
         </md-filled-button>
+        <md-outlined-button id="offload-turbo" :disabled="status.running" :title="turboHelp" @click="offloadNow(true)">Turbo download</md-outlined-button>
+        <span v-if="status.running && status.runStartedAt" id="offload-since" class="hint small" :title="formatTime(status.runStartedAt)">since {{ formatWhen(status.runStartedAt) }}</span>
         <span v-if="startMessage" class="error-text">{{ startMessage }}</span>
+      </div>
+
+      <div v-if="status.turbo" id="turbo-status" class="badges">
+        <span class="badge" :class="turboBadges[status.turbo.state].kind" :title="status.turbo.programs.join(', ')">{{ turboBadges[status.turbo.state].text }}</span>
+        <span class="hint small">{{ status.turbo.message }} <span :title="formatTime(status.turbo.at)">({{ formatWhen(status.turbo.at) }})</span></span>
+        <md-outlined-button v-if="status.turbo.state === 'resume-failed' && !status.running" id="turbo-resume" @click="resumeRobotCode">Resume robot code</md-outlined-button>
+        <span v-if="resumeMessage" class="error-text">{{ resumeMessage }}</span>
       </div>
 
       <div v-if="status.lastRun && !status.running" id="last-run" class="badges"
@@ -257,11 +288,14 @@ onUnmounted(() => clearTimeout(timer));
         <span class="badge ok">{{ status.lastRun.copied }} downloaded</span>
         <span class="badge warn">{{ status.lastRun.skipped }} already here</span>
         <span v-if="status.lastRun.tooOld" class="badge idle" title="Older than the days set above: left on the robot.">{{ status.lastRun.tooOld }} too old</span>
+        <button v-if="status.lastRun.errors.length" id="offload-failed" type="button" class="badge bad badge-button" :aria-expanded="errorsOpen"
+          title="What went wrong" @click="errorsOpen = !errorsOpen">{{ status.lastRun.errors.length }} failed {{ errorsOpen ? '▴' : '▾' }}</button>
+        <span id="last-run-when" class="hint small" :title="formatTime(status.lastRun.finishedAt)">at {{ formatWhen(status.lastRun.finishedAt) }}</span>
       </div>
-      <details v-if="status.lastRun && !status.running && status.lastRun.errors.length" class="small">
-        <summary>What went wrong</summary>
+      <div v-if="errorsOpen && status.lastRun && !status.running && status.lastRun.errors.length" id="offload-errors" class="failures small">
         <p v-for="error in status.lastRun.errors" :key="error" class="error-text">{{ error }}</p>
-      </details>
+        <RouterLink :to="{ path: '/debug', query: { area: 'robot', show: 'fail' } }">Every line in the Debug log</RouterLink>
+      </div>
     </template>
   </section>
 
@@ -332,6 +366,20 @@ onUnmounted(() => clearTimeout(timer));
 </template>
 
 <style scoped>
+.badge-button {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.failures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow: auto;
+}
+
 .progress {
   display: flex;
   flex-direction: column;

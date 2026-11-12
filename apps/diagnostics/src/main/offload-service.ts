@@ -15,13 +15,17 @@ import {
   type OffloadStatus,
   type RobotLogLocation
 } from '@shared/offload';
+import type { IoArea } from '@shared/io-log';
 import { robotAddresses } from '@shared/robot-address';
 import type { Settings } from '@shared/settings';
+import { turboRefusal, type TurboState } from '@shared/turbo';
+import { ioLog } from './io-log';
 import { clearableExtensions, clearLogs, type ClearCandidate } from './offload/clear';
 import { findRobot } from './offload/find-robot';
 import { loadIndex } from './offload/offload-index';
-import { offloadLogs, openIndexStore, type MatchDone, type OffloadResult } from './offload/offload';
+import { offloadLogs, openIndexStore, type MatchDone, type OffloadIo, type OffloadResult } from './offload/offload';
 import { LocalReader, SftpReader } from './offload/readers';
+import { pauseRobotCode, readRobotControl, resumeRobotCode } from './offload/turbo';
 import { afterMatchDownloaded, afterNewLogs, logIdsNow } from './reports';
 import { loadSettings } from './settings-store';
 import { dataDirectory, ensureStorageLayout } from './storage';
@@ -44,6 +48,7 @@ const driverStationLocations: RobotLogLocation[] = [
 
 const status: OffloadStatus = {
   running: false,
+  runStartedAt: null,
   autoOffload: true,
   robotHost: null,
   stage: 'idle',
@@ -52,8 +57,50 @@ const status: OffloadStatus = {
   lastRun: null,
   clearable: null,
   clearing: false,
-  lastClear: null
+  lastClear: null,
+  turbo: null
 };
+
+// Each file operation, to the transfer log.
+const logTo = (area: IoArea) => (entry: OffloadIo) => ioLog({ area, ...entry });
+
+function setTurbo(state: TurboState['state'], message: string, from: Partial<TurboState> = {}) {
+  const before = status.turbo;
+  status.turbo = {
+    state,
+    host: from.host ?? before?.host ?? '',
+    pids: from.pids ?? before?.pids ?? [],
+    programs: from.programs ?? before?.programs ?? [],
+    at: new Date().toISOString(),
+    message
+  };
+}
+
+// Lets the robot program go again after a turbo download couldn't (the
+// page's button). Resolves to why it didn't, or ''.
+export async function resumeTurbo(): Promise<string> {
+  const turbo = status.turbo;
+  if (!turbo || (turbo.state !== 'resume-failed' && turbo.state !== 'paused') || status.running) return '';
+  try {
+    await resumeRobotCode(null, turbo.host, turbo.pids);
+    setTurbo('resumed', 'Robot code resumed.');
+    ioLog({ area: 'robot', op: 'resume robot code', outcome: 'ok', path: turbo.host, message: `pids ${turbo.pids.join(', ')}` });
+    return '';
+  } catch (error) {
+    const message = (error as Error).message;
+    setTurbo('resume-failed', `Couldn't resume robot code: ${message}. Restart robot code from the Driver Station.`);
+    ioLog({ area: 'robot', op: 'resume robot code', outcome: 'fail', path: turbo.host, message });
+    return message;
+  }
+}
+
+// On quitting with the robot program paused: let it go first, if it can
+// (the download's stopped anyway).
+export async function resumeTurboOnQuit(): Promise<void> {
+  const turbo = status.turbo;
+  if (turbo?.state !== 'paused' && turbo?.state !== 'resume-failed') return;
+  await Promise.race([resumeRobotCode(null, turbo.host, turbo.pids), new Promise((resolve) => setTimeout(resolve, 5000))]).catch(() => {});
+}
 
 // What may be cleared off the robot: the last download's files from it, as
 // they were then (with where their copies are). Offered for this long.
@@ -125,10 +172,14 @@ function addResult(summary: OffloadRunSummary, result: OffloadResult, changed: s
 
 // Offloads from the robot, if it can be found, and from the Driver Station's
 // folder, if this computer has one. Resolves to why it didn't start, or ''.
-// `host` skips looking for the robot when the caller just found it.
-export async function runOffload(automatic: boolean, host?: string | null): Promise<string> {
+// `host` skips looking for the robot when the caller just found it. `turbo`
+// (someone pressed Turbo download, never an automatic one) pauses the robot
+// program while its logs come, if it's disabled and not on a field.
+export async function runOffload(automatic: boolean, host?: string | null, turbo = false): Promise<string> {
   if (status.running) return 'A download is already running.';
+  if (turbo && automatic) turbo = false;
   status.running = true;
+  status.runStartedAt = new Date().toISOString();
   status.stage = 'connecting';
   status.looking = [];
   status.jobs = [];
@@ -175,7 +226,15 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
 
     // Driver Station logs are on this computer: they don't wait for the robot.
     const local = process.platform === 'win32'
-      ? offloadLogs(directory, { label: 'Driver Station logs', reader: new LocalReader(), origin: 'local', robot, locations: driverStationLocations, since }, onProgress, new Date(), store)
+      ? offloadLogs(directory, {
+        label: 'Driver Station logs',
+        reader: new LocalReader(),
+        origin: 'local',
+        robot,
+        locations: driverStationLocations,
+        since,
+        onIo: logTo('driver-station')
+      }, onProgress, new Date(), store)
         .then((result) => addResult(summary, result, changed), (error: Error) => { summary.errors.push(`Driver Station logs: ${error.message}`); })
       : Promise.resolve();
 
@@ -192,8 +251,30 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
       }
       summary.host = robotHost;
       let reader: SftpReader | null = null;
+      // The robot program's processes, while paused for a turbo download.
+      let paused: number[] = [];
+      const loginStarted = performance.now();
       try {
         reader = await SftpReader.connect(robotHost);
+        ioLog({ area: 'robot', op: 'log in', outcome: 'ok', path: robotHost, ms: performance.now() - loginStarted });
+        if (turbo) {
+          setTurbo('checking', 'Checking the robot is disabled…', { host: robotHost, pids: [], programs: [] });
+          const refusal = turboRefusal(await readRobotControl(robotHost));
+          if (refusal) {
+            setTurbo('refused', refusal);
+            ioLog({ area: 'robot', op: 'pause robot code', outcome: 'skip', path: robotHost, message: refusal });
+          } else {
+            try {
+              const programs = await pauseRobotCode(reader);
+              paused = programs.map((p) => p.pid);
+              setTurbo('paused', 'Robot code paused while downloading.', { pids: paused, programs: programs.map((p) => p.program) });
+              ioLog({ area: 'robot', op: 'pause robot code', outcome: 'ok', path: robotHost, message: programs.map((p) => `${p.pid} ${p.program}`).join('; ') });
+            } catch (error) {
+              setTurbo('refused', `Not paused: ${(error as Error).message}`);
+              ioLog({ area: 'robot', op: 'pause robot code', outcome: 'fail', path: robotHost, message: (error as Error).message });
+            }
+          }
+        }
         status.stage = 'pulling';
         // Each match's reports as soon as its files are here (and the Driver
         // Station's, which are on this computer and come quickly), not after
@@ -207,7 +288,7 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
             await afterMatchDownloaded(ids, handled, localPaths, matches);
           })().catch((error) => console.error(error));
         };
-        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since, onMatchDone };
+        const job = { label: 'From the robot', reader, origin: 'robot' as const, robot, locations: robotLogLocations, since, onMatchDone, onIo: logTo('robot') };
         const result = await offloadLogs(directory, job, onProgress, new Date(), store);
         addResult(summary, result, changed);
         // Logs only (not the robot program's own log): offered for clearing.
@@ -225,7 +306,21 @@ export async function runOffload(automatic: boolean, host?: string | null): Prom
         status.stage = 'pulling';
         if (reader && !reader.connected) summary.interrupted = true;
         summary.errors.push(`${reader ? 'Download from' : "Couldn't log in to"} the robot at ${robotHost}: ${(error as Error).message}`);
+        if (!reader) ioLog({ area: 'robot', op: 'log in', outcome: 'fail', path: robotHost, ms: performance.now() - loginStarted, message: (error as Error).message });
       } finally {
+        // Turbo: the robot program goes again however the download ended.
+        if (paused.length) {
+          try {
+            await resumeRobotCode(reader, robotHost, paused);
+            setTurbo('resumed', 'Robot code resumed after the download.');
+            ioLog({ area: 'robot', op: 'resume robot code', outcome: 'ok', path: robotHost, message: `pids ${paused.join(', ')}` });
+          } catch (error) {
+            const message = (error as Error).message;
+            setTurbo('resume-failed', `Couldn't resume robot code: ${message}. Resume it here, or restart robot code from the Driver Station.`);
+            ioLog({ area: 'robot', op: 'resume robot code', outcome: 'fail', path: robotHost, message });
+            summary.errors.push(`Robot code is still paused: ${message}`);
+          }
+        }
         reader?.close();
       }
     })();

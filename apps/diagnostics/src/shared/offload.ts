@@ -4,6 +4,7 @@
 
 import type { LogSource } from './storage-layout';
 import type { Settings } from './settings';
+import type { TurboState } from './turbo';
 
 // A place on the roboRIO that logs are pulled from.
 export interface RobotLogLocation {
@@ -180,6 +181,8 @@ export type OffloadStage = 'idle' | 'connecting' | 'pulling';
 
 export interface OffloadStatus {
   running: boolean;
+  // When the download running now started.
+  runStartedAt: string | null;
   autoOffload: boolean;
   // Where the robot answered on its last check, or null if it didn't.
   robotHost: string | null;
@@ -194,6 +197,8 @@ export interface OffloadStatus {
   clearable: ClearableLogs | null;
   clearing: boolean;
   lastClear: ClearSummary | null;
+  // The latest turbo download's pause of the robot program (turbo.ts).
+  turbo: TurboState | null;
 }
 
 export interface ClearableLogs {

@@ -11,7 +11,8 @@ import { checkConnection } from './connection-check';
 import { chooseImport, importStatus, runImport } from './import-service';
 import { earlierRuns, liveStatus } from './live-service';
 import { getLibraryItem, listLibrary, saveLibraryItem, storeLibraryItem } from './library-store';
-import { clearRobotLogs, offloadedFiles, offloadStatus, runOffload, watchForRobot } from './offload-service';
+import { clearRobotLogs, offloadedFiles, offloadStatus, resumeTurbo, resumeTurboOnQuit, runOffload, watchForRobot } from './offload-service';
+import { ioLogFile, ioLogSince } from './io-log';
 import { deleteNote, saveNote } from './notes-store';
 import { addModel, listModels, readModelFile, removeModel } from './robot-models';
 import { cancelReports, deleteReport, exportReports, generateReport, importReports, listReports, loadReport, pipelineStatus, runPipelines } from './reports';
@@ -61,7 +62,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0d1117',
-    title: 'Greybots Diagnostics',
+    title: `Greybots Diagnostics ${app.getVersion()}`,
     icon: devIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -230,6 +231,15 @@ const handlers: DiagnosticsApi = {
   async cancelEventZip() {
     cancelEventZip();
   },
+  async getIoLog(after) {
+    return ioLogSince(Number(after) || 0);
+  },
+  async showIoLog() {
+    // Its folder until there's a line in it.
+    const file = ioLogFile();
+    if (await fs.stat(file).then(() => true, () => false)) shell.showItemInFolder(file);
+    else await shell.openPath(dirname(file));
+  },
   async showEventZip() {
     const zip = eventZipStatus().last;
     if (zip && !zip.cancelled && !zip.problem) shell.showItemInFolder(zip.path);
@@ -255,8 +265,11 @@ const handlers: DiagnosticsApi = {
   async getOffloadStatus() {
     return offloadStatus();
   },
-  async startOffload() {
-    return runOffload(false);
+  async startOffload(turbo) {
+    return runOffload(false, undefined, turbo === true);
+  },
+  async resumeRobotCode() {
+    return resumeTurbo();
   },
   async clearRobotLogs(downloadedAt, count) {
     if (typeof downloadedAt !== 'string' || typeof count !== 'number') throw new Error('Not a request to clear logs.');
@@ -471,6 +484,17 @@ if (!app.requestSingleInstanceLock()) {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
+  });
+
+  // Quitting while a turbo download has the robot program paused: it's
+  // let go first (a few seconds at most).
+  let resumedForQuit = false;
+  app.on('before-quit', (event) => {
+    const turbo = offloadStatus().turbo;
+    if (resumedForQuit || (turbo?.state !== 'paused' && turbo?.state !== 'resume-failed')) return;
+    event.preventDefault();
+    resumedForQuit = true;
+    resumeTurboOnQuit().finally(() => app.quit());
   });
 
   // Everywhere but macOS, closing the window quits the app.
