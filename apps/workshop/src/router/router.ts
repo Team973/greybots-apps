@@ -30,8 +30,6 @@ const router = createRouter({
     { path: '/sessions/:id', name: 'session', component: () => import('@/views/SessionView.vue'), meta: { title: 'Session plan', requiresAccess: true } },
     { path: '/milestones', name: 'milestones', component: () => import('@/views/MilestonesView.vue'), meta: { title: 'Milestones', requiresAccess: true } },
     { path: '/milestones/:id', name: 'milestone', component: () => import('@/views/MilestoneView.vue'), meta: { title: 'Milestone', requiresAccess: true } },
-    { path: '/points', name: 'points', component: () => import('@/views/PointsView.vue'), meta: { title: 'GreyPoints', requiresAccess: true } },
-    { path: '/rewards', name: 'rewards', component: () => import('@/views/RewardsView.vue'), meta: { title: 'Rewards', requiresAccess: true } },
     { path: '/setup', name: 'setup', component: () => import('@/views/SetupView.vue'), meta: { title: 'Setup', requiresAccess: true, requiresLead: true } },
     { path: '/people', name: 'people', component: () => import('@/views/PeopleView.vue'), meta: { title: 'People', requiresAccess: true, requiresLead: true } },
     { path: '/login', name: 'login', component: LoginView, meta: { title: 'Sign in', guestOnly: true } },

@@ -6,7 +6,6 @@ import ComponentChips from '@/components/ComponentChips.vue';
 import TicketForm from '@/components/TicketForm.vue';
 import { errorMessage, unwrap } from '@/lib/db';
 import { formatDate, formatSessionTime } from '@/lib/dates';
-import { fetchTicketAwards, type PointAward } from '@/lib/points';
 import type { Session } from '@/lib/sessions';
 import { draftOf, fetchTicket, isOverdue, reopenTicket, statusText, updateTicket, type Ticket, type TicketDraft } from '@/lib/tickets';
 import { supabase } from '@greybots/common/supabase/client';
@@ -22,7 +21,6 @@ const route = useRoute();
 
 const ticket = ref<Ticket | null>(null);
 const sessions = ref<Session[]>([]);
-const awards = ref<PointAward[]>([]);
 const loaded = ref(false);
 const error = ref('');
 
@@ -30,7 +28,6 @@ const editing = ref(false);
 const draft = ref<TicketDraft | null>(null);
 const saving = ref(false);
 const closing = ref(false);
-const notice = ref('');
 
 async function load() {
   error.value = '';
@@ -53,7 +50,6 @@ async function loadExtras(found: Ticket) {
     await supabase.from('WorkshopSessionTicket').select('session:WorkshopSession(*)').eq('ticket_id', found.id)
   ) as unknown as { session: Session }[];
   sessions.value = plan.map((p) => p.session).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
-  awards.value = found.status === 'closed' ? await fetchTicketAwards(found.id) : [];
 }
 watch(() => route.params.number, load, { immediate: true });
 
@@ -62,7 +58,6 @@ const canEdit = computed(() => auth.isMember && ticket.value?.status !== 'closed
 function startEdit() {
   if (!ticket.value) return;
   draft.value = draftOf(ticket.value);
-  notice.value = '';
   editing.value = true;
 }
 
@@ -71,10 +66,7 @@ async function save() {
   error.value = '';
   saving.value = true;
   try {
-    const hadBounty = draft.value.bounty;
-    const saved = await updateTicket(ticket.value, draft.value);
-    if (hadBounty && !saved.bounty) notice.value = 'The bounty was cleared: whoever set it is now on the ticket. Someone else needs to set it again.';
-    ticket.value = saved;
+    ticket.value = await updateTicket(ticket.value, draft.value);
     editing.value = false;
   } catch (e) {
     error.value = errorMessage(e);
@@ -93,7 +85,6 @@ async function reopen() {
   error.value = '';
   try {
     ticket.value = await reopenTicket(ticket.value);
-    awards.value = [];
   } catch (e) {
     error.value = errorMessage(e);
   }
@@ -118,11 +109,10 @@ const milestone = computed(() => directory.milestone(ticket.value?.milestone_id)
           <button v-if="auth.isLead && ticket.status === 'closed'" class="button" @click="reopen">Reopen</button>
         </div>
       </header>
-      <p v-if="notice" class="hint warning">{{ notice }}</p>
 
       <section v-if="editing && draft" class="panel">
         <form id="edit-ticket-form" @submit.prevent="save">
-          <TicketForm v-model="draft" :bounty-set-by="ticket.bounty_set_by" />
+          <TicketForm v-model="draft" />
         </form>
         <div class="form-actions">
           <button type="button" class="button" @click="editing = false">Cancel</button>
@@ -134,7 +124,6 @@ const milestone = computed(() => directory.milestone(ticket.value?.milestone_id)
         <section class="panel">
           <div class="meta">
             <span class="chip" :class="[`status-${ticket.status}`, ticket.close_reason ? `reason-${ticket.close_reason}` : '']">{{ statusText(ticket) }}</span>
-            <span v-if="ticket.bounty" class="chip points">{{ ticket.bounty }} pts</span>
             <span v-if="isOverdue(ticket)" class="chip overdue">Overdue</span>
             <ComponentChips :model-value="ticket.component_ids" />
           </div>
@@ -153,11 +142,6 @@ const milestone = computed(() => directory.milestone(ticket.value?.milestone_id)
               <RouterLink v-if="milestone" :to="`/milestones/${milestone.id}`">{{ milestone.name }}</RouterLink>
               <template v-else>None</template>
             </dd>
-            <dt>Bounty</dt>
-            <dd>
-              <template v-if="ticket.bounty">{{ ticket.bounty }} points, set by {{ directory.personName(ticket.bounty_set_by) }}</template>
-              <template v-else>None yet</template>
-            </dd>
             <dt>Opened</dt>
             <dd>{{ formatDate(ticket.created_at) }} by {{ directory.personName(ticket.created_by) }}</dd>
             <template v-if="ticket.status === 'closed' && ticket.closed_at">
@@ -165,13 +149,6 @@ const milestone = computed(() => directory.milestone(ticket.value?.milestone_id)
               <dd>{{ formatDate(ticket.closed_at) }} by {{ directory.personName(ticket.closed_by) }}</dd>
             </template>
           </dl>
-        </section>
-
-        <section v-if="awards.length" class="panel">
-          <h2>Points paid out</h2>
-          <ul class="plain-list">
-            <li v-for="award in awards" :key="award.id">{{ directory.personName(award.user_id) }}: <strong>{{ award.points }}</strong></li>
-          </ul>
         </section>
 
         <section class="panel">
@@ -217,11 +194,6 @@ const milestone = computed(() => directory.milestone(ticket.value?.milestone_id)
 .form-actions {
   justify-content: flex-end;
   margin-top: 8px;
-}
-
-.warning {
-  color: #d0711a;
-  opacity: 1;
 }
 
 .meta {

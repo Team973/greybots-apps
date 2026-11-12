@@ -25,8 +25,6 @@ const pages: { to: string; label: string; lead?: boolean }[] = [
   { to: '/tickets', label: 'Tickets' },
   { to: '/sessions', label: 'Sessions' },
   { to: '/milestones', label: 'Milestones' },
-  { to: '/points', label: 'GreyPoints' },
-  { to: '/rewards', label: 'Rewards' },
   { to: '/setup', label: 'Setup', lead: true },
   { to: '/people', label: 'People', lead: true }
 ];

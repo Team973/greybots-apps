@@ -7,7 +7,7 @@ import { isOverdue, statusText, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDirectoryStore } from '@/stores/directory-store';
 
-// One ticket in a list: number, title, status, who, when, and its bounty.
+// One ticket in a list: number, title, status, who, and when.
 // The `actions` slot sits at the end of the row (remove from plan, move...).
 const props = withDefaults(defineProps<{ ticket: Ticket; showMilestone?: boolean }>(), { showMilestone: false });
 
@@ -32,7 +32,6 @@ const milestone = computed(() => (props.showMilestone ? directory.milestone(prop
       </RouterLink>
       <div class="meta">
         <span class="chip" :class="[`status-${ticket.status}`, ticket.close_reason ? `reason-${ticket.close_reason}` : '']">{{ statusText(ticket) }}</span>
-        <span v-if="ticket.bounty" class="chip points">{{ ticket.bounty }} pts</span>
         <span v-if="ticket.due_date" class="chip" :class="{ overdue: isOverdue(ticket) }">
           {{ isOverdue(ticket) ? 'Overdue · ' : 'Due ' }}{{ formatDay(ticket.due_date) }}
         </span>
