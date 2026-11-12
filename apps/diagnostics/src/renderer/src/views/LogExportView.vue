@@ -27,7 +27,7 @@ import {
   type UsbExportSummary,
   type UsbStatus
 } from '@shared/usb';
-import { formatBytes, formatTime } from '@/format';
+import { formatBytes, formatTime, formatWhen } from '@/format';
 import { useSettingsStore } from '@/stores/settings-store';
 
 // Logs going out: copying them to a USB drive (or a folder), and what's
@@ -319,8 +319,9 @@ onUnmounted(() => {
       <span v-if="exportResult.cancelled" id="usb-export-cancelled" class="badge warn">Cancelled</span>
       <span v-else-if="exportResult.problem" class="badge bad">Interrupted</span>
       <span class="badge ok">{{ exportResult.copied }} copied</span>
-      <span class="badge warn">{{ exportResult.skipped }} skipped</span>
+      <span class="badge warn" title="On the drive already: not copied again">{{ exportResult.skipped }} already on the drive</span>
       <span v-if="exportResult.failed.length" class="badge bad">{{ exportResult.failed.length }} failed</span>
+      <span class="hint small">at {{ formatWhen(exportResult.finishedAt) }}</span>
     </div>
     <details v-if="exportResult && !usb?.exporting && (exportResult.problem || exportResult.failed.length)" class="small">
       <summary>What went wrong</summary>

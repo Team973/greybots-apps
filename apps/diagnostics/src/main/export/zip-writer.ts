@@ -60,6 +60,8 @@ export async function writeZip(to: string, inputs: ZipInput[],
     level?: number;
     signal?: AbortSignal;
     onProgress?: (progress: ZipWriteProgress) => void;
+    // Each file once it's in (or left out), for the transfer log.
+    onFile?: (file: { from: string; name: string; outcome: 'ok' | 'fail'; bytes?: number; compressed?: number; ms: number; message?: string }) => void;
     // Lower for tests, which can't write 4 GB.
     zip64Above?: number;
     max32?: number;
@@ -82,8 +84,10 @@ export async function writeZip(to: string, inputs: ZipInput[],
       const stat = await fs.stat(input.from).catch(() => null);
       if (!stat?.isFile()) {
         missing.push(input.from);
+        options.onFile?.({ ...input, outcome: 'fail', ms: 0, message: 'not in the data folder any more: left out' });
         continue;
       }
+      const fileStarted = performance.now();
       options.onProgress?.({ filesDone: written.length, bytesDone: bytesIn, current: input.name });
       const name = Buffer.from(input.name, 'utf8');
       const { time, date } = dosDateTime(stat.mtime);
@@ -143,6 +147,7 @@ export async function writeZip(to: string, inputs: ZipInput[],
         await handle.write(big, 0, 16, offset + 34 + name.length);
       }
       written.push({ name, crc: crc >>> 0, compressedSize, size, offset, time, date });
+      options.onFile?.({ ...input, outcome: 'ok', bytes: size, compressed: compressedSize, ms: performance.now() - fileStarted });
     }
 
     // The central directory: each file again, with where it is.

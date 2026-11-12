@@ -231,6 +231,29 @@ export class SftpReader implements FileReader, RobotFiles {
     return Readable.from(chunks(), { objectMode: false });
   }
 
+  // --- Turbo download (turbo.ts): a command on the robot, as lvuser ---
+
+  exec(command: string, timeoutMs = 10_000): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('The robot took too long to answer.')), timeoutMs);
+      this.client.exec(command, (error, stream) => {
+        if (error) {
+          clearTimeout(timer);
+          reject(error);
+          return;
+        }
+        let stdout = '';
+        let stderr = '';
+        stream.on('data', (data: Buffer) => { stdout += data.toString(); });
+        stream.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+        stream.on('close', (code: number | null) => {
+          clearTimeout(timer);
+          resolve({ code, stdout, stderr });
+        });
+      });
+    });
+  }
+
   close() {
     this.client.end();
   }

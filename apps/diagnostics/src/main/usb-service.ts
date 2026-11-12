@@ -15,7 +15,8 @@ import { BrowserWindow, dialog, Notification, utilityProcess, type UtilityProces
 import { promises as fs } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 
-import { filesOfLogs, usbImportFolders, type UsbAutoImport, type UsbDrive, type UsbStatus, describeUsbImport, usbImportCounts } from '@shared/usb';
+import { filesOfLogs, usbImportFolders, type UsbAutoImport, type UsbDrive, type UsbStatus, describeUsbImport, usbImportCounts, usbImportFailures } from '@shared/usb';
+import { ioLog } from './io-log';
 import { mergeExported, type ExportedLog, type UsbExportProgress, type UsbExportSummary } from '@shared/usb';
 import { importExtensions } from './import/importer';
 import { importStatus, runImport } from './import-service';
@@ -103,6 +104,8 @@ async function importFromDrive(drive: UsbDrive): Promise<boolean> {
   const stored = await storedLogs(directory);
   const unseen = found.filter((file) => !seen.has(seenKey(pathOnDrive(drive, file.path), file.size)));
   const fresh = unseen.filter((file) => !stored.has(storedKey(basename(file.path), file.size)));
+  for (const file of unseen) if (!fresh.includes(file)) ioLog({ area: 'usb-import', op: 'import', outcome: 'skip', path: file.path, bytes: file.size, message: 'already here' });
+  for (const file of found) if (!unseen.includes(file)) ioLog({ area: 'usb-import', op: 'import', outcome: 'skip', path: file.path, bytes: file.size, message: 'imported from (or copied to) a drive before' });
   // Those already here are remembered too, so the next look skips them sooner.
   await addSeen(directory, unseen.filter((file) => !fresh.includes(file)).map((file) => seenKey(pathOnDrive(drive, file.path), file.size)));
   const at = new Date().toISOString();
@@ -112,7 +115,7 @@ async function importFromDrive(drive: UsbDrive): Promise<boolean> {
   }
 
   autoImport = { drive: drive.label, at, state: 'importing', message: `Importing ${fresh.length} new log file${fresh.length === 1 ? '' : 's'}…` };
-  const result = await runImport(fresh.map((f) => f.path), settings.teamNumber, { pathBase: drive.root, source: `USB drive ${drive.label}` });
+  const result = await runImport(fresh.map((f) => f.path), settings.teamNumber, { pathBase: drive.root, source: `USB drive ${drive.label}`, area: 'usb-import' });
   if (typeof result === 'string') {
     // Another import started first: tried again next time round.
     if (importStatus().running) return false;
@@ -130,7 +133,7 @@ async function importFromDrive(drive: UsbDrive): Promise<boolean> {
   const counts = usbImportCounts(result, found.length - fresh.length);
   // The drive gone by the end, with files not brought in: taken out part way.
   const gone = !(await fs.stat(drive.root).then(() => true, () => false));
-  autoImport = { drive: drive.label, at: result.finishedAt, state: gone && counts.failed > 0 ? 'interrupted' : 'done', message, counts };
+  autoImport = { drive: drive.label, at: result.finishedAt, state: gone && counts.failed > 0 ? 'interrupted' : 'done', message, counts, failures: usbImportFailures(result) };
   notify(`From USB drive ${drive.label}: ${message}`);
   return true;
 }
@@ -200,7 +203,11 @@ export async function exportToUsb(logIds: string[], destination: string): Promis
         // The path below the export folder is its path in the data folder.
         exported.push({ localPath: path.slice(path.indexOf('/') + 1), size, at: new Date().toISOString(), destination: exportFolder });
       },
-      { signal: cancel.signal, copyFile: (from, to) => copier.copy(from, to) })
+      {
+        signal: cancel.signal,
+        copyFile: (from, to) => copier.copy(from, to),
+        onIo: (entry) => ioLog({ area: 'usb-export', op: 'copy', ...entry })
+      })
       .finally(() => copier.stop());
     await addSeen(directory, copiedKeys).catch(() => {});
     exportedLogs = mergeExported(exportedLogs, exported.reverse());

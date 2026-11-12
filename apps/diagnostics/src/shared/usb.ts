@@ -136,6 +136,28 @@ export interface UsbAutoImport {
   // Log files brought in, skipped (here already), and not brought in.
   // Missing while it's importing, and from before they were counted.
   counts?: UsbImportCounts;
+  // The files not brought in, and why (the first few hundred).
+  failures?: UsbImportFailure[];
+}
+
+export interface UsbImportFailure {
+  // Where it was on the drive.
+  path: string;
+  message: string;
+}
+
+const maxFailuresKept = 300;
+
+// What didn't come in from an import, and why: files that couldn't be read
+// or clashed with a different file here, and things that couldn't be looked
+// in (a damaged zip).
+export function usbImportFailures(summary: ImportSummary): UsbImportFailure[] {
+  return [
+    ...summary.files
+      .filter((f) => f.outcome === 'conflict' || f.outcome === 'error')
+      .map((f) => ({ path: f.from, message: f.message || (f.outcome === 'conflict' ? 'A different file by this name is already here.' : "Couldn't be read.") })),
+    ...summary.problems.map((problem) => ({ path: '', message: problem }))
+  ].slice(0, maxFailuresKept);
 }
 
 export interface UsbImportCounts {

@@ -49,6 +49,7 @@ const interrupted = computed(() => !!offload.value && !offload.value.running && 
     <RouterLink to="/autos" class="nav-button">Autos</RouterLink>
     <RouterLink to="/import" class="nav-button">Log Import</RouterLink>
     <RouterLink to="/export" class="nav-button">Log Export</RouterLink>
+    <RouterLink to="/debug" class="nav-button" title="Every file operation while logs come in or go out">Debug</RouterLink>
     <RouterLink to="/settings" class="nav-button">Settings</RouterLink>
     <RouterLink id="robot-status" to="/import" class="robot-badge" :class="robot.state" :title="robot.title">
       <span class="dot" aria-hidden="true"></span>{{ robot.label }}<span v-if="interrupted" class="interrupted"> · Download interrupted</span>

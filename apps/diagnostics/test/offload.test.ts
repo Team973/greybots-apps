@@ -114,15 +114,23 @@ async function main() {
     assert.ok((await fs.readdir(wpilog, { recursive: true })).some((p) => String(p).endsWith('FRC_20261107_030907_mttd_P5.wpilog')));
 
     // --- Already here ---
-    const again = await offloadLogs(directory, job(new FakeRobot(tree(), { '/u/logs': '/home/lvuser/logs' })), () => {}, now);
+    const io: { op: string; outcome: string; path?: string; message?: string }[] = [];
+    const again = await offloadLogs(directory, { ...job(new FakeRobot(tree(), { '/u/logs': '/home/lvuser/logs' })), onIo: (e) => io.push(e) }, () => {}, now);
     assert.equal(again.copied, 0);
     assert.equal(again.skipped, 5);
+    // Each one in the transfer log, and why it was skipped.
+    assert.equal(io.filter((e) => e.outcome === 'skip' && e.message?.startsWith('already here')).length, 5);
 
     // --- A log that grew since: pulled again, and named as changed ---
     const grown = tree();
     grown['/home/lvuser/logs'].files[0] = { ...grown['/home/lvuser/logs'].files[0], size: 160, modified: '2026-11-07T03:20:00.000Z' };
-    const regrown = await offloadLogs(directory, job(new FakeRobot(grown, { '/u/logs': '/home/lvuser/logs' })), () => {}, now);
+    const grownIo: { op: string; outcome: string; path?: string; bytes?: number; message?: string }[] = [];
+    const regrown = await offloadLogs(directory, { ...job(new FakeRobot(grown, { '/u/logs': '/home/lvuser/logs' })), onIo: (e) => grownIo.push(e) }, () => {}, now);
     assert.equal(regrown.copied, 1);
+    const pulledIo = grownIo.filter((e) => e.outcome === 'ok');
+    assert.equal(pulledIo.length, 1);
+    assert.equal(pulledIo[0].bytes, 160);
+    assert.ok(pulledIo[0].message?.includes('again: it changed'));
     assert.equal(regrown.changed.length, 1);
     assert.ok(regrown.changed[0].endsWith('FRC_20261107_030907_mttd_P5.wpilog'));
     assert.deepEqual(first.changed, [], 'nothing was here before the first run');

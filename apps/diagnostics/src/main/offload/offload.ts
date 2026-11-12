@@ -24,6 +24,18 @@ export interface OffloadJob {
   // reports can be made while the rest come: its files' paths in the data
   // folder, and how many matches this download is pulling in all.
   onMatchDone?: (match: MatchDone) => void;
+  // Each file operation, for the transfer log (io-log.ts): pulled, skipped
+  // (here already, too old) or failed, with why.
+  onIo?: (entry: OffloadIo) => void;
+}
+
+export interface OffloadIo {
+  op: string;
+  outcome: 'ok' | 'skip' | 'fail';
+  path?: string;
+  bytes?: number;
+  ms?: number;
+  message?: string;
 }
 
 export interface MatchDone {
@@ -166,6 +178,7 @@ export async function offloadLogs(
 ): Promise<OffloadResult> {
   const result: OffloadResult = { copied: 0, skipped: 0, tooOld: 0, bytes: 0, errors: [], changed: [], pulled: [], interrupted: false };
   const own = !store;
+  const io = (entry: OffloadIo) => job.onIo?.(entry);
   const { index, writer } = store ?? (await openIndexStore(dataDirectory));
   const absolute = (localPath: string) => join(dataDirectory, ...localPath.split('/'));
 
@@ -309,6 +322,7 @@ export async function offloadLogs(
       const recorded = recordedTime(file, now);
       if (job.since && recorded < job.since) {
         result.tooOld += 1;
+        io({ op: 'download', outcome: 'skip', path: file.path, bytes: file.size, message: `too old: recorded ${recorded.toISOString()}` });
         continue;
       }
       const localPath = logPathSegments(job.robot, recorded, where.location.source, file.name).join('/');
@@ -316,6 +330,7 @@ export async function offloadLogs(
         // Two files with the same name, from the same day and source. Pulled
         // at once they'd write over each other.
         result.errors.push(`${file.path}: another file has the same name; not pulled.`);
+        io({ op: 'download', outcome: 'fail', path: file.path, bytes: file.size, message: `another file has the same name (${localPath}); not pulled` });
         continue;
       }
       claimed.add(localPath);
@@ -331,6 +346,7 @@ export async function offloadLogs(
         // be the same file, since logs never change once finished.
         if (!known) record(download);
         result.skipped += 1;
+        io({ op: 'download', outcome: 'skip', path: download.file.path, bytes: download.file.size, message: `already here: ${download.localPath}` });
       } else {
         enqueue({ ...download, replaces: onDisk[i] !== null || !!known });
       }
@@ -358,6 +374,7 @@ export async function offloadLogs(
     } catch (error) {
       if (job.reader.connected) result.errors.push(`Looking for logs: ${(error as Error).message}`);
       else lostConnection = true;
+      io({ op: 'list', outcome: 'fail', message: (error as Error).message });
     } finally {
       searching = false;
       progress.searching = false;
@@ -430,10 +447,20 @@ export async function offloadLogs(
       progress.active.push(download.file.name);
       report();
       let pulled = false;
+      const started = performance.now();
       try {
         await pull(download);
         pulled = true;
+        io({
+          op: 'download',
+          outcome: 'ok',
+          path: download.file.path,
+          bytes: download.file.size,
+          ms: performance.now() - started,
+          message: `to ${download.localPath}${download.replaces ? ' (again: it changed)' : ''}`
+        });
       } catch (error) {
+        io({ op: 'download', outcome: 'fail', path: download.file.path, bytes: download.file.size, ms: performance.now() - started, message: (error as Error).message });
         // The partial download is kept, for the next run to finish. With the
         // robot gone, it's one interruption, said once (below), not an
         // error a file.
@@ -459,6 +486,7 @@ export async function offloadLogs(
   if (lostConnection) {
     result.interrupted = true;
     result.errors.push('Lost the connection to the robot.');
+    io({ op: 'connection', outcome: 'fail', message: 'Lost the connection to the robot.' });
   }
   if (own) await writer.flush();
   return result;

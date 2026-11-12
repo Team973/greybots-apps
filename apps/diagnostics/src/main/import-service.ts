@@ -3,6 +3,8 @@
 import { BrowserWindow, dialog } from 'electron';
 
 import type { ImportStatus, ImportSummary } from '@shared/import';
+import type { IoArea } from '@shared/io-log';
+import { ioLog } from './io-log';
 import { importExtensions, importLogs } from './import/importer';
 import { afterNewLogs, logIdsNow } from './reports';
 import { loadSettings } from './settings-store';
@@ -15,12 +17,16 @@ export function importStatus(): ImportStatus {
 }
 
 // Resolves when it's done, to what happened (or why it didn't start).
-export async function runImport(paths: string[], fallbackTeam: number, options: { pathBase?: string; source?: string } = {}): Promise<ImportSummary | string> {
+// `area` is where its lines go in the transfer log (a USB drive's, or a
+// person's import).
+export async function runImport(paths: string[], fallbackTeam: number,
+  options: { pathBase?: string; source?: string; area?: IoArea } = {}): Promise<ImportSummary | string> {
   if (status.running) return 'An import is already running.';
   if (!Number.isInteger(fallbackTeam) || fallbackTeam < 1 || fallbackTeam > 99999) return 'Enter a team number from 1 to 99999.';
   if (paths.length === 0) return 'Nothing to import.';
   status.running = true;
   const startedAt = new Date().toISOString();
+  const area = options.area ?? 'import';
   try {
     const settings = await loadSettings();
     const directory = dataDirectory(settings);
@@ -29,12 +35,20 @@ export async function runImport(paths: string[], fallbackTeam: number, options: 
     const { files, problems } = await importLogs(directory, paths, {
       fallbackTeam,
       pathBase: options.pathBase,
-      onProgress: (progress) => { status.progress = progress; }
+      onProgress: (progress) => { status.progress = progress; },
+      onFile: (file) => ioLog({
+        area,
+        op: 'import',
+        outcome: file.outcome === 'copied' ? 'ok' : file.outcome === 'already-here' ? 'skip' : 'fail',
+        path: file.from,
+        message: [file.outcome === 'already-here' ? 'already here' : '', file.message, file.localPath ? `to ${file.localPath}` : ''].filter(Boolean).join(': ')
+      })
     });
     if (files.length === 0 && problems.length === 0) {
       problems.push(`No logs found. Logs are ${importExtensions.join(', ')} files, or zip files of them.`);
     }
     status.last = { startedAt, ...(options.source ? { source: options.source } : {}), finishedAt: new Date().toISOString(), files, problems };
+    for (const problem of problems) ioLog({ area, op: 'import', outcome: 'fail', message: problem });
     afterNewLogs(before, 'import').catch(() => {});
     return status.last;
   } finally {
