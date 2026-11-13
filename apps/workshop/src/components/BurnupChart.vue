@@ -7,8 +7,7 @@ import type { Burnup, BurnupPoint, Forecast } from '@/lib/milestones';
 // day, as two lines on one count axis. Each visible forecast carries both
 // lines on, dashed, to where they meet (marked with the date), or out to a
 // horizon when they don't. The target date, if there is one, is a vertical
-// marker. Hovering (or arrowing along) shows every value for that day, and
-// the same numbers are available as a table.
+// marker. Hovering (or arrowing along) shows every value for that day.
 // `title` replaces the "Burnup" caption; '' leaves it out (the page has one).
 const props = withDefaults(defineProps<{ data: Burnup; targetDate: string | null; title?: string }>(), { title: 'Burnup' });
 
@@ -232,20 +231,6 @@ const summary = computed(() => {
       <p v-for="m in data.missing" :key="m.kind" class="muted">{{ forecastLabel[m.kind] }}: {{ m.reason }}</p>
       <p v-if="!allDone && !readouts.length && !data.missing.length && lastPoint && lastPoint.scope > 0" class="muted">No forecast is shown for this milestone.</p>
     </div>
-
-    <details class="table-view">
-      <summary>Show as a table</summary>
-      <table>
-        <thead>
-          <tr><th>Day</th><th>Scope</th><th>Done</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in [...data.points].reverse()" :key="p.date">
-            <td>{{ formatDay(p.date) }}</td><td>{{ p.scope }}</td><td>{{ p.done }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </details>
   </figure>
 </template>
 
@@ -463,28 +448,5 @@ svg:focus-visible {
 .readout .key {
   margin-right: 4px;
   vertical-align: middle;
-}
-
-.table-view summary {
-  cursor: pointer;
-  font-size: 0.85rem;
-  opacity: 0.8;
-}
-
-.table-view table {
-  margin-top: 6px;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-.table-view th,
-.table-view td {
-  padding: 2px 12px 2px 0;
-  text-align: left;
-}
-
-.table-view {
-  max-height: 260px;
-  overflow-y: auto;
 }
 </style>
