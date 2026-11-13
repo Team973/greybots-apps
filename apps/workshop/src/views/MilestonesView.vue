@@ -4,7 +4,8 @@ import { RouterLink } from 'vue-router';
 import AppDialog from '@greybots/common/components/AppDialog.vue';
 import { errorMessage } from '@/lib/db';
 import { formatDate } from '@/lib/dates';
-import { burnup, milestoneProgress } from '@/lib/milestones';
+import { burnup, forecastLabels, milestoneProgress } from '@/lib/milestones';
+import { fetchForecastSessions, type Session } from '@/lib/sessions';
 import { fetchTickets, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDirectoryStore, type Milestone } from '@/stores/directory-store';
@@ -16,6 +17,7 @@ const auth = useAuthStore();
 const directory = useDirectoryStore();
 
 const tickets = ref<Ticket[]>([]);
+const sessions = ref<Session[]>([]);
 const loaded = ref(false);
 const error = ref('');
 const showClosed = ref(false);
@@ -24,7 +26,7 @@ async function load() {
   error.value = '';
   try {
     await directory.loadMilestones();
-    tickets.value = await fetchTickets({ status: 'all' });
+    [tickets.value, sessions.value] = await Promise.all([fetchTickets({ status: 'all' }), fetchForecastSessions()]);
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
@@ -38,7 +40,8 @@ const rows = computed(() =>
     .filter((m) => showClosed.value || !m.closed_at)
     .map((milestone) => {
       const own = tickets.value.filter((t) => t.milestone_id === milestone.id);
-      return { milestone, progress: milestoneProgress(own), forecast: burnup(own, milestone.created_at).forecast };
+      const forecasts = burnup(own, milestone, sessions.value).forecasts.filter((f) => f.completion);
+      return { milestone, progress: milestoneProgress(own), forecasts };
     })
 );
 const closedCount = computed(() => directory.milestones.filter((m) => m.closed_at).length);
@@ -79,7 +82,7 @@ async function add() {
 
     <template v-else>
       <ul v-if="rows.length" class="milestones viz-root">
-        <li v-for="{ milestone, progress, forecast } in rows" :key="milestone.id">
+        <li v-for="{ milestone, progress, forecasts } in rows" :key="milestone.id">
           <RouterLink :to="`/milestones/${milestone.id}`" class="panel milestone">
             <div class="panel-header">
               <h2>{{ milestone.name }}</h2>
@@ -91,8 +94,13 @@ async function add() {
             </div>
             <div class="numbers">
               <span><strong>{{ progress.done }}</strong> of {{ progress.scope }} done</span>
-              <span v-if="!milestone.closed_at && forecast" class="muted" :class="{ late: milestone.target_date && forecast > milestone.target_date }">
-                Forecast {{ formatDate(forecast) }}
+              <span
+                v-for="f in forecasts"
+                :key="f.kind"
+                class="muted"
+                :class="{ late: milestone.target_date && f.completion! > milestone.target_date }"
+              >
+                {{ forecasts.length > 1 ? `${forecastLabels[f.kind]} forecast` : 'Forecast' }} {{ formatDate(f.completion!) }}
               </span>
             </div>
           </RouterLink>

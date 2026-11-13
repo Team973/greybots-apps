@@ -13,7 +13,8 @@ own role (`workshop_role`), managed from the shared People page.
 | Ticket (`/tickets/:number`) | everyone | One ticket. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
 | Sessions | everyone | The shop schedule as a calendar. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
 | Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. |
-| Milestones | everyone | Progress and forecast for each milestone; leads add, edit, and close them and move tickets between them. |
+| Milestones | everyone | Progress, burnup, and forecasts for each milestone; leads add, edit, and close them, move tickets between them, and pick which forecasts everyone sees. |
+| Dashboard | everyone | Burnup charts over any set of tickets (some milestones, some components, or both). Leads add, edit, reorder, and remove them. |
 | Setup | leads | The components tickets are tagged with. |
 | People | leads | The shared user management page. |
 
@@ -38,6 +39,28 @@ A repeating schedule is stored as a `WorkshopSessionSeries`, but its sessions
 are ordinary `WorkshopSession` rows made when the series is, so each can be
 moved or cancelled on its own. "This and following" applies a change (or a
 cancellation) to the rest of the series from that session on.
+
+## Burnups and forecasts
+
+A burnup has a scope line (tickets meant to get done, so not duplicates or
+won't-dos) and a done line. Each milestone has one, and the Dashboard holds
+more: each dashboard chart covers the tickets in **any** of its milestones and
+tagged with **any** of its components (an empty list doesn't filter, so a
+chart with neither covers every ticket).
+
+Every burnup can show two forecasts. Leads turn either or both on (**Forecasts…**
+under a milestone's chart, or a dashboard chart's **Edit**), and everyone sees
+the ones that are on. Each carries both lines forward and marks the date they
+meet:
+
+- **Plan:** the lead's estimate of tickets closed and opened a week.
+- **Sessions:** tickets closed and added per shop session over the last N
+  sessions (N set per chart, 4 by default), carried forward session by
+  session over the schedule, then at the recent spacing past its end.
+
+If tickets aren't closing faster than they're added, the lines don't meet and
+the page says so. The settings are columns on `WorkshopMilestone` and
+`WorkshopDashboardChart` (`20261112120000_workshop_burnup_forecasts_and_dashboard.sql`).
 
 ## Not here yet
 
