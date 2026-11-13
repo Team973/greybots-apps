@@ -7,8 +7,10 @@ import { isOverdue, statusText, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDirectoryStore } from '@/stores/directory-store';
 
-// One ticket in a list: number, title, status, who, and when.
-// The `actions` slot sits at the end of the row (remove from plan, move...).
+// One ticket in a list: number, title, status, who, and when. The whole row
+// opens the ticket (the title link covers it); the `actions` slot sits at the
+// end of the row, above that, so its buttons still work (remove from plan,
+// move...).
 const props = withDefaults(defineProps<{ ticket: Ticket; showMilestone?: boolean }>(), { showMilestone: false });
 
 const auth = useAuthStore();
@@ -48,6 +50,7 @@ const milestone = computed(() => (props.showMilestone ? directory.milestone(prop
 
 <style scoped>
 .ticket-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -81,8 +84,29 @@ const milestone = computed(() => (props.showMilestone ? directory.milestone(prop
   overflow-wrap: anywhere;
 }
 
-.title:hover {
+/* Stretched over the whole row, so anywhere on it opens the ticket. */
+.title::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.ticket-row:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.ticket-row:hover .title {
   text-decoration: underline;
+}
+
+.title:focus-visible {
+  outline: none;
+}
+
+.title:focus-visible::after {
+  outline: 2px solid var(--header-hover-color);
+  outline-offset: -2px;
 }
 
 .number {
@@ -102,6 +126,8 @@ const milestone = computed(() => (props.showMilestone ? directory.milestone(prop
 }
 
 .actions {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;

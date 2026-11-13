@@ -150,6 +150,16 @@ export async function updateTicket(ticket: Ticket, draft: TicketDraft): Promise<
     return unwrap(await supabase.from('WorkshopTicket').update(fields(draft)).eq('id', ticket.id).select().single()) as Ticket;
 }
 
+// Saves some of a ticket's fields (as a ticket page edits them one at a time),
+// leaving the rest as they are in the database. Returns it as the database
+// left it.
+export async function updateTicketFields(ticket: Ticket, changes: Partial<TicketDraft>): Promise<Ticket> {
+    if (changes.title !== undefined && !changes.title.trim()) throw new Error('Give the ticket a title.');
+    const all = fields({ ...draftOf(ticket), ...changes });
+    const update = Object.fromEntries(Object.keys(changes).map((key) => [key, all[key as keyof typeof all]]));
+    return unwrap(await supabase.from('WorkshopTicket').update(update).eq('id', ticket.id).select().single()) as Ticket;
+}
+
 export async function patchTicket(ticket: Ticket, changes: Partial<Pick<Ticket, 'status' | 'milestone_id'>>): Promise<Ticket> {
     return unwrap(await supabase.from('WorkshopTicket').update(changes).eq('id', ticket.id).select().single()) as Ticket;
 }

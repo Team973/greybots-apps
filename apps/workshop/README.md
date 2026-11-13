@@ -10,7 +10,7 @@ own role (`workshop_role`), managed from the shared People page.
 | --- | --- | --- |
 | My tasks (`/`) | everyone | The next shop session and your tickets in its plan, then your other open tickets. |
 | Tickets | everyone | Every ticket, filterable by status, person, milestone, and component. Members and above open and edit them. |
-| Ticket (`/tickets/:number`) | everyone | One ticket. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
+| Ticket (`/tickets/:number`) | everyone | One ticket, with its details in a sidebar. Members and above click a field to edit it (each change saves straight away). Leads add it to upcoming sessions' plans. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
 | Sessions | everyone | The shop schedule as a calendar. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
 | Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. |
 | Milestones | everyone | Progress, burnup, and forecasts for each milestone; leads add, edit, and close them, move tickets between them, and pick which forecasts everyone sees. |
