@@ -7,7 +7,7 @@ import EditableField from '@/components/EditableField.vue';
 import PeoplePicker from '@/components/PeoplePicker.vue';
 import { errorMessage, unwrap } from '@/lib/db';
 import { formatDate, formatSessionTime, formatTime } from '@/lib/dates';
-import type { Session } from '@/lib/sessions';
+import { addToPlan, fetchPlan, fetchSessions, removeFromPlan, type Session } from '@/lib/sessions';
 import {
   closeReasonLabels,
   fetchTicket,
@@ -27,13 +27,16 @@ import { useDirectoryStore } from '@/stores/directory-store';
 // its details down the right. Members and above edit it a field at a time,
 // by clicking the field, while it's open (a closed ticket can still be moved
 // to another milestone). Leads and admins close and reopen it. There are no
-// comments on purpose: Workshop is a plan, not a chat.
+// comments on purpose: Workshop is a plan, not a chat. Leads and admins also
+// add an open ticket to upcoming shop sessions' plans, or take it off them.
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const route = useRoute();
 
 const ticket = ref<Ticket | null>(null);
 const sessions = ref<Session[]>([]);
+// Sessions in the next few months, to add the ticket to.
+const upcoming = ref<Session[]>([]);
 const loaded = ref(false);
 const error = ref('');
 const closing = ref(false);
@@ -59,7 +62,40 @@ async function loadExtras(found: Ticket) {
     await supabase.from('WorkshopSessionTicket').select('session:WorkshopSession(*)').eq('ticket_id', found.id)
   ) as unknown as { session: Session }[];
   sessions.value = plan.map((p) => p.session).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  const now = new Date();
+  upcoming.value = await fetchSessions(now.toISOString(), new Date(now.getTime() + 120 * 86_400_000).toISOString());
 }
+
+// --- Shop sessions (leads and admins) ---
+
+const canPlan = computed(() => auth.isLead && ticket.value?.status !== 'closed');
+const addable = computed(() => upcoming.value.filter((u) => !sessions.value.some((s) => s.id === u.id)));
+const isUpcoming = (session: Session) => Date.parse(session.ends_at) > Date.now();
+const planBusy = ref(false);
+async function changePlan(action: () => Promise<unknown>) {
+  error.value = '';
+  planBusy.value = true;
+  try {
+    await action();
+    await loadExtras(ticket.value!);
+  } catch (e) {
+    error.value = errorMessage(e);
+  } finally {
+    planBusy.value = false;
+  }
+}
+// At the end of that session's plan.
+function addToSession(event: Event) {
+  const select = event.target as HTMLSelectElement;
+  const sessionId = select.value;
+  select.value = '';
+  if (!sessionId) return;
+  return changePlan(async () => {
+    const plan = await fetchPlan(sessionId);
+    await addToPlan(sessionId, [ticket.value!.id], Math.max(0, ...plan.map((p) => p.sort_order)));
+  });
+}
+const removeFromSession = (session: Session) => changePlan(() => removeFromPlan(session.id, ticket.value!.id));
 
 const canEdit = computed(() => auth.isMember && ticket.value?.status !== 'closed');
 // The database lets a closed ticket change milestone, too.
@@ -240,13 +276,31 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
 
           <section class="panel">
             <h2>Shop sessions</h2>
-            <ul v-if="sessions.length" class="plain-list">
+            <ul v-if="sessions.length" class="session-list">
               <li v-for="session in sessions" :key="session.id">
-                <RouterLink :to="`/sessions/${session.id}`">{{ session.title }}</RouterLink>
-                <span class="muted"> · {{ formatSessionTime(session.starts_at, session.ends_at) }}</span>
+                <span>
+                  <RouterLink :to="`/sessions/${session.id}`">{{ session.title }}</RouterLink>
+                  <span class="muted"> · {{ formatSessionTime(session.starts_at, session.ends_at) }}</span>
+                </span>
+                <button
+                  v-if="canPlan && isUpcoming(session)"
+                  type="button"
+                  class="button small"
+                  :disabled="planBusy"
+                  :aria-label="`Take off the plan for ${session.title}, ${formatSessionTime(session.starts_at, session.ends_at)}`"
+                  @click="removeFromSession(session)"
+                >
+                  Remove
+                </button>
               </li>
             </ul>
             <p v-else class="empty">Not planned for any session yet.</p>
+            <select v-if="canPlan && addable.length" class="control add-session" aria-label="Add to a shop session" :disabled="planBusy" @change="addToSession">
+              <option value="">Add to a session…</option>
+              <option v-for="session in addable" :key="session.id" :value="session.id">
+                {{ session.title }} · {{ formatSessionTime(session.starts_at, session.ends_at) }}
+              </option>
+            </select>
           </section>
         </template>
       </div>
@@ -513,15 +567,29 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
 }
 
 .details a,
-.plain-list a {
+.session-list a {
   color: var(--header-hover-color);
 }
 
-.plain-list {
+.session-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
-  padding-left: 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.session-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.add-session {
+  align-self: flex-start;
+  max-width: 100%;
 }
 </style>
