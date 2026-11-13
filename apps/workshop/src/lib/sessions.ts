@@ -51,6 +51,13 @@ export async function fetchSessions(fromIso: string, toIso: string): Promise<Ses
     ) as Session[];
 }
 
+// The sessions burnup forecasts are made from: the past two years (for the
+// recent pace) and the next year (where it's carried forward).
+export async function fetchForecastSessions(): Promise<Session[]> {
+    const day = 86_400_000;
+    return fetchSessions(new Date(Date.now() - 730 * day).toISOString(), new Date(Date.now() + 366 * day).toISOString());
+}
+
 export async function fetchSession(id: string): Promise<Session | null> {
     return unwrap(await supabase.from('WorkshopSession').select('*').eq('id', id).maybeSingle()) as Session | null;
 }

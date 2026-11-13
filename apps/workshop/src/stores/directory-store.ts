@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { hasAppAccess, type AppRole } from '@greybots/common/lib/user-roles';
 import { supabase } from '@greybots/common/supabase/client';
 import { check, unwrap } from '@/lib/db';
+import { forecastFields, type ForecastColumns } from '@/lib/milestones';
 
 // The things nearly every page needs to put names on ids: the people, the
 // components (parts of the team), and the milestones. Loaded once after
@@ -21,7 +22,7 @@ export interface Component {
     archived: boolean;
 }
 
-export interface Milestone {
+export interface Milestone extends ForecastColumns {
     id: string;
     name: string;
     description: string;
@@ -108,7 +109,8 @@ export const useDirectoryStore = defineStore('directory', {
                 name: milestone.name.trim(),
                 description: milestone.description ?? '',
                 target_date: milestone.target_date || null,
-                closed_at: milestone.closed_at ?? null
+                closed_at: milestone.closed_at ?? null,
+                ...forecastFields(milestone)
             };
             let id = milestone.id;
             if (id) {

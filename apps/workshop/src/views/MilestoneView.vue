@@ -3,24 +3,27 @@ import { computed, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import AppDialog from '@greybots/common/components/AppDialog.vue';
 import BurnupChart from '@/components/BurnupChart.vue';
+import ForecastSettingsFields from '@/components/ForecastSettingsFields.vue';
 import NewTicketDialog from '@/components/NewTicketDialog.vue';
 import TicketRow from '@/components/TicketRow.vue';
 import { errorMessage } from '@/lib/db';
 import { formatDate } from '@/lib/dates';
-import { burnup, milestoneProgress } from '@/lib/milestones';
+import { burnup, draftColumns, forecastDraft, forecastDraftProblem, milestoneProgress, type ForecastDraft } from '@/lib/milestones';
+import { fetchForecastSessions, type Session } from '@/lib/sessions';
 import { fetchTickets, moveTickets, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDirectoryStore } from '@/stores/directory-store';
 
 // One milestone: its progress and burnup, and its tickets. Leads and admins
-// edit it, close it, and move tickets to other milestones (tick some, then
-// pick where they go).
+// edit it, close it, pick which burnup forecasts everyone sees, and move
+// tickets to other milestones (tick some, then pick where they go).
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const route = useRoute();
 const router = useRouter();
 
 const tickets = ref<Ticket[]>([]);
+const sessions = ref<Session[]>([]);
 const loaded = ref(false);
 const error = ref('');
 const busy = ref(false);
@@ -30,7 +33,7 @@ const milestone = computed(() => directory.milestone(route.params.id as string))
 async function load() {
   error.value = '';
   try {
-    tickets.value = await fetchTickets({ status: 'all', milestoneId: route.params.id as string });
+    [tickets.value, sessions.value] = await Promise.all([fetchTickets({ status: 'all', milestoneId: route.params.id as string }), fetchForecastSessions()]);
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
@@ -40,7 +43,7 @@ async function load() {
 watch(() => route.params.id, load, { immediate: true });
 
 const progress = computed(() => milestoneProgress(tickets.value));
-const chart = computed(() => (milestone.value ? burnup(tickets.value, milestone.value.created_at) : null));
+const chart = computed(() => (milestone.value ? burnup(tickets.value, milestone.value, sessions.value) : null));
 const open = computed(() => tickets.value.filter((t) => t.status !== 'closed').sort((a, b) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999')));
 const closed = computed(() => tickets.value.filter((t) => t.status === 'closed'));
 
@@ -108,6 +111,22 @@ const remove = () =>
     router.replace('/milestones');
   });
 
+// --- Forecast settings (leads and admins) ---
+const configuring = ref(false);
+const forecasts = ref<ForecastDraft>(forecastDraft({}));
+function startForecasts() {
+  if (!milestone.value) return;
+  forecasts.value = forecastDraft(milestone.value);
+  dialogError.value = '';
+  configuring.value = true;
+}
+const forecastProblem = computed(() => forecastDraftProblem(forecasts.value));
+const saveForecasts = () =>
+  run(async () => {
+    await directory.saveMilestone({ ...milestone.value!, ...draftColumns(forecasts.value) });
+    configuring.value = false;
+  });
+
 const creating = ref(false);
 </script>
 
@@ -134,6 +153,9 @@ const creating = ref(false);
 
       <section v-if="chart && loaded" class="panel">
         <BurnupChart :data="chart" :target-date="milestone.target_date" />
+        <div v-if="auth.isLead" class="chart-actions">
+          <button class="button small" @click="startForecasts">Forecasts…</button>
+        </div>
       </section>
 
       <section class="panel">
@@ -196,11 +218,35 @@ const creating = ref(false);
       </template>
     </AppDialog>
 
+    <AppDialog :open="configuring" title="Burnup forecasts" @close="configuring = false">
+      <form id="milestone-forecast-form" class="forecast-form" @submit.prevent="saveForecasts">
+        <p class="hint">Everyone sees the forecasts you turn on here.</p>
+        <ForecastSettingsFields v-model="forecasts" />
+      </form>
+      <p v-if="dialogError" class="error-text">{{ dialogError }}</p>
+      <template #actions>
+        <span class="actions-spacer"></span>
+        <button class="button" @click="configuring = false">Cancel</button>
+        <button type="submit" form="milestone-forecast-form" class="button primary" :disabled="busy || !!forecastProblem">Save</button>
+      </template>
+    </AppDialog>
+
     <NewTicketDialog v-if="milestone" :open="creating" :preset="{ milestone_id: milestone.id }" @close="creating = false" @created="load" />
   </div>
 </template>
 
 <style scoped>
+.chart-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.forecast-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .back {
   color: inherit;
   opacity: 0.75;

@@ -2661,7 +2661,18 @@ CREATE TABLE IF NOT EXISTS public."WorkshopMilestone" (
     -- Set when the milestone is finished with; it drops off the active list.
     "closed_at" timestamp with time zone,
     "created_at" timestamp with time zone NOT NULL DEFAULT now(),
-    "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL
+    "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL,
+    -- Burnup forecasts, each shown or hidden for everyone. The plan forecast
+    -- uses a lead's estimate of tickets closed and opened a week; the session
+    -- forecast takes the closure rate from the last N shop sessions, and the
+    -- open rate either from the same sessions or as set (per session).
+    "forecast_plan_visible" boolean NOT NULL DEFAULT false,
+    "forecast_plan_closed_per_week" numeric CHECK ("forecast_plan_closed_per_week" >= 0),
+    "forecast_plan_opened_per_week" numeric NOT NULL DEFAULT 0 CHECK ("forecast_plan_opened_per_week" >= 0),
+    "forecast_sessions_visible" boolean NOT NULL DEFAULT true,
+    "forecast_sessions" integer NOT NULL DEFAULT 4 CHECK ("forecast_sessions" BETWEEN 1 AND 52),
+    "forecast_sessions_opened_auto" boolean NOT NULL DEFAULT false,
+    "forecast_sessions_opened_per_session" numeric NOT NULL DEFAULT 0 CHECK ("forecast_sessions_opened_per_session" >= 0)
 );
 
 -- ---------------------------------------------------------------------------
@@ -2898,6 +2909,32 @@ GRANT EXECUTE ON FUNCTION public.workshop_seed_session_plan(uuid, boolean) TO au
 GRANT EXECUTE ON FUNCTION public.workshop_seed_session_plan(uuid, boolean) TO service_role;
 
 -- ---------------------------------------------------------------------------
+-- Dashboard
+-- ---------------------------------------------------------------------------
+
+-- Burnup charts leads set up, each over the tickets matching its filter (any
+-- of some milestones, and any of some components; an empty list doesn't
+-- filter), with the same forecasts a milestone has.
+CREATE TABLE IF NOT EXISTS public."WorkshopDashboardChart" (
+    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "title" text NOT NULL CHECK (btrim("title") <> ''),
+    "sort_order" double precision NOT NULL DEFAULT 0,
+    -- The filter. Ids of deleted milestones or components just stop matching.
+    "milestone_ids" uuid[] NOT NULL DEFAULT '{}',
+    "component_ids" uuid[] NOT NULL DEFAULT '{}',
+    "target_date" date,
+    "forecast_plan_visible" boolean NOT NULL DEFAULT false,
+    "forecast_plan_closed_per_week" numeric CHECK ("forecast_plan_closed_per_week" >= 0),
+    "forecast_plan_opened_per_week" numeric NOT NULL DEFAULT 0 CHECK ("forecast_plan_opened_per_week" >= 0),
+    "forecast_sessions_visible" boolean NOT NULL DEFAULT true,
+    "forecast_sessions" integer NOT NULL DEFAULT 4 CHECK ("forecast_sessions" BETWEEN 1 AND 52),
+    "forecast_sessions_opened_auto" boolean NOT NULL DEFAULT false,
+    "forecast_sessions_opened_per_session" numeric NOT NULL DEFAULT 0 CHECK ("forecast_sessions_opened_per_session" >= 0),
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL
+);
+
+-- ---------------------------------------------------------------------------
 -- Access
 -- ---------------------------------------------------------------------------
 
@@ -2907,6 +2944,7 @@ ALTER TABLE public."WorkshopTicket" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSessionSeries" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSession" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSessionTicket" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."WorkshopDashboardChart" ENABLE ROW LEVEL SECURITY;
 
 GRANT ALL ON public."WorkshopComponent" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopMilestone" TO authenticated, service_role;
@@ -2914,6 +2952,7 @@ GRANT ALL ON public."WorkshopTicket" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSessionSeries" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSession" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSessionTicket" TO authenticated, service_role;
+GRANT ALL ON public."WorkshopDashboardChart" TO authenticated, service_role;
 
 -- Everyone in Workshop (observers included) can see everything.
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopComponent" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
@@ -2922,6 +2961,7 @@ CREATE POLICY "Enable read access for Workshop" ON public."WorkshopTicket" FOR S
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSessionSeries" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSession" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSessionTicket" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
+CREATE POLICY "Enable read access for Workshop" ON public."WorkshopDashboardChart" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 
 -- Tickets: members and above open and edit them (the trigger decides who
 -- closes them). Nobody deletes one; it's closed instead.
@@ -2932,13 +2972,17 @@ CREATE POLICY "Enable update for members" ON public."WorkshopTicket" FOR UPDATE 
     WITH CHECK ((SELECT public.workshop_role()) IN ('member', 'lead', 'admin'));
 
 -- Leads and admins run the rest: components, milestones, the schedule and
--- session plans.
+-- session plans, and the dashboard.
 CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopComponent" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable update for leads and admins" ON public."WorkshopComponent" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 
 CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopMilestone" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable update for leads and admins" ON public."WorkshopMilestone" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable delete for leads and admins" ON public."WorkshopMilestone" FOR DELETE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin'));
+
+CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopDashboardChart" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
+CREATE POLICY "Enable update for leads and admins" ON public."WorkshopDashboardChart" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
+CREATE POLICY "Enable delete for leads and admins" ON public."WorkshopDashboardChart" FOR DELETE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 
 CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopSessionSeries" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 CREATE POLICY "Enable update for leads and admins" ON public."WorkshopSessionSeries" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
