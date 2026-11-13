@@ -121,7 +121,9 @@ function describe(f: Forecast): { lead: string; result: string; date: string | n
   const lead =
     f.kind === 'plan'
       ? `Plan (${rate(f.closedRate)} closed, ${rate(f.openedRate)} opened a week)`
-      : `Last ${plural(f.sessionsUsed, 'session', 'sessions')} (${rate(f.closedRate)} closed, ${rate(f.openedRate)} added a session)`;
+      : `Last ${plural(f.sessionsUsed, 'session', 'sessions')} (${rate(f.closedRate)} closed a session; ${
+          f.openedMeasured ? `${rate(f.openedRate)} added` : f.openedRate ? `${rate(f.openedRate)} added, as set` : 'no new tickets'
+        })`;
   if (f.completion) {
     const more = f.kind === 'sessions' ? ` in ${plural(f.points.length - 1, 'more session', 'more sessions')}` : '';
     const vsTarget = props.targetDate ? ` — ${f.completion <= props.targetDate ? 'on track for' : 'after'} the target of ${formatDate(props.targetDate)}` : '';

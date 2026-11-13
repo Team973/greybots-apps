@@ -15,10 +15,12 @@ import type { Ticket } from './tickets';
 // There are two forecasts, and a lead picks which ones everyone sees:
 // * Plan: a lead's estimate of tickets closed and opened a week. The lines
 //   meet when the closed rate beats the opened rate for long enough.
-// * Sessions: the tickets closed and opened (scope added) per shop session
-//   over the last N sessions, carried forward session by session over the
-//   schedule. Past the last scheduled session, sessions are assumed to keep
-//   coming as often as the recent ones did.
+// * Sessions: the tickets closed per shop session over the last N sessions,
+//   carried forward session by session over the schedule. Tickets opened
+//   (scope added) per session is either measured from the same sessions or
+//   set by a lead (0 by default: only the closure rate is forecast). Past the
+//   last scheduled session, sessions are assumed to keep coming as often as
+//   the recent ones did.
 
 export interface MilestoneProgress {
     // Tickets meant to get done (not duplicates or won't-dos).
@@ -45,6 +47,8 @@ export interface ForecastColumns {
     forecast_plan_opened_per_week?: number;
     forecast_sessions_visible?: boolean;
     forecast_sessions?: number;
+    forecast_sessions_opened_auto?: boolean;
+    forecast_sessions_opened_per_session?: number;
 }
 
 export interface ForecastSettings {
@@ -55,6 +59,9 @@ export interface ForecastSettings {
     sessionsVisible: boolean;
     // How many recent sessions the session forecast is taken from.
     sessions: number;
+    // Measure the open rate from those sessions, or use the one set here.
+    sessionsOpenedAuto: boolean;
+    sessionsOpenedPerSession: number;
 }
 
 export const maxForecastSessions = 52;
@@ -66,7 +73,9 @@ export function forecastSettings(m: ForecastColumns): ForecastSettings {
         planClosedPerWeek: m.forecast_plan_closed_per_week ?? null,
         planOpenedPerWeek: m.forecast_plan_opened_per_week ?? 0,
         sessionsVisible: m.forecast_sessions_visible ?? true,
-        sessions: m.forecast_sessions ?? 4
+        sessions: m.forecast_sessions ?? 4,
+        sessionsOpenedAuto: m.forecast_sessions_opened_auto ?? false,
+        sessionsOpenedPerSession: m.forecast_sessions_opened_per_session ?? 0
     };
 }
 
@@ -78,7 +87,9 @@ export function forecastFields(m: ForecastColumns): Required<ForecastColumns> {
         forecast_plan_closed_per_week: s.planClosedPerWeek,
         forecast_plan_opened_per_week: s.planOpenedPerWeek,
         forecast_sessions_visible: s.sessionsVisible,
-        forecast_sessions: Math.min(maxForecastSessions, Math.max(1, Math.round(s.sessions)))
+        forecast_sessions: Math.min(maxForecastSessions, Math.max(1, Math.round(s.sessions))),
+        forecast_sessions_opened_auto: s.sessionsOpenedAuto,
+        forecast_sessions_opened_per_session: s.sessionsOpenedPerSession
     };
 }
 
@@ -89,6 +100,8 @@ export interface ForecastDraft {
     planOpened: string | number;
     sessionsVisible: boolean;
     sessions: string | number;
+    sessionsOpenedAuto: boolean;
+    sessionsOpened: string | number;
 }
 
 export function forecastDraft(m: ForecastColumns): ForecastDraft {
@@ -98,7 +111,9 @@ export function forecastDraft(m: ForecastColumns): ForecastDraft {
         planClosed: s.planClosedPerWeek ?? '',
         planOpened: s.planOpenedPerWeek,
         sessionsVisible: s.sessionsVisible,
-        sessions: s.sessions
+        sessions: s.sessions,
+        sessionsOpenedAuto: s.sessionsOpenedAuto,
+        sessionsOpened: s.sessionsOpenedPerSession
     };
 }
 
@@ -116,7 +131,9 @@ export function draftColumns(d: ForecastDraft): Required<ForecastColumns> {
         forecast_plan_closed_per_week: blank(d.planClosed) ? null : Number(d.planClosed),
         forecast_plan_opened_per_week: blank(d.planOpened) ? 0 : Number(d.planOpened),
         forecast_sessions_visible: d.sessionsVisible,
-        forecast_sessions: Number(d.sessions) || 4
+        forecast_sessions: Number(d.sessions) || 4,
+        forecast_sessions_opened_auto: d.sessionsOpenedAuto,
+        forecast_sessions_opened_per_session: blank(d.sessionsOpened) ? 0 : Number(d.sessionsOpened)
     });
 }
 
@@ -147,6 +164,8 @@ export interface Forecast {
     unit: 'week' | 'session';
     // The sessions the rates came from (session forecast only).
     sessionsUsed: number;
+    // The open rate was measured (session forecast) rather than set.
+    openedMeasured: boolean;
     // When the lines meet, or null when they don't at these rates.
     completion: string | null;
     // The projected lines from today: through the day they meet, or out to a
@@ -207,7 +226,8 @@ export function burnup(tickets: Ticket[], source: BurnupSource, sessions: Sessio
         else result.forecasts.push(planForecast(last, settings.planClosedPerWeek, settings.planOpenedPerWeek, stopAt, cap));
     }
     if (settings.sessionsVisible) {
-        const f = sessionsForecast(points, sessions, settings.sessions, stopAt, cap);
+        const opened = settings.sessionsOpenedAuto ? null : settings.sessionsOpenedPerSession;
+        const f = sessionsForecast(points, sessions, settings.sessions, opened, stopAt, cap);
         if (typeof f === 'string') result.missing.push({ kind: 'sessions', reason: f });
         else result.forecasts.push(f);
     }
@@ -216,7 +236,7 @@ export function burnup(tickets: Ticket[], source: BurnupSource, sessions: Sessio
 
 // Straight lines at the planned weekly rates.
 function planForecast(last: BurnupPoint, closed: number, opened: number, stopAt: string, cap: string): Forecast {
-    const base = { kind: 'plan' as const, closedRate: closed, openedRate: opened, unit: 'week' as const, sessionsUsed: 0, stepped: false };
+    const base = { kind: 'plan' as const, closedRate: closed, openedRate: opened, unit: 'week' as const, sessionsUsed: 0, openedMeasured: false, stepped: false };
     const remaining = last.scope - last.done;
     const gain = closed - opened;
     if (gain > 0) {
@@ -236,9 +256,17 @@ function planForecast(last: BurnupPoint, closed: number, opened: number, stopAt:
     };
 }
 
-// Per-session rates from the last `n` sessions, carried over the sessions to
-// come. Returns why there's no forecast instead, when there's nothing to go on.
-function sessionsForecast(points: BurnupPoint[], sessions: Session[], n: number, stopAt: string, cap: string): Forecast | string {
+// Per-session rates from the last `n` sessions (the open rate only when
+// `opened` is null; otherwise it's that), carried over the sessions to come.
+// Returns why there's no forecast instead, when there's nothing to go on.
+function sessionsForecast(
+    points: BurnupPoint[],
+    sessions: Session[],
+    n: number,
+    opened: number | null,
+    stopAt: string,
+    cap: string
+): Forecast | string {
     const now = Date.now();
     const start = points[0].date;
     const last = points[points.length - 1];
@@ -250,13 +278,13 @@ function sessionsForecast(points: BurnupPoint[], sessions: Session[], n: number,
         .sort((a, b) => b.starts_at.localeCompare(a.starts_at))
         .map((s) => dayOf(s.starts_at));
     const window = past.slice(0, n).filter((d) => d >= start);
-    if (window.length === 0) return 'No shop sessions since this milestone started.';
+    if (window.length === 0) return 'No shop sessions since these tickets started.';
 
     // What happened since the session before the window (or since the start).
     const before = past[window.length];
     const base = before && before >= start ? valueOn(before) : { date: start, scope: 0, done: 0 };
     const closedRate = (last.done - base.done) / window.length;
-    const openedRate = (last.scope - base.scope) / window.length;
+    const openedRate = opened ?? (last.scope - base.scope) / window.length;
 
     // The sessions to come: the schedule, then the recent spacing.
     const oldest = window[window.length - 1];
@@ -289,7 +317,17 @@ function sessionsForecast(points: BurnupPoint[], sessions: Session[], n: number,
     // Carry the last step on to the horizon when they don't meet.
     if (!completion && projected[projected.length - 1].date < stopAt) projected.push({ ...projected[projected.length - 1], date: stopAt });
 
-    return { kind: 'sessions', closedRate, openedRate, unit: 'session', sessionsUsed: window.length, completion, points: projected, stepped: true };
+    return {
+        kind: 'sessions',
+        closedRate,
+        openedRate,
+        unit: 'session',
+        sessionsUsed: window.length,
+        openedMeasured: opened === null,
+        completion,
+        points: projected,
+        stepped: true
+    };
 }
 
 export const forecastLabels: Record<ForecastKind, string> = { plan: 'Plan', sessions: 'Sessions' };

@@ -54,13 +54,16 @@ the ones that are on. Each carries both lines forward and marks the date they
 meet:
 
 - **Plan:** the lead's estimate of tickets closed and opened a week.
-- **Sessions:** tickets closed and added per shop session over the last N
-  sessions (N set per chart, 4 by default), carried forward session by
-  session over the schedule, then at the recent spacing past its end.
+- **Sessions:** tickets closed per shop session over the last N sessions (N
+  set per chart, 4 by default), carried forward session by session over the
+  schedule, then at the recent spacing past its end. Tickets opened per
+  session is either set by the lead (0 by default, so only the closure rate
+  is forecast) or measured from the same sessions.
 
 If tickets aren't closing faster than they're added, the lines don't meet and
 the page says so. The settings are columns on `WorkshopMilestone` and
-`WorkshopDashboardChart` (`20261112120000_workshop_burnup_forecasts_and_dashboard.sql`).
+`WorkshopDashboardChart` (`20261112120000_workshop_burnup_forecasts_and_dashboard.sql`
+and `20261113120000_workshop_session_forecast_open_rate.sql`).
 
 ## Not here yet
 

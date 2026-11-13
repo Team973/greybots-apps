@@ -29,6 +29,27 @@ const draft = defineModel<ForecastDraft>({ required: true });
           <input v-model="draft.sessions" type="number" min="1" :max="maxForecastSessions" step="1" required :disabled="!draft.sessionsVisible" />
         </label>
       </div>
+      <div class="opened" role="radiogroup" aria-label="Tickets opened a session">
+        <span class="opened-label">Tickets opened</span>
+        <label class="radio">
+          <input v-model="draft.sessionsOpenedAuto" type="radio" :value="false" :disabled="!draft.sessionsVisible" />
+          <input
+            v-model="draft.sessionsOpened"
+            class="rate"
+            type="number"
+            min="0"
+            step="any"
+            inputmode="decimal"
+            aria-label="Tickets opened a session"
+            :disabled="!draft.sessionsVisible || draft.sessionsOpenedAuto"
+          />
+          a session
+        </label>
+        <label class="radio">
+          <input v-model="draft.sessionsOpenedAuto" type="radio" :value="true" :disabled="!draft.sessionsVisible" />
+          Measured from the same sessions
+        </label>
+      </div>
     </fieldset>
   </div>
 </template>
@@ -59,6 +80,43 @@ legend {
   align-items: center;
   gap: 6px;
   font-weight: 600;
+}
+
+.opened {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.opened-label {
+  opacity: 0.75;
+}
+
+.radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.radio input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.rate {
+  width: 80px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-color);
+  background: var(--background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+}
+
+.rate:disabled {
+  opacity: 0.6;
 }
 
 .check input {

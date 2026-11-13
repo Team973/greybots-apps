@@ -2664,12 +2664,15 @@ CREATE TABLE IF NOT EXISTS public."WorkshopMilestone" (
     "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL,
     -- Burnup forecasts, each shown or hidden for everyone. The plan forecast
     -- uses a lead's estimate of tickets closed and opened a week; the session
-    -- forecast uses what happened over the last N shop sessions.
+    -- forecast takes the closure rate from the last N shop sessions, and the
+    -- open rate either from the same sessions or as set (per session).
     "forecast_plan_visible" boolean NOT NULL DEFAULT false,
     "forecast_plan_closed_per_week" numeric CHECK ("forecast_plan_closed_per_week" >= 0),
     "forecast_plan_opened_per_week" numeric NOT NULL DEFAULT 0 CHECK ("forecast_plan_opened_per_week" >= 0),
     "forecast_sessions_visible" boolean NOT NULL DEFAULT true,
-    "forecast_sessions" integer NOT NULL DEFAULT 4 CHECK ("forecast_sessions" BETWEEN 1 AND 52)
+    "forecast_sessions" integer NOT NULL DEFAULT 4 CHECK ("forecast_sessions" BETWEEN 1 AND 52),
+    "forecast_sessions_opened_auto" boolean NOT NULL DEFAULT false,
+    "forecast_sessions_opened_per_session" numeric NOT NULL DEFAULT 0 CHECK ("forecast_sessions_opened_per_session" >= 0)
 );
 
 -- ---------------------------------------------------------------------------
@@ -2925,6 +2928,8 @@ CREATE TABLE IF NOT EXISTS public."WorkshopDashboardChart" (
     "forecast_plan_opened_per_week" numeric NOT NULL DEFAULT 0 CHECK ("forecast_plan_opened_per_week" >= 0),
     "forecast_sessions_visible" boolean NOT NULL DEFAULT true,
     "forecast_sessions" integer NOT NULL DEFAULT 4 CHECK ("forecast_sessions" BETWEEN 1 AND 52),
+    "forecast_sessions_opened_auto" boolean NOT NULL DEFAULT false,
+    "forecast_sessions_opened_per_session" numeric NOT NULL DEFAULT 0 CHECK ("forecast_sessions_opened_per_session" >= 0),
     "created_at" timestamp with time zone NOT NULL DEFAULT now(),
     "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL
 );
