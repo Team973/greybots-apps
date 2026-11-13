@@ -170,7 +170,7 @@ const remove = () => run(() => deleteChart(editingId.value!));
         </label>
 
         <div class="field">
-          <span>Milestones (none picked: every ticket, with or without one)</span>
+          <span>Milestones (none: all)</span>
           <div class="milestone-choices">
             <label v-for="m in milestoneChoices" :key="m.id" class="choice">
               <input type="checkbox" :checked="draft.milestone_ids.includes(m.id)" @change="toggleMilestone(m.id)" />
@@ -181,7 +181,7 @@ const remove = () => run(() => deleteChart(editingId.value!));
         </div>
 
         <div class="field">
-          <span>Components (none picked: every component; otherwise tickets with any of them)</span>
+          <span>Components (none: all)</span>
           <ComponentChips v-model="draft.component_ids" editable />
         </div>
 
@@ -190,7 +190,7 @@ const remove = () => run(() => deleteChart(editingId.value!));
           <input v-model="draft.target_date" type="date" />
         </label>
 
-        <p class="hint">{{ matchingProgress.scope }} {{ matchingProgress.scope === 1 ? 'ticket matches' : 'tickets match' }} ({{ matchingProgress.done }} done).</p>
+        <p class="hint">{{ matchingProgress.scope }} {{ matchingProgress.scope === 1 ? 'ticket' : 'tickets' }} match</p>
 
         <ForecastSettingsFields v-model="forecasts" />
       </form>

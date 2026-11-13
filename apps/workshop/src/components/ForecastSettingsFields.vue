@@ -10,7 +10,6 @@ const draft = defineModel<ForecastDraft>({ required: true });
   <div class="forecast-fields">
     <fieldset>
       <legend><label class="check"><input v-model="draft.planVisible" type="checkbox" /> Plan forecast</label></legend>
-      <p class="hint">Your estimate of how fast tickets get closed, and how fast new ones get added.</p>
       <div class="form-grid">
         <label class="field">
           <span>Tickets closed a week</span>
@@ -24,10 +23,6 @@ const draft = defineModel<ForecastDraft>({ required: true });
     </fieldset>
     <fieldset>
       <legend><label class="check"><input v-model="draft.sessionsVisible" type="checkbox" /> Session forecast</label></legend>
-      <p class="hint">
-        Tickets closed and added per shop session over recent sessions, carried forward over the session schedule (and, past the end of the
-        schedule, as often as recent sessions happened).
-      </p>
       <div class="form-grid">
         <label class="field">
           <span>From the last … sessions</span>
@@ -57,10 +52,6 @@ fieldset {
 
 legend {
   padding: 0 4px;
-}
-
-.hint {
-  font-size: 0.85rem;
 }
 
 .check {
