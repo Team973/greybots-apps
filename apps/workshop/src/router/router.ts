@@ -25,7 +25,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'home', component: HomeView, meta: { title: 'My tasks', requiresAccess: true } },
     { path: '/tickets', name: 'tickets', component: () => import('@/views/TicketsView.vue'), meta: { title: 'Tickets', requiresAccess: true, wide: true } },
-    { path: '/tickets/:number(\\d+)', name: 'ticket', component: () => import('@/views/TicketView.vue'), meta: { title: 'Ticket', requiresAccess: true } },
+    { path: '/tickets/:number(\\d+)', name: 'ticket', component: () => import('@/views/TicketView.vue'), meta: { title: 'Ticket', requiresAccess: true, wide: true } },
     { path: '/sessions', name: 'sessions', component: () => import('@/views/SessionsView.vue'), meta: { title: 'Sessions', requiresAccess: true, wide: true } },
     { path: '/sessions/:id', name: 'session', component: () => import('@/views/SessionView.vue'), meta: { title: 'Session plan', requiresAccess: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: 'Dashboard', requiresAccess: true, wide: true } },
