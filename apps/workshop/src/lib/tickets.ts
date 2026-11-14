@@ -206,3 +206,25 @@ export async function moveTickets(ids: string[], milestoneId: string | null): Pr
     if (ids.length === 0) return;
     check(await supabase.from('WorkshopTicket').update({ milestone_id: milestoneId }).in('id', ids));
 }
+
+// --- Stage history ---
+
+// One step in a ticket's history (recorded by the database on every change of
+// stage). `backfilled` ones were filled in for tickets from before history was
+// kept, so the steps between them are missing.
+export interface StageChange {
+    id: number;
+    ticket_id: string;
+    from_status: TicketStatus | null;
+    to_status: TicketStatus;
+    close_reason: CloseReason | null;
+    changed_at: string;
+    changed_by: string | null;
+    backfilled: boolean;
+}
+
+export async function fetchStageHistory(ticketId: string): Promise<StageChange[]> {
+    return unwrap(
+        await supabase.from('WorkshopTicketStageChange').select('*').eq('ticket_id', ticketId).order('changed_at').order('id')
+    ) as StageChange[];
+}

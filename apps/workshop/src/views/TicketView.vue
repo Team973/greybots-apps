@@ -5,17 +5,20 @@ import CloseTicketDialog from '@/components/CloseTicketDialog.vue';
 import ComponentChips from '@/components/ComponentChips.vue';
 import EditableField from '@/components/EditableField.vue';
 import PeoplePicker from '@/components/PeoplePicker.vue';
+import StageMenu from '@/components/StageMenu.vue';
 import { errorMessage, unwrap } from '@/lib/db';
 import { formatDate, formatSessionTime, formatTime } from '@/lib/dates';
 import { addToPlan, fetchPlan, fetchSessions, removeFromPlan, type Session } from '@/lib/sessions';
 import {
   closeReasonLabels,
+  fetchStageHistory,
   fetchTicket,
   isOverdue,
   nextStages,
   reopenTicket,
   statusLabels,
   updateTicketFields,
+  type StageChange,
   type Ticket,
   type TicketDraft
 } from '@/lib/tickets';
@@ -27,7 +30,8 @@ import { useDirectoryStore } from '@/stores/directory-store';
 // its details down the right. Members and above edit it a field at a time,
 // by clicking the field, while it's open (a closed ticket can still be moved
 // to another milestone). Leads and admins close and reopen it. There are no
-// comments on purpose: Workshop is a plan, not a chat. Leads and admins also
+// comments on purpose: Workshop is a plan, not a chat. Its history through the
+// stages is at the bottom. Leads and admins also
 // add an open ticket to upcoming shop sessions' plans, or take it off them.
 const auth = useAuthStore();
 const directory = useDirectoryStore();
@@ -37,6 +41,8 @@ const ticket = ref<Ticket | null>(null);
 const sessions = ref<Session[]>([]);
 // Sessions in the next few months, to add the ticket to.
 const upcoming = ref<Session[]>([]);
+const history = ref<StageChange[]>([]);
+const historyError = ref('');
 const loaded = ref(false);
 const error = ref('');
 const closing = ref(false);
@@ -57,7 +63,19 @@ async function load() {
   }
 }
 
+async function loadHistory(found: Ticket) {
+  // On its own, so the rest of the page works even if it can't load.
+  historyError.value = '';
+  try {
+    history.value = await fetchStageHistory(found.id);
+  } catch (e) {
+    history.value = [];
+    historyError.value = errorMessage(e);
+  }
+}
+
 async function loadExtras(found: Ticket) {
+  loadHistory(found);
   const plan = unwrap(
     await supabase.from('WorkshopSessionTicket').select('session:WorkshopSession(*)').eq('ticket_id', found.id)
   ) as unknown as { session: Session }[];
@@ -133,6 +151,7 @@ function save(changes: Partial<TicketDraft>) {
   queue = queue
     .then(async () => {
       ticket.value = await updateTicketFields(ticket.value!, changes);
+      if (changes.status) await loadHistory(ticket.value);
     })
     .catch((e) => {
       error.value = errorMessage(e);
@@ -179,12 +198,7 @@ const stageLabel = computed(() => {
   if (!t) return '';
   return t.status === 'closed' && t.close_reason ? `Closed · ${closeReasonLabels[t.close_reason]}` : statusLabels[t.status];
 });
-function onStage(event: Event) {
-  const select = event.target as HTMLSelectElement;
-  const to = select.value as Ticket['status'];
-  // The dropdown always shows the current stage; the page updates it once
-  // the change is saved.
-  select.value = ticket.value!.status;
+function onStage(to: Ticket['status']) {
   editing.value = null;
   if (to === ticket.value!.status) return;
   if (to === 'closed') closing.value = true;
@@ -214,6 +228,7 @@ async function reopen() {
   error.value = '';
   try {
     ticket.value = await reopenTicket(ticket.value);
+    await loadHistory(ticket.value);
   } catch (e) {
     error.value = errorMessage(e);
   }
@@ -243,14 +258,7 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
             </EditableField>
             <div class="header-actions">
               <span v-if="saving" class="muted saving">Saving…</span>
-              <label v-if="stageChoices.length" class="stage-select" :class="`stage-${ticket.status}`">
-                <span class="visually-hidden">Stage</span>
-                <select :value="ticket.status" @change="onStage">
-                  <option :value="ticket.status" disabled>{{ stageLabel }}</option>
-                  <option v-for="choice in stageChoices" :key="choice.to" :value="choice.to">{{ choice.label }}</option>
-                </select>
-              </label>
-              <span v-else class="stage-select static" :class="`stage-${ticket.status}`">{{ stageLabel }}</span>
+              <StageMenu :status="ticket.status" :label="stageLabel" :choices="stageChoices" @pick="onStage" />
             </div>
           </header>
 
@@ -326,6 +334,32 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
               </option>
             </select>
           </section>
+
+          <details class="panel history">
+            <summary>
+              <h2>Stage history</h2>
+              <span class="muted">{{ history.length }} {{ history.length === 1 ? 'change' : 'changes' }}</span>
+            </summary>
+            <p v-if="historyError" class="error-text">Couldn't load the history: {{ historyError }}</p>
+            <ol v-else-if="history.length" class="history-list">
+              <li v-for="change in [...history].reverse()" :key="change.id">
+                <div class="history-step">
+                  <template v-if="change.from_status">
+                    <span class="chip" :class="`status-${change.from_status}`">{{ statusLabels[change.from_status] }}</span>
+                    <span aria-label="to">→</span>
+                  </template>
+                  <span v-else-if="change.to_status === 'open'" class="muted">Opened as</span>
+                  <span class="chip" :class="`status-${change.to_status}`">{{ statusLabels[change.to_status] }}</span>
+                  <span v-if="change.close_reason" class="muted">({{ closeReasonLabels[change.close_reason] }})</span>
+                </div>
+                <div class="history-meta muted">
+                  {{ when(change.changed_at) }}<template v-if="change.changed_by"> · {{ directory.personName(change.changed_by) }}</template>
+                  <template v-if="change.backfilled"> · from before history was kept</template>
+                </div>
+              </li>
+            </ol>
+            <p v-else class="empty">No stage changes recorded yet.</p>
+          </details>
         </template>
       </div>
 
@@ -513,70 +547,51 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
   font-size: 0.85rem;
 }
 
-/* The stage, as a dropdown in its colour (a plain pill when it can't change). */
-.stage-select {
-  --stage: var(--stage-open);
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.stage-select.stage-in_progress {
-  --stage: var(--stage-in_progress);
-}
-
-.stage-select.stage-overdue {
-  --stage: var(--stage-overdue);
-}
-
-.stage-select.stage-closed {
-  --stage: var(--stage-closed);
-}
-
-.stage-select select,
-.stage-select.static {
-  padding: 8px 34px 8px 14px;
-  border-radius: 999px;
-  border: 2px solid var(--stage);
-  background: color-mix(in srgb, var(--stage) 16%, transparent);
-  color: var(--primary-text-color);
-  font: inherit;
-  font-weight: 600;
-  appearance: none;
+.history summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
   cursor: pointer;
 }
 
-.stage-select.static {
-  padding-right: 14px;
-  cursor: default;
+.history summary h2 {
+  display: inline;
+  margin: 0;
 }
 
-.stage-select:not(.static)::after {
-  content: '▾';
-  position: absolute;
-  right: 13px;
-  pointer-events: none;
-  color: var(--stage);
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.stage-select select:focus-visible {
-  outline: 2px solid var(--stage);
-  outline-offset: 2px;
+.history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.18);
 }
 
-.stage-select option {
-  background: var(--background-color);
-  color: var(--primary-text-color);
-  font-weight: 400;
+.history-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+.history-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-meta {
+  font-size: 0.85rem;
 }
 
 .chips {
