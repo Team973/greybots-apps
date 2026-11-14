@@ -250,6 +250,12 @@
   color: #d0711a;
 }
 
+.chip.status-overdue {
+  border-color: #e5534b;
+  color: #e5534b;
+  font-weight: 600;
+}
+
 .chip.status-closed {
   border-color: #3a9e3a;
   color: #3a9e3a;

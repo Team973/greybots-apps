@@ -35,7 +35,7 @@ const milestone = computed(() => (props.showMilestone ? directory.milestone(prop
       <div class="meta">
         <span class="chip" :class="[`status-${ticket.status}`, ticket.close_reason ? `reason-${ticket.close_reason}` : '']">{{ statusText(ticket) }}</span>
         <span v-if="ticket.due_date" class="chip" :class="{ overdue: isOverdue(ticket) }">
-          {{ isOverdue(ticket) ? 'Overdue · ' : 'Due ' }}{{ formatDay(ticket.due_date) }}
+          {{ isOverdue(ticket) && ticket.status !== 'overdue' ? 'Past due · ' : 'Due ' }}{{ formatDay(ticket.due_date) }}
         </span>
         <span v-if="milestone" class="chip">{{ milestone.name }}</span>
         <ComponentChips :model-value="ticket.component_ids" />

@@ -6,7 +6,8 @@ import { today } from './dates';
 // the database (enforce_workshop_ticket in the Workshop migration); the
 // helpers here mirror them so the pages only offer what will be accepted.
 
-export type TicketStatus = 'open' | 'in_progress' | 'closed';
+// Overdue is a stage set by hand (see nextStages); anything not closed is open.
+export type TicketStatus = 'open' | 'in_progress' | 'overdue' | 'closed';
 export type CloseReason = 'complete' | 'duplicate' | 'wont_do';
 
 export interface Ticket {
@@ -43,8 +44,30 @@ export interface TicketDraft {
 export const statusLabels: Record<TicketStatus, string> = {
     open: 'To do',
     in_progress: 'In progress',
+    overdue: 'Overdue',
     closed: 'Closed'
 };
+
+// Where a ticket can go from the stage it's in. Closing needs a lead or admin
+// (and a reason, from the close dialog).
+export interface StageChoice {
+    to: TicketStatus;
+    label: string;
+}
+export function nextStages(status: TicketStatus): StageChoice[] {
+    const reevaluate = { to: 'open' as const, label: 'Re-evaluate (back to To do)' };
+    const close = { to: 'closed' as const, label: 'Closed…' };
+    switch (status) {
+        case 'open':
+            return [{ to: 'in_progress', label: statusLabels.in_progress }, close];
+        case 'in_progress':
+            return [reevaluate, { to: 'overdue', label: statusLabels.overdue }, close];
+        case 'overdue':
+            return [reevaluate, close];
+        default:
+            return [];
+    }
+}
 
 export const closeReasons: { key: CloseReason; label: string; hint: string }[] = [
     { key: 'complete', label: 'Complete', hint: 'The work is done.' },
@@ -62,6 +85,7 @@ export function statusText(ticket: Pick<Ticket, 'status' | 'close_reason'>): str
     return ticket.status === 'closed' && ticket.close_reason ? closeReasonLabels[ticket.close_reason] : statusLabels[ticket.status];
 }
 
+// Past its estimated completion date (whatever stage it's in, short of closed).
 export function isOverdue(ticket: Pick<Ticket, 'status' | 'due_date'>): boolean {
     return ticket.status !== 'closed' && !!ticket.due_date && ticket.due_date < today();
 }

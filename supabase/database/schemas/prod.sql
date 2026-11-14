@@ -2693,7 +2693,8 @@ CREATE TABLE IF NOT EXISTS public."WorkshopTicket" (
     "assignee_ids" uuid[] NOT NULL DEFAULT '{}',
     -- The estimated completion date.
     "due_date" date,
-    "status" text NOT NULL DEFAULT 'open' CHECK ("status" IN ('open', 'in_progress', 'closed')),
+    -- Overdue is set by hand from In progress; anything not closed counts as open.
+    "status" text NOT NULL DEFAULT 'open' CONSTRAINT "WorkshopTicket_status_check" CHECK ("status" IN ('open', 'in_progress', 'overdue', 'closed')),
     "close_reason" text CHECK ("close_reason" IN ('complete', 'duplicate', 'wont_do')),
     "closed_at" timestamp with time zone,
     "closed_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,

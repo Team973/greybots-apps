@@ -12,8 +12,8 @@ import {
   closeReasonLabels,
   fetchTicket,
   isOverdue,
+  nextStages,
   reopenTicket,
-  statusLabels,
   statusText,
   updateTicketFields,
   type Ticket,
@@ -165,6 +165,17 @@ function saveAndClose(changes: Partial<TicketDraft>) {
   editing.value = null;
   save(changes);
 }
+// The stage dropdown offers only where the ticket can go next; Closed opens the
+// close dialog (leads and admins, who also say why).
+const stageChoices = computed(() => (ticket.value ? nextStages(ticket.value.status).filter((c) => c.to !== 'closed' || auth.isLead) : []));
+function onStage(event: Event) {
+  const to = (event.target as HTMLSelectElement).value as Ticket['status'];
+  if (!to) return;
+  editing.value = null;
+  if (to === 'closed') closing.value = true;
+  else save({ status: to });
+}
+
 function onAssignees(ids: string[]) {
   draft.value.assignee_ids = ids;
   save({ assignee_ids: ids });
@@ -223,16 +234,23 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
 
           <section class="panel">
             <div class="chips">
-              <EditableField label="status" :editable="canEdit" :open="editing === 'status'" @open="open('status')" @close="close" @cancel="cancel">
+              <EditableField
+                label="stage"
+                :editable="canEdit && stageChoices.length > 0"
+                :open="editing === 'status'"
+                @open="open('status')"
+                @close="close"
+                @cancel="cancel"
+              >
                 <span class="chip" :class="[`status-${ticket.status}`, ticket.close_reason ? `reason-${ticket.close_reason}` : '']">{{ statusText(ticket) }}</span>
                 <template #editor>
-                  <select v-model="draft.status" class="control" aria-label="Status" @change="saveAndClose({ status: draft.status })">
-                    <option value="open">{{ statusLabels.open }}</option>
-                    <option value="in_progress">{{ statusLabels.in_progress }}</option>
+                  <select class="control" aria-label="Move to stage" @change="onStage">
+                    <option value="">{{ statusText(ticket) }} → …</option>
+                    <option v-for="choice in stageChoices" :key="choice.to" :value="choice.to">{{ choice.label }}</option>
                   </select>
                 </template>
               </EditableField>
-              <span v-if="isOverdue(ticket)" class="chip overdue">Overdue</span>
+              <span v-if="isOverdue(ticket) && ticket.status !== 'overdue'" class="chip overdue">Past due</span>
               <EditableField
                 class="components-field"
                 label="components"

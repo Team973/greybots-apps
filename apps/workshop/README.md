@@ -27,7 +27,7 @@ less GreyPoints, which `20261111120000_workshop_remove_greypoints.sql` took out)
 so they hold whatever client writes. The app mirrors them so it only offers
 what will be accepted:
 
-- **Tickets.** Members and above open and edit tickets. Only leads and admins
+- **Tickets.** Members and above open and edit tickets. A ticket moves To do → In progress or Closed; In progress → To do (re-evaluate), Overdue, or Closed; Overdue → To do or Closed (the ticket page only offers those). Only leads and admins
   close or reopen one, and a closed ticket can't be edited until it's
   reopened. Nothing is deleted.
 - **Session plans.** `workshop_seed_session_plan()` carries the previous
