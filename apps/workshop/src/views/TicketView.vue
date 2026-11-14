@@ -371,10 +371,12 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
               <EditableField label="owner" :editable="canEdit" :open="editing === 'owner'" @open="open('owner')" @close="close" @cancel="cancel">
                 {{ directory.personName(ticket.owner_id) }}
                 <template #editor>
-                  <select v-model="draft.owner_id" class="control" aria-label="Owner" @change="saveAndClose({ owner_id: draft.owner_id })">
-                    <option :value="null">Nobody</option>
-                    <option v-for="person in directory.assignable" :key="person.user_id" :value="person.user_id">{{ person.name }}</option>
-                  </select>
+                  <PeoplePicker
+                    single
+                    label="Owner"
+                    :model-value="ticket.owner_id ? [ticket.owner_id] : []"
+                    @update:model-value="(ids) => saveAndClose({ owner_id: ids[0] ?? null })"
+                  />
                 </template>
               </EditableField>
             </dd>
@@ -385,7 +387,7 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
               <EditableField label="assignees" :editable="canEdit" :open="editing === 'assignees'" @open="open('assignees')" @close="close" @cancel="cancel">
                 {{ ticket.assignee_ids.length ? ticket.assignee_ids.map((id) => directory.personName(id)).join(', ') : 'Nobody' }}
                 <template #editor>
-                  <PeoplePicker :model-value="draft.assignee_ids ?? []" @update:model-value="onAssignees" />
+                  <PeoplePicker label="Add an assignee" :model-value="draft.assignee_ids ?? []" @update:model-value="onAssignees" />
                   <div class="editor-actions">
                     <button type="button" class="button small" @click="cancel">Done</button>
                   </div>

@@ -24,13 +24,15 @@ const milestones = computed(() => directory.milestones.filter((m) => !m.closed_a
       <textarea v-model="draft.description" rows="4" placeholder="Details, links, what done looks like"></textarea>
     </label>
 
-    <label class="field">
+    <div class="field">
       <span>Owner (responsible for it getting done)</span>
-      <select v-model="draft.owner_id">
-        <option :value="null">Nobody yet</option>
-        <option v-for="person in directory.assignable" :key="person.user_id" :value="person.user_id">{{ person.name }}</option>
-      </select>
-    </label>
+      <PeoplePicker
+        single
+        label="Owner"
+        :model-value="draft.owner_id ? [draft.owner_id] : []"
+        @update:model-value="(ids) => (draft.owner_id = ids[0] ?? null)"
+      />
+    </div>
     <label class="field">
       <span>Estimated completion</span>
       <input v-model="draft.due_date" type="date" />
@@ -38,7 +40,7 @@ const milestones = computed(() => directory.milestones.filter((m) => !m.closed_a
 
     <div class="field full">
       <span>Assignees (doing the work)</span>
-      <PeoplePicker v-model="draft.assignee_ids" />
+      <PeoplePicker v-model="draft.assignee_ids" label="Add an assignee" />
     </div>
 
     <label class="field">
