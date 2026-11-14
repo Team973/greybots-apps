@@ -217,12 +217,6 @@ function onCreated(ticket: Ticket) {
 </template>
 
 <style scoped>
-.back {
-  color: inherit;
-  opacity: 0.75;
-  text-decoration: none;
-}
-
 .neighbors {
   display: flex;
   gap: 6px;

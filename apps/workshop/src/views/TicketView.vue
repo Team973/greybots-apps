@@ -495,12 +495,6 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
   }
 }
 
-.back {
-  color: inherit;
-  opacity: 0.75;
-  text-decoration: none;
-}
-
 .ticket-header {
   display: flex;
   flex-wrap: wrap;

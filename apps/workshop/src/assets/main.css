@@ -25,6 +25,24 @@
   max-width: 1200px;
 }
 
+/* "← Tickets" and the like: only as wide as its text (pages lay out in
+   stretching columns), highlighted on hover. */
+.back {
+  align-self: flex-start;
+  margin-left: -8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: inherit;
+  opacity: 0.75;
+  text-decoration: none;
+}
+
+.back:hover,
+.back:focus-visible {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.16);
+}
+
 .page-header {
   display: flex;
   flex-wrap: wrap;
