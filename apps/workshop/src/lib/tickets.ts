@@ -55,15 +55,15 @@ export interface StageChoice {
     label: string;
 }
 export function nextStages(status: TicketStatus): StageChoice[] {
-    const reevaluate = { to: 'open' as const, label: 'Re-evaluate (back to To do)' };
+    const toDo = { to: 'open' as const, label: statusLabels.open };
     const close = { to: 'closed' as const, label: 'Closed…' };
     switch (status) {
         case 'open':
             return [{ to: 'in_progress', label: statusLabels.in_progress }, close];
         case 'in_progress':
-            return [reevaluate, { to: 'overdue', label: statusLabels.overdue }, close];
+            return [toDo, { to: 'overdue', label: statusLabels.overdue }, close];
         case 'overdue':
-            return [reevaluate, close];
+            return [toDo, close];
         case 'closed':
             return [{ to: 'open', label: 'Reopen' }];
         default:
