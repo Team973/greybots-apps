@@ -240,25 +240,34 @@
   white-space: nowrap;
 }
 
+/* Stage colours, as tokens so the ticket page's stage dropdown matches the
+   chips: to do orange, in progress green, overdue red, closed grey. */
+:root {
+  --stage-open: #d0711a;
+  --stage-in_progress: #2f9e57;
+  --stage-overdue: #e5534b;
+  --stage-closed: #8a8f98;
+}
+
 .chip.status-open {
-  border-color: #3987e5;
-  color: #3987e5;
+  border-color: var(--stage-open);
+  color: var(--stage-open);
 }
 
 .chip.status-in_progress {
-  border-color: #d0711a;
-  color: #d0711a;
+  border-color: var(--stage-in_progress);
+  color: var(--stage-in_progress);
 }
 
 .chip.status-overdue {
-  border-color: #e5534b;
-  color: #e5534b;
+  border-color: var(--stage-overdue);
+  color: var(--stage-overdue);
   font-weight: 600;
 }
 
 .chip.status-closed {
-  border-color: #3a9e3a;
-  color: #3a9e3a;
+  border-color: var(--stage-closed);
+  color: var(--stage-closed);
 }
 
 .chip.status-closed.reason-duplicate,

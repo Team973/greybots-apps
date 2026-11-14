@@ -48,8 +48,8 @@ export const statusLabels: Record<TicketStatus, string> = {
     closed: 'Closed'
 };
 
-// Where a ticket can go from the stage it's in. Closing needs a lead or admin
-// (and a reason, from the close dialog).
+// Where a ticket can go from the stage it's in. Closing and reopening need a
+// lead or admin (closing also needs a reason, from the close dialog).
 export interface StageChoice {
     to: TicketStatus;
     label: string;
@@ -64,6 +64,8 @@ export function nextStages(status: TicketStatus): StageChoice[] {
             return [reevaluate, { to: 'overdue', label: statusLabels.overdue }, close];
         case 'overdue':
             return [reevaluate, close];
+        case 'closed':
+            return [{ to: 'open', label: 'Reopen' }];
         default:
             return [];
     }

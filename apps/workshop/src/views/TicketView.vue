@@ -14,7 +14,7 @@ import {
   isOverdue,
   nextStages,
   reopenTicket,
-  statusText,
+  statusLabels,
   updateTicketFields,
   type Ticket,
   type TicketDraft
@@ -103,7 +103,7 @@ const canMove = computed(() => auth.isMember);
 
 // --- Editing a field at a time ---
 
-type Field = 'title' | 'description' | 'status' | 'components' | 'owner' | 'assignees' | 'due' | 'milestone';
+type Field = 'title' | 'description' | 'components' | 'owner' | 'assignees' | 'due' | 'milestone';
 const editing = ref<Field | null>(null);
 // What the open field's editor holds.
 const draft = ref<Partial<TicketDraft>>({});
@@ -117,7 +117,6 @@ function open(field: Field) {
   draft.value = {
     title: t.title,
     description: t.description,
-    status: t.status === 'closed' ? 'open' : t.status,
     component_ids: [...t.component_ids],
     owner_id: t.owner_id,
     assignee_ids: [...t.assignee_ids],
@@ -165,14 +164,31 @@ function saveAndClose(changes: Partial<TicketDraft>) {
   editing.value = null;
   save(changes);
 }
-// The stage dropdown offers only where the ticket can go next; Closed opens the
-// close dialog (leads and admins, who also say why).
-const stageChoices = computed(() => (ticket.value ? nextStages(ticket.value.status).filter((c) => c.to !== 'closed' || auth.isLead) : []));
+// The stage dropdown (in the header) offers only where the ticket can go next.
+// Members move an open ticket between stages; closing (which opens the close
+// dialog, to say why) and reopening are for leads and admins.
+const stageChoices = computed(() => {
+  const t = ticket.value;
+  if (!t) return [];
+  if (t.status === 'closed') return auth.isLead ? nextStages('closed') : [];
+  if (!auth.isMember) return [];
+  return nextStages(t.status).filter((c) => c.to !== 'closed' || auth.isLead);
+});
+const stageLabel = computed(() => {
+  const t = ticket.value;
+  if (!t) return '';
+  return t.status === 'closed' && t.close_reason ? `Closed · ${closeReasonLabels[t.close_reason]}` : statusLabels[t.status];
+});
 function onStage(event: Event) {
-  const to = (event.target as HTMLSelectElement).value as Ticket['status'];
-  if (!to) return;
+  const select = event.target as HTMLSelectElement;
+  const to = select.value as Ticket['status'];
+  // The dropdown always shows the current stage; the page updates it once
+  // the change is saved.
+  select.value = ticket.value!.status;
   editing.value = null;
+  if (to === ticket.value!.status) return;
   if (to === 'closed') closing.value = true;
+  else if (ticket.value!.status === 'closed') reopen();
   else save({ status: to });
 }
 
@@ -227,29 +243,19 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
             </EditableField>
             <div class="header-actions">
               <span v-if="saving" class="muted saving">Saving…</span>
-              <button v-if="auth.isLead && ticket.status !== 'closed'" class="button primary" @click="closing = true">Close…</button>
-              <button v-if="auth.isLead && ticket.status === 'closed'" class="button" @click="reopen">Reopen</button>
+              <label v-if="stageChoices.length" class="stage-select" :class="`stage-${ticket.status}`">
+                <span class="visually-hidden">Stage</span>
+                <select :value="ticket.status" @change="onStage">
+                  <option :value="ticket.status" disabled>{{ stageLabel }}</option>
+                  <option v-for="choice in stageChoices" :key="choice.to" :value="choice.to">{{ choice.label }}</option>
+                </select>
+              </label>
+              <span v-else class="stage-select static" :class="`stage-${ticket.status}`">{{ stageLabel }}</span>
             </div>
           </header>
 
           <section class="panel">
             <div class="chips">
-              <EditableField
-                label="stage"
-                :editable="canEdit && stageChoices.length > 0"
-                :open="editing === 'status'"
-                @open="open('status')"
-                @close="close"
-                @cancel="cancel"
-              >
-                <span class="chip" :class="[`status-${ticket.status}`, ticket.close_reason ? `reason-${ticket.close_reason}` : '']">{{ statusText(ticket) }}</span>
-                <template #editor>
-                  <select class="control" aria-label="Move to stage" @change="onStage">
-                    <option value="">{{ statusText(ticket) }} → …</option>
-                    <option v-for="choice in stageChoices" :key="choice.to" :value="choice.to">{{ choice.label }}</option>
-                  </select>
-                </template>
-              </EditableField>
               <span v-if="isOverdue(ticket) && ticket.status !== 'overdue'" class="chip overdue">Past due</span>
               <EditableField
                 class="components-field"
@@ -505,6 +511,72 @@ const when = (iso: string) => `${formatDate(iso)}, ${formatTime(iso)}`;
 
 .saving {
   font-size: 0.85rem;
+}
+
+/* The stage, as a dropdown in its colour (a plain pill when it can't change). */
+.stage-select {
+  --stage: var(--stage-open);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.stage-select.stage-in_progress {
+  --stage: var(--stage-in_progress);
+}
+
+.stage-select.stage-overdue {
+  --stage: var(--stage-overdue);
+}
+
+.stage-select.stage-closed {
+  --stage: var(--stage-closed);
+}
+
+.stage-select select,
+.stage-select.static {
+  padding: 8px 34px 8px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--stage);
+  background: color-mix(in srgb, var(--stage) 16%, transparent);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-weight: 600;
+  appearance: none;
+  cursor: pointer;
+}
+
+.stage-select.static {
+  padding-right: 14px;
+  cursor: default;
+}
+
+.stage-select:not(.static)::after {
+  content: '▾';
+  position: absolute;
+  right: 13px;
+  pointer-events: none;
+  color: var(--stage);
+}
+
+.stage-select select:focus-visible {
+  outline: 2px solid var(--stage);
+  outline-offset: 2px;
+}
+
+.stage-select option {
+  background: var(--background-color);
+  color: var(--primary-text-color);
+  font-weight: 400;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .chips {
