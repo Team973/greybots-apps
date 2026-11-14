@@ -247,12 +247,6 @@ const creating = ref(false);
   gap: 12px;
 }
 
-.back {
-  color: inherit;
-  opacity: 0.75;
-  text-decoration: none;
-}
-
 .header-actions {
   display: flex;
   gap: 8px;

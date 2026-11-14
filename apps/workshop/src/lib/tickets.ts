@@ -6,7 +6,8 @@ import { today } from './dates';
 // the database (enforce_workshop_ticket in the Workshop migration); the
 // helpers here mirror them so the pages only offer what will be accepted.
 
-export type TicketStatus = 'open' | 'in_progress' | 'closed';
+// Overdue is a stage set by hand (see nextStages); anything not closed is open.
+export type TicketStatus = 'open' | 'in_progress' | 'overdue' | 'closed';
 export type CloseReason = 'complete' | 'duplicate' | 'wont_do';
 
 export interface Ticket {
@@ -43,8 +44,32 @@ export interface TicketDraft {
 export const statusLabels: Record<TicketStatus, string> = {
     open: 'To do',
     in_progress: 'In progress',
+    overdue: 'Overdue',
     closed: 'Closed'
 };
+
+// Where a ticket can go from the stage it's in. Closing and reopening need a
+// lead or admin (closing also needs a reason, from the close dialog).
+export interface StageChoice {
+    to: TicketStatus;
+    label: string;
+}
+export function nextStages(status: TicketStatus): StageChoice[] {
+    const toDo = { to: 'open' as const, label: statusLabels.open };
+    const close = { to: 'closed' as const, label: 'Closed…' };
+    switch (status) {
+        case 'open':
+            return [{ to: 'in_progress', label: statusLabels.in_progress }, close];
+        case 'in_progress':
+            return [toDo, { to: 'overdue', label: statusLabels.overdue }, close];
+        case 'overdue':
+            return [toDo, close];
+        case 'closed':
+            return [{ to: 'open', label: 'Reopen' }];
+        default:
+            return [];
+    }
+}
 
 export const closeReasons: { key: CloseReason; label: string; hint: string }[] = [
     { key: 'complete', label: 'Complete', hint: 'The work is done.' },
@@ -62,6 +87,7 @@ export function statusText(ticket: Pick<Ticket, 'status' | 'close_reason'>): str
     return ticket.status === 'closed' && ticket.close_reason ? closeReasonLabels[ticket.close_reason] : statusLabels[ticket.status];
 }
 
+// Past its estimated completion date (whatever stage it's in, short of closed).
 export function isOverdue(ticket: Pick<Ticket, 'status' | 'due_date'>): boolean {
     return ticket.status !== 'closed' && !!ticket.due_date && ticket.due_date < today();
 }
@@ -150,6 +176,16 @@ export async function updateTicket(ticket: Ticket, draft: TicketDraft): Promise<
     return unwrap(await supabase.from('WorkshopTicket').update(fields(draft)).eq('id', ticket.id).select().single()) as Ticket;
 }
 
+// Saves some of a ticket's fields (as a ticket page edits them one at a time),
+// leaving the rest as they are in the database. Returns it as the database
+// left it.
+export async function updateTicketFields(ticket: Ticket, changes: Partial<TicketDraft>): Promise<Ticket> {
+    if (changes.title !== undefined && !changes.title.trim()) throw new Error('Give the ticket a title.');
+    const all = fields({ ...draftOf(ticket), ...changes });
+    const update = Object.fromEntries(Object.keys(changes).map((key) => [key, all[key as keyof typeof all]]));
+    return unwrap(await supabase.from('WorkshopTicket').update(update).eq('id', ticket.id).select().single()) as Ticket;
+}
+
 export async function patchTicket(ticket: Ticket, changes: Partial<Pick<Ticket, 'status' | 'milestone_id'>>): Promise<Ticket> {
     return unwrap(await supabase.from('WorkshopTicket').update(changes).eq('id', ticket.id).select().single()) as Ticket;
 }
@@ -169,4 +205,26 @@ export async function reopenTicket(ticket: Ticket): Promise<Ticket> {
 export async function moveTickets(ids: string[], milestoneId: string | null): Promise<void> {
     if (ids.length === 0) return;
     check(await supabase.from('WorkshopTicket').update({ milestone_id: milestoneId }).in('id', ids));
+}
+
+// --- Stage history ---
+
+// One step in a ticket's history (recorded by the database on every change of
+// stage). `backfilled` ones were filled in for tickets from before history was
+// kept, so the steps between them are missing.
+export interface StageChange {
+    id: number;
+    ticket_id: string;
+    from_status: TicketStatus | null;
+    to_status: TicketStatus;
+    close_reason: CloseReason | null;
+    changed_at: string;
+    changed_by: string | null;
+    backfilled: boolean;
+}
+
+export async function fetchStageHistory(ticketId: string): Promise<StageChange[]> {
+    return unwrap(
+        await supabase.from('WorkshopTicketStageChange').select('*').eq('ticket_id', ticketId).order('changed_at').order('id')
+    ) as StageChange[];
 }

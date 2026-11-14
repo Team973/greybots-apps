@@ -2693,7 +2693,8 @@ CREATE TABLE IF NOT EXISTS public."WorkshopTicket" (
     "assignee_ids" uuid[] NOT NULL DEFAULT '{}',
     -- The estimated completion date.
     "due_date" date,
-    "status" text NOT NULL DEFAULT 'open' CHECK ("status" IN ('open', 'in_progress', 'closed')),
+    -- Overdue is set by hand from In progress; anything not closed counts as open.
+    "status" text NOT NULL DEFAULT 'open' CONSTRAINT "WorkshopTicket_status_check" CHECK ("status" IN ('open', 'in_progress', 'overdue', 'closed')),
     "close_reason" text CHECK ("close_reason" IN ('complete', 'duplicate', 'wont_do')),
     "closed_at" timestamp with time zone,
     "closed_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
@@ -2792,6 +2793,48 @@ $$;
 
 CREATE TRIGGER "enforce_workshop_ticket" BEFORE INSERT OR UPDATE ON public."WorkshopTicket"
     FOR EACH ROW EXECUTE FUNCTION public.enforce_workshop_ticket();
+
+-- A ticket's history through its stages, recorded by a trigger on every change
+-- of stage (nobody writes it directly). Rows marked `backfilled` were filled
+-- in for tickets that existed before history was kept (opened, current stage,
+-- closed), so the steps in between are missing.
+CREATE TABLE IF NOT EXISTS public."WorkshopTicketStageChange" (
+    "id" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    "ticket_id" uuid NOT NULL REFERENCES public."WorkshopTicket"("id") ON DELETE CASCADE,
+    -- Null for the ticket being opened (and for backfilled rows).
+    "from_status" text,
+    "to_status" text NOT NULL,
+    -- Why, when it was closed.
+    "close_reason" text,
+    "changed_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "changed_by" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
+    "backfilled" boolean NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS "workshop_ticket_stage_change_ticket_idx" ON public."WorkshopTicketStageChange" ("ticket_id", "changed_at");
+
+CREATE OR REPLACE FUNCTION public.workshop_ticket_stage_history() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF TG_OP = 'INSERT' OR NEW."status" IS DISTINCT FROM OLD."status" THEN
+    INSERT INTO public."WorkshopTicketStageChange" ("ticket_id", "from_status", "to_status", "close_reason", "changed_by")
+    VALUES (
+      NEW."id",
+      CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD."status" END,
+      NEW."status",
+      CASE WHEN NEW."status" = 'closed' THEN NEW."close_reason" END,
+      -- Only someone with a profile (never fails a ticket save over it).
+      (SELECT u."user_id" FROM public."User" u WHERE u."user_id" = auth.uid())
+    );
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER "workshop_ticket_stage_history" AFTER INSERT OR UPDATE OF "status" ON public."WorkshopTicket"
+    FOR EACH ROW EXECUTE FUNCTION public.workshop_ticket_stage_history();
 
 -- ---------------------------------------------------------------------------
 -- Shop sessions and their plans
@@ -2945,6 +2988,7 @@ ALTER TABLE public."WorkshopSessionSeries" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSession" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopSessionTicket" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."WorkshopDashboardChart" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."WorkshopTicketStageChange" ENABLE ROW LEVEL SECURITY;
 
 GRANT ALL ON public."WorkshopComponent" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopMilestone" TO authenticated, service_role;
@@ -2953,6 +2997,9 @@ GRANT ALL ON public."WorkshopSessionSeries" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSession" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopSessionTicket" TO authenticated, service_role;
 GRANT ALL ON public."WorkshopDashboardChart" TO authenticated, service_role;
+-- Read-only for people: the trigger writes it.
+GRANT SELECT ON public."WorkshopTicketStageChange" TO authenticated;
+GRANT ALL ON public."WorkshopTicketStageChange" TO service_role;
 
 -- Everyone in Workshop (observers included) can see everything.
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopComponent" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
@@ -2962,6 +3009,7 @@ CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSessionSeries
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSession" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopSessionTicket" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 CREATE POLICY "Enable read access for Workshop" ON public."WorkshopDashboardChart" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
+CREATE POLICY "Enable read access for Workshop" ON public."WorkshopTicketStageChange" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
 
 -- Tickets: members and above open and edit them (the trigger decides who
 -- closes them). Nobody deletes one; it's closed instead.

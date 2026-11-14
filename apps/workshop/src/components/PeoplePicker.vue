@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import PersonSearch from './PersonSearch.vue';
 import { useDirectoryStore } from '@/stores/directory-store';
 
-// Picks several people (a ticket's assignees): the ones picked as removable
-// chips, and a dropdown to add anyone else with a Workshop role.
-const props = withDefaults(defineProps<{ modelValue: string[]; disabled?: boolean; addLabel?: string }>(), {
+// Picks people (a ticket's assignees, or with `single` its owner): the ones
+// picked as removable chips, and a search box to find anyone else with a
+// Workshop role by typing their name. With `single`, picking someone replaces
+// whoever was there.
+const props = withDefaults(defineProps<{ modelValue: string[]; disabled?: boolean; single?: boolean; addLabel?: string; label?: string }>(), {
   disabled: false,
-  addLabel: 'Add someone…'
+  single: false,
+  addLabel: '',
+  label: 'Add a person'
 });
 const emit = defineEmits<{ 'update:modelValue': [ids: string[]] }>();
 
 const directory = useDirectoryStore();
-const remaining = computed(() => directory.assignable.filter((p) => !props.modelValue.includes(p.user_id)));
+const placeholder = computed(() => props.addLabel || (props.single ? (props.modelValue.length ? 'Change to…' : 'Type a name…') : 'Add someone…'));
 
-function add(event: Event) {
-  const select = event.target as HTMLSelectElement;
-  if (select.value) emit('update:modelValue', [...props.modelValue, select.value]);
-  select.value = '';
+function add(id: string) {
+  emit('update:modelValue', props.single ? [id] : [...props.modelValue, id]);
 }
 const remove = (id: string) => emit('update:modelValue', props.modelValue.filter((p) => p !== id));
 </script>
@@ -27,10 +30,7 @@ const remove = (id: string) => emit('update:modelValue', props.modelValue.filter
       {{ directory.personName(id) }}
       <button v-if="!disabled" type="button" class="remove" :aria-label="`Remove ${directory.personName(id)}`" @click="remove(id)">×</button>
     </span>
-    <select v-if="!disabled && remaining.length" class="control add" aria-label="Add a person" @change="add">
-      <option value="">{{ addLabel }}</option>
-      <option v-for="person in remaining" :key="person.user_id" :value="person.user_id">{{ person.name }}</option>
-    </select>
+    <PersonSearch v-if="!disabled" :exclude="modelValue" :placeholder="placeholder" :label="label" @pick="add" />
     <span v-if="disabled && !modelValue.length" class="muted">Nobody</span>
   </div>
 </template>
@@ -63,10 +63,5 @@ const remove = (id: string) => emit('update:modelValue', props.modelValue.filter
 
 .remove:hover {
   background: rgba(128, 128, 128, 0.25);
-}
-
-.add {
-  flex: 1 1 140px;
-  max-width: 220px;
 }
 </style>
