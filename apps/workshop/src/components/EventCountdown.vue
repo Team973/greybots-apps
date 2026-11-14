@@ -26,6 +26,11 @@ const days = computed(() => {
   const n = countdown.value?.daysLeft ?? 0;
   return n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`;
 });
+// Whole hours, or to the half hour when that's how sessions run.
+const hours = computed(() => {
+  const h = Math.round((countdown.value?.hoursLeft ?? 0) * 2) / 2;
+  return { value: Number.isInteger(h) ? String(h) : h.toFixed(1), one: h === 1 };
+});
 const dates = computed(() => {
   const e = countdown.value?.event;
   if (!e) return '';
@@ -44,12 +49,16 @@ const dates = computed(() => {
     </template>
 
     <template v-else-if="countdown">
-      <div class="figure">
-        <span class="number">{{ countdown.sessionsLeft }}</span>
-        <span class="label">
-          shop {{ countdown.sessionsLeft === 1 ? 'session' : 'sessions' }} left until
-          <strong>{{ eventName(countdown.event) }}</strong>
-        </span>
+      <p class="until">Until <strong>{{ eventName(countdown.event) }}</strong></p>
+      <div class="figures">
+        <div class="figure">
+          <span class="number">{{ countdown.sessionsLeft }}</span>
+          <span class="label">shop {{ countdown.sessionsLeft === 1 ? 'session' : 'sessions' }} left</span>
+        </div>
+        <div class="figure">
+          <span class="number">{{ hours.value }}</span>
+          <span class="label">shop {{ hours.one ? 'hour' : 'hours' }} left</span>
+        </div>
       </div>
       <p class="sub muted">{{ dates }} · {{ days }}</p>
       <p v-if="countdown.scheduleShort" class="note">
@@ -76,11 +85,21 @@ const dates = computed(() => {
   margin: 0;
 }
 
+.until {
+  font-size: 1.2rem;
+}
+
+.figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 40px;
+}
+
 .figure {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 14px;
+  gap: 4px 10px;
 }
 
 .number {
@@ -92,7 +111,7 @@ const dates = computed(() => {
 }
 
 .label {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
 }
 
 .eyebrow {

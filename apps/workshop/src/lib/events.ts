@@ -37,6 +37,8 @@ export interface Countdown {
     event: TeamEvent;
     // Shop sessions that haven't finished and start before the event does.
     sessionsLeft: number;
+    // Shop time in those sessions, in hours (only what's left of one under way).
+    hoursLeft: number;
     daysLeft: number;
     underway: boolean;
     // The schedule stops more than a week before the event (or has nothing
@@ -55,7 +57,9 @@ export async function fetchCountdown(): Promise<Countdown | null> {
     const sessions: Session[] = underway ? [] : await fetchSessions(now.toISOString(), eventStart);
     const daysLeft = Math.max(0, Math.round((parseDate(event.start_date).getTime() - parseDate(today()).getTime()) / 86_400_000));
 
+    const nowMs = now.getTime();
+    const hoursLeft = sessions.reduce((sum, s) => sum + Math.max(0, Date.parse(s.ends_at) - Math.max(nowMs, Date.parse(s.starts_at))), 0) / 3_600_000;
     const lastSession = sessions.length ? sessions[sessions.length - 1].starts_at : null;
     const scheduleShort = !underway && (!lastSession || addDays(toDateString(new Date(lastSession)), 7) < event.start_date);
-    return { event, sessionsLeft: sessions.length, daysLeft, underway, scheduleShort, lastSession };
+    return { event, sessionsLeft: sessions.length, hoursLeft, daysLeft, underway, scheduleShort, lastSession };
 }
