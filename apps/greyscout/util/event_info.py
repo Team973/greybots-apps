@@ -52,20 +52,24 @@ def update_event_info_for_team(sb_credentials, tba_credentials, team_number):
     sb_client = create_supabase_client(sb_credentials)
     tba_client = TBAClient(tba_credentials['base_url'], tba_credentials['api_key'])
 
-    # Get the current year so we can figure out which events we are attending.
-    today = datetime.date.today()
-    current_year = today.year
+    # This year's events and next year's, so the next season's events show up
+    # (in Workshop's countdown, for one) as soon as TBA lists them, rather
+    # than only from January 1.
+    current_year = datetime.date.today().year
+    team_events = []
+    for year in (current_year, current_year + 1):
+        response = tba_client.get_data(f"/team/frc{team_number}/events/{year}")
+        events = response.json()
+        # TBA answers a year with no events with an empty list; anything else
+        # (an error object) is skipped.
+        if isinstance(events, list):
+            team_events.extend(events)
 
-    # Query TBA to find all events being attended by the team this year.
-    team_events_response = tba_client.get_data(f"/team/frc{team_number}/events/{current_year}")
-    team_events = team_events_response.json()
-
-    for i in range(len(team_events)):
-        event = team_events[i]
-
-        if 'key' in event and 'short_name' in event and 'start_date' in event and 'end_date' in event:
+    for event in team_events:
+        if 'key' in event and 'start_date' in event and 'end_date' in event:
             event_id = event['key']
-            name = event['short_name']
+            # Some events (offseason ones especially) have no short name.
+            name = event.get('short_name') or event.get('name') or event_id
             start = event['start_date']
             end = event['end_date']
 

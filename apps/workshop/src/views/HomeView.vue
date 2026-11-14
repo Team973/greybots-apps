@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import EventCountdown from '@/components/EventCountdown.vue';
 import NewTicketDialog from '@/components/NewTicketDialog.vue';
 import TicketRow from '@/components/TicketRow.vue';
 import { errorMessage } from '@/lib/db';
@@ -9,7 +10,8 @@ import { fetchNextSession, fetchPlan, seedPlan, type Session } from '@/lib/sessi
 import { fetchTickets, fetchTicketsByIds, isInterested, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
 
-// "My tasks": what's on your plate, front and center. The next shop session
+// "My tasks": what's on your plate. First, how many shop sessions are left
+// before the next event; then the next shop session
 // and the tickets you own or are assigned to in its plan come first, then
 // everything else of yours that's still open.
 const auth = useAuthStore();
@@ -67,6 +69,8 @@ onMounted(load);
     <p v-if="!loaded" class="empty">Loading…</p>
 
     <template v-else>
+      <EventCountdown />
+
       <section class="panel session" :class="{ now: happeningNow }">
         <div class="panel-header">
           <h2>{{ session ? (happeningNow ? 'Shop is on now' : 'Next shop session') : 'No shop sessions coming up' }}</h2>

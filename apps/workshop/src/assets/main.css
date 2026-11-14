@@ -265,6 +265,8 @@
   --stage-in_progress: #2f9e57;
   --stage-overdue: #e5534b;
   --stage-closed: #8a8f98;
+  /* Competition events (the countdown on My tasks, the schedule). */
+  --event-color: #8b5cf6;
 }
 
 .chip.status-open {
