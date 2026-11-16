@@ -8,10 +8,10 @@ own role (`workshop_role`), managed from the shared People page.
 
 | Page | Who | What |
 | --- | --- | --- |
-| My tasks (`/`) | everyone | The next shop session and your tickets in its plan, then your other open tickets. |
+| My tasks (`/`) | everyone | How many shop sessions are left before the team's next event, then the next shop session and your tickets in its plan, then your other open tickets. |
 | Tickets | everyone | Every ticket, filterable by status, person, milestone, and component. Members and above open and edit them. |
 | Ticket (`/tickets/:number`) | everyone | One ticket, with its details in a sidebar. Members and above click a field to edit it (each change saves straight away). Leads add it to upcoming sessions' plans. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
-| Sessions | everyone | The shop schedule as a calendar. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
+| Sessions | everyone | The shop schedule as a calendar, with the team's events in their own colour. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
 | Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. |
 | Milestones | everyone | Progress, burnup, and forecasts for each milestone; leads add, edit, and close them, move tickets between them, and pick which forecasts everyone sees. |
 | Dashboard | everyone | Burnup charts over any set of tickets (some milestones, some components, or both). Leads add, edit, reorder, and remove them. |
@@ -64,6 +64,17 @@ If tickets aren't closing faster than they're added, the lines don't meet and
 the page says so. The settings are columns on `WorkshopMilestone` and
 `WorkshopDashboardChart` (`20261112120000_workshop_burnup_forecasts_and_dashboard.sql`
 and `20261113120000_workshop_session_forecast_open_rate.sql`).
+
+## Events
+
+The team's competition events come from GreyScout's `Event` table, which the
+**Nightly Data Update** workflow fills from The Blue Alliance with the events
+team 973 is registered for, this year's and next year's
+(`apps/greyscout/util/event_info.py`). Workshop only reads them: My tasks
+counts the shop sessions left before the next one (sessions that haven't
+ended and start before its first day), and the Sessions page shows them in
+the calendar's all-day row and in Coming up. Nothing to enter by hand; an
+event TBA doesn't list won't appear.
 
 ## Not here yet
 
