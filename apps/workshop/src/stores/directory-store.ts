@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { hasAppAccess, type AppRole } from '@greybots/common/lib/user-roles';
+import { hasAppAccess, roleRank, type AppRole } from '@greybots/common/lib/user-roles';
 import { supabase } from '@greybots/common/supabase/client';
 import { check, unwrap } from '@/lib/db';
 import { forecastFields, type ForecastColumns } from '@/lib/milestones';
@@ -44,6 +44,11 @@ export const useDirectoryStore = defineStore('directory', {
         // People who can be given a ticket: anyone with a Workshop role.
         assignable(): Person[] {
             return this.people.filter((p) => hasAppAccess(p.role));
+        },
+        // People who can own a checklist or be given one of its steps:
+        // members and above (observers can't tick anything off).
+        members(): Person[] {
+            return this.people.filter((p) => roleRank[p.role] >= roleRank.member);
         },
         activeComponents(): Component[] {
             return this.components.filter((c) => !c.archived);

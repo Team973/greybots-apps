@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import ChecklistRow from '@/components/ChecklistRow.vue';
 import EventCountdown from '@/components/EventCountdown.vue';
 import NewTicketDialog from '@/components/NewTicketDialog.vue';
 import TicketRow from '@/components/TicketRow.vue';
+import { fetchMyChecklists, fetchSessionChecklists, openStepsFor, type FullChecklist } from '@/lib/checklists';
 import { errorMessage } from '@/lib/db';
 import { formatSessionTime } from '@/lib/dates';
 import { fetchNextSession, fetchPlan, seedPlan, type Session } from '@/lib/sessions';
@@ -12,13 +14,16 @@ import { useAuthStore } from '@/stores/auth-store';
 
 // "My tasks": what's on your plate. First, how many shop sessions are left
 // before the next event; then the next shop session
-// and the tickets you own or are assigned to in its plan come first, then
-// everything else of yours that's still open.
+// and the tickets you own or are assigned to in its plan come first (and its
+// checklists), then your checklist steps, then everything else of yours
+// that's still open.
 const auth = useAuthStore();
 
 const session = ref<Session | null>(null);
 const planTickets = ref<Ticket[]>([]);
 const myTickets = ref<Ticket[]>([]);
+const sessionChecklists = ref<FullChecklist[]>([]);
+const myChecklists = ref<FullChecklist[]>([]);
 const loaded = ref(false);
 const error = ref('');
 const creating = ref(false);
@@ -27,6 +32,9 @@ const happeningNow = computed(() => !!session.value && Date.parse(session.value.
 const mineInSession = computed(() => planTickets.value.filter((t) => isInterested(t, auth.userId)));
 const othersInSession = computed(() => planTickets.value.filter((t) => !isInterested(t, auth.userId)));
 const planIds = computed(() => new Set(planTickets.value.map((t) => t.id)));
+// Steps of yours not done yet, across your checklists.
+const myOpenSteps = computed(() => myChecklists.value.reduce((n, c) => n + openStepsFor(c, auth.userId).length, 0));
+
 // Soonest due first; no date last.
 const otherOpen = computed(() =>
   myTickets.value
@@ -46,10 +54,12 @@ async function load() {
       const plan = await fetchPlan(next.id);
       const order = new Map(plan.map((p) => [p.ticket_id, p.sort_order]));
       planTickets.value = (await fetchTicketsByIds(plan.map((p) => p.ticket_id))).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+      sessionChecklists.value = await fetchSessionChecklists(next.id);
     } else {
       planTickets.value = [];
+      sessionChecklists.value = [];
     }
-    myTickets.value = await fetchTickets({ status: 'active', involving: auth.userId! });
+    [myTickets.value, myChecklists.value] = await Promise.all([fetchTickets({ status: 'active', involving: auth.userId! }), fetchMyChecklists(auth.userId!)]);
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
@@ -83,12 +93,12 @@ onMounted(load);
         <p v-if="session?.notes" class="notes">{{ session.notes }}</p>
 
         <template v-if="session">
-          <h3>Your tasks this session</h3>
+          <h3>Your tickets this session</h3>
           <ul v-if="mineInSession.length" class="ticket-list">
             <TicketRow v-for="ticket in mineInSession" :key="ticket.id" :ticket="ticket" />
           </ul>
           <p v-else class="empty">
-            Nothing of yours is planned for this session.
+            None of your tickets are planned for this session.
             <template v-if="othersInSession.length">Pick up one of the {{ othersInSession.length }} other planned tickets with a lead.</template>
           </p>
           <details v-if="othersInSession.length" class="rest">
@@ -97,7 +107,24 @@ onMounted(load);
               <TicketRow v-for="ticket in othersInSession" :key="ticket.id" :ticket="ticket" />
             </ul>
           </details>
+
+          <template v-if="sessionChecklists.length">
+            <h3>Checklists this session</h3>
+            <ul class="ticket-list">
+              <ChecklistRow v-for="checklist in sessionChecklists" :key="checklist.id" :checklist="checklist" />
+            </ul>
+          </template>
         </template>
+      </section>
+
+      <section v-if="myChecklists.length" class="panel">
+        <div class="panel-header">
+          <h2>Your checklists</h2>
+          <span class="muted">{{ myOpenSteps }} {{ myOpenSteps === 1 ? 'step' : 'steps' }} to do</span>
+        </div>
+        <ul class="ticket-list">
+          <ChecklistRow v-for="checklist in myChecklists" :key="checklist.id" :checklist="checklist" show-session />
+        </ul>
       </section>
 
       <section class="panel">

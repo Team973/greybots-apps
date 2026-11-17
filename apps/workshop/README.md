@@ -8,11 +8,13 @@ own role (`workshop_role`), managed from the shared People page.
 
 | Page | Who | What |
 | --- | --- | --- |
-| My tasks (`/`) | everyone | How many shop sessions are left before the team's next event, then the next shop session and your tickets in its plan, then your other open tickets. |
+| My tasks (`/`) | everyone | How many shop sessions are left before the team's next event, then the next shop session (your tickets in its plan, and its checklists), then your checklists with steps to do, then your other open tickets. |
 | Tickets | everyone | Every ticket, filterable by status, person, milestone, and component. Members and above open and edit them. |
 | Ticket (`/tickets/:number`) | everyone | One ticket, with its details in a sidebar. Members and above click a field to edit it (each change saves straight away). Leads add it to upcoming sessions' plans. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
 | Sessions | everyone | The shop schedule as a calendar, with the team's events in their own colour. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
-| Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. |
+| Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. Also its checklists; leads add them. |
+| Checklists | everyone | The team's checklist templates (members and above write and edit them, and archive old ones), and every checklist on a session that isn't signed off yet. |
+| Checklist (`/checklists/:id`) | everyone | A checklist on a session: tick off steps in any order (each shows who did it and when), hand steps to people, and sign it off. See below for who can do what. |
 | Milestones | everyone | Progress, burnup, and forecasts for each milestone; leads add, edit, and close them, move tickets between them, and pick which forecasts everyone sees. |
 | Part sorter | everyone | Snap a photo of a pile of bolts; it groups them by type and highlights the largest type first. Take those out, Check, and it moves on to the next. Runs on the phone (see below). |
 | Dashboard | everyone | Burnup charts over any set of tickets (some milestones, some components, or both). Leads add, edit, reorder, and remove them. |
@@ -35,6 +37,23 @@ what will be accepted:
   session's unfinished tickets into a session the first time anyone opens it
   (on My tasks or the session page). Leads can run it again to pull in
   anything added to the previous session since.
+
+- **Checklists** (`20261117120000_workshop_checklists.sql`). Separate from
+  tickets. A template is a list of steps; members and above write them
+  (`workshop_save_checklist_template()` saves a template's steps all at once).
+  Leads and admins add a copy of one to a session with an owner
+  (`workshop_add_checklist()`), and every step starts out assigned to the
+  owner. Editing the template later doesn't change copies already on
+  sessions.
+  - The owner or an admin hands any step to another member. A lead or admin
+    can change the owner; the steps the old owner had and hadn't done go to
+    the new one.
+  - A step's assignee, the owner, or an admin ticks it off (or unticks it);
+    the database records who and when.
+  - Once every step is done, the owner or an admin signs it off. Nothing on a
+    signed-off checklist changes until they undo the sign-off.
+  - Leads and admins take a checklist off a session, unless it's signed off.
+    Observers can't own a checklist or be given a step.
 
 A repeating schedule is stored as a `WorkshopSessionSeries`, but its sessions
 are ordinary `WorkshopSession` rows made when the series is, so each can be
