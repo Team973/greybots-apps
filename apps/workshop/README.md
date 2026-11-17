@@ -14,6 +14,7 @@ own role (`workshop_role`), managed from the shared People page.
 | Sessions | everyone | The shop schedule as a calendar, with the team's events in their own colour. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
 | Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. |
 | Milestones | everyone | Progress, burnup, and forecasts for each milestone; leads add, edit, and close them, move tickets between them, and pick which forecasts everyone sees. |
+| Part sorter | everyone | Snap a photo of a pile of bolts; it groups them by type and highlights the largest type first. Take those out, Check, and it moves on to the next. Runs on the phone (see below). |
 | Dashboard | everyone | Burnup charts over any set of tickets (some milestones, some components, or both). Leads add, edit, reorder, and remove them. |
 | Setup | leads | The components tickets are tagged with. |
 | People | leads | The shared user management page. |
@@ -75,6 +76,26 @@ counts the shop sessions left before the next one (sessions that haven't
 ended and start before its first day), and the Sessions page shows them in
 the calendar's all-day row and in Coming up. Nothing to enter by hand; an
 event TBA doesn't list won't appear.
+
+## Part sorter
+
+Finds the bolts in a photo with a small neural network (ONNX Runtime Web, on
+the phone's GPU where the browser allows, else its CPU), then measures and
+groups them with C++ compiled to WebAssembly. Nothing leaves the phone.
+Design, results and trade-offs: [docs/part-sorter-design.md](docs/part-sorter-design.md).
+
+- `src/lib/partSorter/seg.onnx` is the network, trained on SAM 2's masks of
+  sample photos (`vision/tools/seg_colab.ipynb`).
+- `src/lib/partSorter/part-sorter.{js,wasm}` is the C++ in `vision/`, built by
+  `scripts/build-part-sorter.sh` (Docker). Both are committed, so the dev
+  server and Vercel need neither PyTorch nor Emscripten. After changing the
+  C++, rebuild and commit; `scripts/build-part-sorter.sh --check` says if the
+  committed module is stale.
+- The camera needs https (or localhost). "Use a photo" works anywhere.
+- `vercel.json` serves `/part-sorter` cross-origin isolated so the network
+  can use several CPU threads; the dev server doesn't, so locally it runs on
+  one thread. "Speed and details" on the page has a speed test and a report
+  to copy.
 
 ## Not here yet
 

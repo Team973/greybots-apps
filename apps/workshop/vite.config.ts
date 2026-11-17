@@ -15,6 +15,11 @@ export default defineConfig({
       }
     })
   ],
+  // The Part sorter's worker is an ES module (it imports ONNX Runtime and the
+  // C++ module). ONNX Runtime finds its .wasm from its own URL, so it isn't
+  // pre-bundled.
+  worker: { format: 'es' },
+  optimizeDeps: { exclude: ['onnxruntime-web'] },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))

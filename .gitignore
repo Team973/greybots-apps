@@ -8,3 +8,9 @@ __pycache__
 # Ignore credentials
 private_credentials.json
 .env
+
+# Part sorter: native build output, and the R&D folder (photos, SAM masks,
+# training data, model runs), which never goes in git.
+apps/workshop/vision/build/
+apps/workshop/vision/build-wasm/
+apps/workshop/vision/data/

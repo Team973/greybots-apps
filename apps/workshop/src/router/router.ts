@@ -29,6 +29,7 @@ const router = createRouter({
     { path: '/sessions', name: 'sessions', component: () => import('@/views/SessionsView.vue'), meta: { title: 'Sessions', requiresAccess: true, wide: true } },
     { path: '/sessions/:id', name: 'session', component: () => import('@/views/SessionView.vue'), meta: { title: 'Session plan', requiresAccess: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: 'Dashboard', requiresAccess: true, wide: true } },
+    { path: '/part-sorter', name: 'part-sorter', component: () => import('@/views/PartSorterView.vue'), meta: { title: 'Part sorter', requiresAccess: true, wide: true } },
     { path: '/milestones', name: 'milestones', component: () => import('@/views/MilestonesView.vue'), meta: { title: 'Milestones', requiresAccess: true } },
     { path: '/milestones/:id', name: 'milestone', component: () => import('@/views/MilestoneView.vue'), meta: { title: 'Milestone', requiresAccess: true } },
     { path: '/setup', name: 'setup', component: () => import('@/views/SetupView.vue'), meta: { title: 'Setup', requiresAccess: true, requiresLead: true } },
@@ -44,7 +45,7 @@ const router = createRouter({
   ]
 });
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
   const auth = useAuthStore();
   if (!auth.loaded) await auth.refresh();
 
@@ -57,6 +58,15 @@ router.beforeEach(async (to) => {
     await useDirectoryStore().ensureLoaded();
   }
   if (to.name === 'pending' && (!auth.isSignedIn || auth.hasAccess)) return { name: 'home' };
+  // The Part sorter is served cross-origin isolated (vercel.json), so its
+  // part finder can use several CPU cores. That only takes hold on a full page
+  // load, and the other pages shouldn't keep it (it blocks cross-origin images
+  // without CORP headers), so going into or out of it loads the page afresh.
+  const sorter = to.name === 'part-sorter';
+  if (from.matched.length && sorter !== (from.name === 'part-sorter') && (sorter || window.crossOriginIsolated)) {
+    window.location.assign(to.fullPath);
+    return false;
+  }
   return true;
 });
 
