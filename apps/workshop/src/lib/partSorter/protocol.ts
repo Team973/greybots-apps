@@ -47,6 +47,10 @@ export interface ReadyInfo {
   // ONNX Runtime, the network and the C++ module.
   downloadMs: number;
   startMs: number;
+  // Of startMs: ONNX Runtime with the network (mostly compiling its 15-29 MB
+  // of WASM), and the C++ module.
+  ortMs: number;
+  sorterStartMs: number;
   // The files came from the page's own cache, not the network.
   cached: boolean;
   // Their size (before compression).

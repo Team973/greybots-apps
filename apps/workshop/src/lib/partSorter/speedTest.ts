@@ -45,9 +45,10 @@ export function deviceInfo() {
   };
 }
 
-// "downloaded 4.6 MB in 9000 ms (or: from the cache), started in 3000 ms"
+// "downloaded 4.6 MB in 9000 ms (or: read from the cache), started in 3000 ms
+// (ONNX Runtime 2500, sorter 300)"
 export const describeLoad = (info: ReadyInfo) =>
-  `${info.cached ? 'read from the cache' : `downloaded ${(info.bytes / 1e6).toFixed(1)} MB`} in ${Math.round(info.downloadMs)} ms, started in ${Math.round(info.startMs)} ms`;
+  `${info.cached ? 'read from the cache' : `downloaded ${(info.bytes / 1e6).toFixed(1)} MB`} in ${Math.round(info.downloadMs)} ms, started in ${Math.round(info.startMs)} ms (ONNX Runtime ${Math.round(info.ortMs)}, sorter ${Math.round(info.sorterStartMs)})`;
 
 const describe = (info: ReadyInfo) => (info.provider === 'webgpu' ? 'GPU' : `CPU ×${info.threads}`);
 

@@ -139,6 +139,7 @@ async function load(kind: PartKind, prefer?: Provider, threads?: number) {
       }
     }
     if (!session) session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ['wasm'] });
+    const t2 = performance.now();
     // The GPU compiles its shaders on the first run at each photo size, which
     // takes seconds on a phone: do it now, for the camera's sizes held either
     // way, rather than on the first Scan.
@@ -148,6 +149,7 @@ async function load(kind: PartKind, prefer?: Provider, threads?: number) {
         out.logits.dispose();
       }
     }
+    const t3 = performance.now();
     const sorterBlob = URL.createObjectURL(new Blob([sorterWasm], { type: 'application/wasm' }));
     try {
       sorter = await createPartSorter({ locateFile: () => sorterBlob });
@@ -161,6 +163,8 @@ async function load(kind: PartKind, prefer?: Provider, threads?: number) {
       threads: ort.env.wasm.numThreads ?? 1,
       downloadMs: t1 - t0,
       startMs: performance.now() - t1,
+      ortMs: t2 - t1,
+      sorterStartMs: performance.now() - t3,
       cached: got.cached,
       bytes: got.bytes,
       gpu: provider === 'webgpu' ? gpu || 'unknown' : undefined
