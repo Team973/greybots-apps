@@ -18,6 +18,8 @@ const ready = ref<ReadyInfo | null>(null);
 const timings = ref<Timings | null>(null);
 // Downloading the part finder: 0-1, or null when not downloading.
 const progress = ref<number | null>(null);
+// Loading in the background failed; Start tries again.
+const preloadFailed = ref(false);
 
 // Every browser with WebGPU or recent WASM has SIMD; the C++ module needs it.
 const SIMD_TEST = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
@@ -123,22 +125,51 @@ const currentGroup = computed(() => groups.value[current.value]);
 const volume = (g: { length: number; diameter: number }) => g.length * g.diameter * g.diameter;
 const relativeSize = computed(() => (currentGroup.value && groups.value.length ? volume(currentGroup.value) / volume(groups.value[0]) : 0));
 
+// Starts loading the part finder as soon as the page opens, so it's often
+// ready by the time the student presses Start: starting it takes seconds on a
+// phone (compiling ONNX Runtime), even when the files are already kept.
+function preload() {
+  if (client) return client;
+  preloadFailed.value = false;
+  const c = new PartSorterClient(kind.value);
+  client = c;
+  c.onProgress = (loaded, total) => (progress.value = total ? Math.min(1, loaded / total) : null);
+  c.whenReady().then(
+    (info) => {
+      if (client !== c) return;
+      ready.value = info;
+      progress.value = null;
+    },
+    () => {
+      // Start tries again, and says what went wrong.
+      if (client !== c) return;
+      progress.value = null;
+      preloadFailed.value = true;
+      c.dispose();
+      client = null;
+    }
+  );
+  return c;
+}
+if (supported) preload();
+
 async function start() {
   error.value = '';
   phase.value = 'loading';
-  if (!client) {
-    client = new PartSorterClient(kind.value);
-    client.onProgress = (loaded, total) => (progress.value = total ? Math.min(1, loaded / total) : null);
-  } else client.reset(kind.value);
+  const c = preload();
   const camera = startCamera();
   try {
-    ready.value = await client.whenReady();
+    ready.value = await c.whenReady();
     progress.value = null;
+    // After it's ready: the kind set now, not when the page opened.
+    c.reset(kind.value);
   } catch (err) {
     error.value = `The part finder didn't load: ${err instanceof Error ? err.message : err}`;
     progress.value = null;
-    client?.dispose();
-    client = null;
+    if (client === c) {
+      c.dispose();
+      client = null;
+    }
     phase.value = 'start';
     return;
   }
@@ -146,7 +177,6 @@ async function start() {
   phase.value = 'aim';
 }
 
-// A photo from the camera, or from a file (no camera, or testing).
 async function snap(mode: 'scan' | 'check', file?: File) {
   if (!client) return;
   let bitmap: ImageBitmap;
@@ -363,7 +393,10 @@ onBeforeUnmount(() => {
           progress !== null && progress < 1 ? `Downloading the part finder… ${Math.round(progress * 100)}%` : 'Starting the part finder…'
         }}</span>
       </div>
-      <p v-else class="hint">The first start downloads the part finder (5–9 MB); after that it's kept on the phone.</p>
+      <p v-else-if="ready" class="hint">The part finder is ready.</p>
+      <p v-else-if="progress !== null && progress < 1" class="hint">Downloading the part finder… {{ Math.round(progress * 100) }}%. It's kept on the phone after this.</p>
+      <p v-else-if="preloadFailed" class="hint">Press Start to load the part finder.</p>
+      <p v-else class="hint">Getting the part finder ready…</p>
     </section>
 
     <template v-else>

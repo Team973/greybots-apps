@@ -82,6 +82,8 @@ Per snapshot:
 
 **Download, first visit only** (compressed): ONNX Runtime 3.8 MB on a phone without WebGPU (its plain CPU build) or 7.2 MB with it (the build that can use the GPU, twice the size and slower to start), the C++ module 0.6 MB, the network about 0.9 MB. A progress bar shows while they download.
 
+**Starting, every visit:** the browser compiles the WASM before it runs. On the phone test, that took 9–12 s for ONNX Runtime (14.8 MB of WASM) and 1.2–1.6 s for the C++ module (2.6 MB), about 0.7 s per MB, even with the files already kept. So the page starts loading the part finder as soon as it opens, before the student presses Start, and the details show the start time split between the two. Next: an ONNX Runtime build cut down to the network's own operations, to shrink that compile.
+
 Both run in one Web Worker, so the page never freezes. The big files are fetched only on this page. The worker keeps them in the page's own Cache Storage and reads them from there on later visits: on the first phone test, HTTP caching alone missed, and every reload downloaded them again (about 49 s). Their URLs carry a hash of their contents, so a kept copy is never stale, and older copies are deleted. `vercel.json` also marks `/assets/` as immutable for a year.
 
 The first phone test (Firefox on Android 12, no WebGPU, 8 cores; the GPU build at the time): 1.5 s for the network on 4 threads and 2.8 s on 1, 2.2 s for a whole photo. Smaller photos lost too many parts to be worth it (93 grouped at 1280 px, 87 at 1024, 63 at 768).
