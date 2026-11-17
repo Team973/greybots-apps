@@ -24,6 +24,7 @@ const pages: { to: string; label: string; lead?: boolean }[] = [
   { to: '/', label: 'My tasks' },
   { to: '/tickets', label: 'Tickets' },
   { to: '/sessions', label: 'Sessions' },
+  { to: '/part-sorter', label: 'Part sorter' },
   { to: '/milestones', label: 'Milestones' },
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/setup', label: 'Setup', lead: true },

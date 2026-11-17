@@ -18,6 +18,7 @@
     "@fullcalendar/timegrid": "^6.1.21",
     "@fullcalendar/vue3": "^6.1.21",
     "@greybots/common": "*",
+    "onnxruntime-web": "^1.31.1",
     "pinia": "^2.1.7",
     "vue": "^3.4.29",
     "vue-router": "^4.3.3"
