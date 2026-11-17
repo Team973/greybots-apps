@@ -43,8 +43,14 @@ export interface ReadyInfo {
   provider: Provider;
   // CPU threads ONNX Runtime uses (more than 1 needs cross-origin isolation).
   threads: number;
-  // Downloading and starting the network and the C++ module.
-  loadMs: number;
+  // Downloading the files (or reading them from the cache), then starting
+  // ONNX Runtime, the network and the C++ module.
+  downloadMs: number;
+  startMs: number;
+  // The files came from the page's own cache, not the network.
+  cached: boolean;
+  // Their size (before compression).
+  bytes: number;
   // The GPU, when the browser says.
   gpu?: string;
 }
@@ -59,5 +65,7 @@ export type ToWorker =
 
 export type FromWorker =
   | ({ type: 'ready' } & ReadyInfo)
+  // Downloading: bytes so far of the total (before compression).
+  | { type: 'progress'; loaded: number; total: number }
   | { type: 'result'; id: number; result: SorterResult; timings: Timings }
   | { type: 'error'; id?: number; message: string };

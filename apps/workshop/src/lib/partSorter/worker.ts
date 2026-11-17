@@ -3,8 +3,9 @@
 // (part-sorter.wasm) that turns its maps into measured, grouped parts. See
 // apps/workshop/docs/part-sorter-design.md.
 /// <reference lib="webworker" />
-import * as ort from 'onnxruntime-web/webgpu';
-import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
+import type * as Ort from 'onnxruntime-web';
+import ortGpuWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
+import ortCpuWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import createPartSorter, { type PartSorterModule } from './part-sorter.js';
 import sorterWasmUrl from './part-sorter.wasm?url';
 import modelUrl from './seg.onnx?url';
@@ -12,12 +13,14 @@ import type { FromWorker, PartKind, Provider, ReadyInfo, SorterResult, ToWorker 
 
 declare const self: DedicatedWorkerGlobalScope;
 
-ort.env.wasm.wasmPaths = { wasm: ortWasmUrl };
-
 // A 4:3 camera frame at the working size (client.ts workSize).
 const WARM_SIZE = [1280, 960];
+// The page's own cache of the big files. Their URLs carry a hash of their
+// contents, so a cached copy is never stale; ones no longer used are deleted.
+const CACHE_NAME = 'part-sorter';
 
-let session: ort.InferenceSession | null = null;
+let ort: typeof Ort;
+let session: Ort.InferenceSession | null = null;
 let info: ReadyInfo | null = null;
 let sorter: PartSorterModule | null = null;
 
@@ -31,25 +34,111 @@ function defaultThreads() {
   return self.crossOriginIsolated ? Math.min(4, Math.ceil((navigator.hardwareConcurrency || 1) / 2)) : 1;
 }
 
+// Each big file, and its size before compression (vite.config.ts).
+const file = (url: string, name: string) => ({ url, name, size: __PART_SORTER_BYTES__[name] ?? 0 });
+const ORT_GPU = file(ortGpuWasmUrl, 'ort-wasm-simd-threaded.asyncify.wasm');
+const ORT_CPU = file(ortCpuWasmUrl, 'ort-wasm-simd-threaded.wasm');
+const MODEL = file(modelUrl, 'seg.onnx');
+const SORTER = file(sorterWasmUrl, 'part-sorter.wasm');
+
+// Downloads the files, with progress, or reads them from the cache (HTTP
+// caching alone wasn't reliable on phones). The dev server's URLs have no
+// hash, so it always downloads.
+async function download(wanted: ReturnType<typeof file>[]) {
+  const urls = wanted.map((f) => f.url);
+  const sizes = wanted.map((f) => f.size);
+  const total = sizes.reduce((a, b) => a + b, 0);
+  const loaded = urls.map(() => 0);
+  let lastPost = 0;
+  const report = (i: number, bytes: number, force = false) => {
+    loaded[i] = Math.min(bytes, sizes[i] || bytes);
+    const now = performance.now();
+    if (force || now - lastPost > 100) {
+      lastPost = now;
+      post({ type: 'progress', loaded: loaded.reduce((a, b) => a + b, 0), total });
+    }
+  };
+
+  let cache: Cache | null = null;
+  if (!import.meta.env.DEV) {
+    try {
+      cache = await self.caches.open(CACHE_NAME);
+    } catch {
+      cache = null; // A private window, or storage blocked.
+    }
+  }
+  let cached = true;
+  const files = await Promise.all(
+    urls.map(async (url, i) => {
+      const key = new URL(url, self.location.href).href;
+      const hit = await cache?.match(key).catch(() => undefined);
+      if (hit) {
+        const data = await hit.arrayBuffer();
+        report(i, data.byteLength, true);
+        return data;
+      }
+      cached = false;
+      const response = await fetch(key);
+      if (!response.ok || !response.body) throw new Error(`Couldn't download ${wanted[i].name} (${response.status}).`);
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        bytes += value.byteLength;
+        report(i, bytes);
+      }
+      const data = new Uint8Array(bytes);
+      let at = 0;
+      for (const chunk of chunks) {
+        data.set(chunk, at);
+        at += chunk.byteLength;
+      }
+      report(i, bytes, true);
+      const type = response.headers.get('Content-Type') ?? 'application/octet-stream';
+      cache?.put(key, new Response(data, { headers: { 'Content-Type': type } })).catch(() => {});
+      return data.buffer;
+    })
+  );
+  // Drop older versions of the files.
+  if (cache) {
+    const keep = new Set(urls.map((url) => new URL(url, self.location.href).href));
+    for (const request of await cache.keys().catch(() => [] as readonly Request[])) if (!keep.has(request.url)) cache.delete(request).catch(() => {});
+  }
+  return { files, cached, bytes: total };
+}
+
 async function load(kind: PartKind, prefer?: Provider, threads?: number) {
   if (!session) {
     const t0 = performance.now();
-    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, threads ?? defaultThreads()) : 1;
-    const model = new Uint8Array(await (await fetch(modelUrl)).arrayBuffer());
-    // The GPU when there is one; otherwise the CPU, which works everywhere.
+    // The GPU when there is one. Otherwise the CPU, which works everywhere,
+    // with ONNX Runtime's plain build: half the download of the one that can
+    // use the GPU, and quicker to start.
     type Adapter = { info?: { vendor?: string; architecture?: string; device?: string; description?: string } };
     const webgpu = (navigator as unknown as { gpu?: { requestAdapter(): Promise<Adapter | null> } }).gpu;
     const adapter = webgpu && prefer !== 'wasm' ? await webgpu.requestAdapter().catch(() => null) : null;
+    const [ortModule, got] = await Promise.all([
+      adapter ? import('onnxruntime-web/webgpu') : import('onnxruntime-web/wasm'),
+      download([adapter ? ORT_GPU : ORT_CPU, MODEL, SORTER])
+    ]);
+    ort = ortModule;
+    const [ortWasm, model, sorterWasm] = got.files;
+    const t1 = performance.now();
+
+    ort.env.wasm.wasmBinary = ortWasm;
+    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, threads ?? defaultThreads()) : 1;
     let provider: Provider = 'wasm';
     if (adapter) {
       try {
-        session = await ort.InferenceSession.create(model, { executionProviders: ['webgpu'] });
+        session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ['webgpu'] });
         provider = 'webgpu';
       } catch {
         session = null;
       }
     }
-    if (!session) session = await ort.InferenceSession.create(model, { executionProviders: ['wasm'] });
+    if (!session) session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ['wasm'] });
     // The GPU compiles its shaders on the first run at each photo size, which
     // takes seconds on a phone: do it now, for the camera's sizes held either
     // way, rather than on the first Scan.
@@ -59,10 +148,23 @@ async function load(kind: PartKind, prefer?: Provider, threads?: number) {
         out.logits.dispose();
       }
     }
-    if (!sorter) sorter = await createPartSorter({ locateFile: () => sorterWasmUrl });
+    const sorterBlob = URL.createObjectURL(new Blob([sorterWasm], { type: 'application/wasm' }));
+    try {
+      sorter = await createPartSorter({ locateFile: () => sorterBlob });
+    } finally {
+      URL.revokeObjectURL(sorterBlob);
+    }
     const a = adapter?.info;
     const gpu = a ? [a.vendor, a.architecture, a.device, a.description].filter(Boolean).join(' ') : undefined;
-    info = { provider, threads: ort.env.wasm.numThreads ?? 1, loadMs: performance.now() - t0, gpu: provider === 'webgpu' ? gpu || 'unknown' : undefined };
+    info = {
+      provider,
+      threads: ort.env.wasm.numThreads ?? 1,
+      downloadMs: t1 - t0,
+      startMs: performance.now() - t1,
+      cached: got.cached,
+      bytes: got.bytes,
+      gpu: provider === 'webgpu' ? gpu || 'unknown' : undefined
+    };
   }
   sorter!._sorter_init(kind === 'gears' ? 1 : 0);
 }
@@ -135,6 +237,6 @@ function onMessage(event: MessageEvent<ToWorker>) {
   });
 }
 
-// With threads, ONNX Runtime starts its thread workers from this same script
-// (named "em-pthread"); its own code answers their messages there.
+// With threads, ONNX Runtime starts its thread workers from its own script
+// (named "em-pthread"); its code answers their messages there, not this.
 if (!self.name.startsWith('em-pthread')) self.onmessage = onMessage;

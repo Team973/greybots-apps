@@ -7,7 +7,7 @@ import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue
 import { PartSorterClient, grab } from '@/lib/partSorter/client';
 import { drawResult, groupColor, UNKNOWN_COLOR } from '@/lib/partSorter/draw';
 import type { PartKind, ReadyInfo, SorterResult, Timings } from '@/lib/partSorter/protocol';
-import { deviceInfo, formatReport, runSpeedTest } from '@/lib/partSorter/speedTest';
+import { describeLoad, deviceInfo, formatReport, runSpeedTest } from '@/lib/partSorter/speedTest';
 
 type Phase = 'start' | 'loading' | 'aim' | 'working' | 'sorting' | 'done';
 
@@ -16,6 +16,8 @@ const kind = ref<PartKind>('bolts');
 const error = ref('');
 const ready = ref<ReadyInfo | null>(null);
 const timings = ref<Timings | null>(null);
+// Downloading the part finder: 0-1, or null when not downloading.
+const progress = ref<number | null>(null);
 
 // Every browser with WebGPU or recent WASM has SIMD; the C++ module needs it.
 const SIMD_TEST = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]);
@@ -124,13 +126,19 @@ const relativeSize = computed(() => (currentGroup.value && groups.value.length ?
 async function start() {
   error.value = '';
   phase.value = 'loading';
-  if (!client) client = new PartSorterClient(kind.value);
-  else client.reset(kind.value);
+  if (!client) {
+    client = new PartSorterClient(kind.value);
+    client.onProgress = (loaded, total) => (progress.value = total ? Math.min(1, loaded / total) : null);
+  } else client.reset(kind.value);
   const camera = startCamera();
   try {
     ready.value = await client.whenReady();
+    progress.value = null;
   } catch (err) {
     error.value = `The part finder didn't load: ${err instanceof Error ? err.message : err}`;
+    progress.value = null;
+    client?.dispose();
+    client = null;
     phase.value = 'start';
     return;
   }
@@ -303,7 +311,7 @@ const details = computed(() => {
   const lines = Object.entries(deviceInfo()).map(([k, v]) => `${k}: ${v}`);
   if (ready.value)
     lines.push(
-      `running on: ${ready.value.provider === 'webgpu' ? 'GPU' : 'CPU'}, ${ready.value.threads} CPU thread${ready.value.threads === 1 ? '' : 's'}, loaded in ${ms(ready.value.loadMs)} ms${ready.value.gpu ? `, ${ready.value.gpu}` : ''}`
+      `running on: ${ready.value.provider === 'webgpu' ? 'GPU' : 'CPU'}, ${ready.value.threads} CPU thread${ready.value.threads === 1 ? '' : 's'}, ${describeLoad(ready.value)}${ready.value.gpu ? `, ${ready.value.gpu}` : ''}`
     );
   if (history.value.length) {
     lines.push('', 'snapshots: mode size prep model sort ms, parts ? groups');
@@ -349,7 +357,13 @@ onBeforeUnmount(() => {
       <button class="button primary big" :disabled="phase === 'loading'" @click="start">
         {{ phase === 'loading' ? 'Loading…' : 'Start camera' }}
       </button>
-      <p class="hint">The first start downloads the part finder (several MB); after that it's cached.</p>
+      <div v-if="phase === 'loading'" class="loading" aria-live="polite">
+        <progress :value="progress ?? undefined" max="1"></progress>
+        <span class="hint small">{{
+          progress !== null && progress < 1 ? `Downloading the part finder… ${Math.round(progress * 100)}%` : 'Starting the part finder…'
+        }}</span>
+      </div>
+      <p v-else class="hint">The first start downloads the part finder (5–9 MB); after that it's kept on the phone.</p>
     </section>
 
     <template v-else>
@@ -588,6 +602,19 @@ canvas.feed {
 
 .hint.small {
   font-size: 0.85rem;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(100%, 360px);
+}
+
+.loading progress {
+  width: 100%;
+  height: 10px;
+  accent-color: var(--accent-color);
 }
 
 .details summary {

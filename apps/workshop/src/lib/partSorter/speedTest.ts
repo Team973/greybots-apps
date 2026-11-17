@@ -45,6 +45,10 @@ export function deviceInfo() {
   };
 }
 
+// "downloaded 4.6 MB in 9000 ms (or: from the cache), started in 3000 ms"
+export const describeLoad = (info: ReadyInfo) =>
+  `${info.cached ? 'read from the cache' : `downloaded ${(info.bytes / 1e6).toFixed(1)} MB`} in ${Math.round(info.downloadMs)} ms, started in ${Math.round(info.startMs)} ms`;
+
 const describe = (info: ReadyInfo) => (info.provider === 'webgpu' ? 'GPU' : `CPU ×${info.threads}`);
 
 export async function runSpeedTest(kind: PartKind, photo: ImageBitmap, onProgress: (text: string) => void): Promise<SpeedReport> {
@@ -105,7 +109,7 @@ export function formatReport(report: SpeedReport) {
   const lines = [
     `Part sorter speed test, ${report.when}`,
     ...Object.entries(report.device).map(([k, v]) => `${k}: ${v}`),
-    ...report.setups.map((s) => `${s.setup}: loaded in ${Math.round(s.loadMs)} ms${s.gpu ? `, ${s.gpu}` : ''}`),
+    ...report.setups.map((s) => `${s.setup}: ${describeLoad(s)}${s.gpu ? `, ${s.gpu}` : ''}`),
     '',
     'setup    size        first   prep  model   sort  total  parts grouped  ?  groups'
   ];

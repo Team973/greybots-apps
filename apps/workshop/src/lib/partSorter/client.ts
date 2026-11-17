@@ -28,6 +28,8 @@ export class PartSorterClient {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private ready: Promise<ReadyInfo>;
+  // Called while the files download: bytes so far of the total.
+  onProgress: ((loaded: number, total: number) => void) | null = null;
 
   constructor(kind: PartKind, options: ClientOptions = {}) {
     const threaded = options.threads !== 1 && globalThis.crossOriginIsolated;
@@ -49,7 +51,8 @@ export class PartSorterClient {
     const ready = new Promise<ReadyInfo>((resolve, reject) => {
       this.worker.onmessage = (event: MessageEvent<FromWorker>) => {
         const msg = event.data;
-        if (msg.type === 'ready') {
+        if (msg.type === 'progress') this.onProgress?.(msg.loaded, msg.total);
+        else if (msg.type === 'ready') {
           const { type: _type, ...info } = msg;
           resolve(info);
         } else if (msg.type === 'result') {

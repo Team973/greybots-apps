@@ -80,9 +80,11 @@ Per snapshot:
    On the GPU, the first run at each photo size compiles shaders (1–2 s on a desktop), so the worker runs the network once on a blank frame of each camera orientation while the page loads. **Real phones are still to be measured;** the page's speed test does that (below).
 3. **The C++ module** (OpenCV `core` + `imgproc` compiled to WASM): cores to parts, measuring, grouping or matching to the locked groups. 130–170 ms natively; 0.4–0.9 s in desktop Chrome, slowest on the first photo. With the network on the GPU, this is now the largest step, followed by turning the photo into the network's input and back (0.15–0.3 s, plain JavaScript).
 
-**Download, first visit only** (gzip; cached after): ONNX Runtime's WebGPU build 6.9 MB, the C++ module 0.6 MB, the network 1–2 MB.
+**Download, first visit only** (compressed): ONNX Runtime 3.8 MB on a phone without WebGPU (its plain CPU build) or 7.2 MB with it (the build that can use the GPU, twice the size and slower to start), the C++ module 0.6 MB, the network about 0.9 MB. A progress bar shows while they download.
 
-Both run in one Web Worker, so the page never freezes. The model and the module are fetched only on this page, and are cached after the first visit.
+Both run in one Web Worker, so the page never freezes. The big files are fetched only on this page. The worker keeps them in the page's own Cache Storage and reads them from there on later visits: on the first phone test, HTTP caching alone missed, and every reload downloaded them again (about 49 s). Their URLs carry a hash of their contents, so a kept copy is never stale, and older copies are deleted. `vercel.json` also marks `/assets/` as immutable for a year.
+
+The first phone test (Firefox on Android 12, no WebGPU, 8 cores; the GPU build at the time): 1.5 s for the network on 4 threads and 2.8 s on 1, 2.2 s for a whole photo. Smaller photos lost too many parts to be worth it (93 grouped at 1280 px, 87 at 1024, 63 at 768).
 
 ## Stack
 
