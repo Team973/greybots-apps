@@ -7,9 +7,10 @@ import { useDirectoryStore } from '@/stores/directory-store';
 // picked as removable chips, and a search box to find anyone else with a
 // Workshop role by typing their name. With `single`, picking someone replaces
 // whoever was there.
-const props = withDefaults(defineProps<{ modelValue: string[]; disabled?: boolean; single?: boolean; addLabel?: string; label?: string }>(), {
+const props = withDefaults(defineProps<{ modelValue: string[]; disabled?: boolean; single?: boolean; addLabel?: string; label?: string; membersOnly?: boolean }>(), {
   disabled: false,
   single: false,
+  membersOnly: false,
   addLabel: '',
   label: 'Add a person'
 });
@@ -30,7 +31,7 @@ const remove = (id: string) => emit('update:modelValue', props.modelValue.filter
       {{ directory.personName(id) }}
       <button v-if="!disabled" type="button" class="remove" :aria-label="`Remove ${directory.personName(id)}`" @click="remove(id)">×</button>
     </span>
-    <PersonSearch v-if="!disabled" :exclude="modelValue" :placeholder="placeholder" :label="label" @pick="add" />
+    <PersonSearch v-if="!disabled" :exclude="modelValue" :placeholder="placeholder" :label="label" :members-only="membersOnly" @pick="add" />
     <span v-if="disabled && !modelValue.length" class="muted">Nobody</span>
   </div>
 </template>

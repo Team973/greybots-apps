@@ -2,8 +2,11 @@
 import { computed, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import AppDialog from '@greybots/common/components/AppDialog.vue';
+import AddChecklistDialog from '@/components/AddChecklistDialog.vue';
+import ChecklistRow from '@/components/ChecklistRow.vue';
 import NewTicketDialog from '@/components/NewTicketDialog.vue';
 import TicketRow from '@/components/TicketRow.vue';
+import { fetchSessionChecklists, type FullChecklist } from '@/lib/checklists';
 import { errorMessage } from '@/lib/db';
 import { formatSessionTime } from '@/lib/dates';
 import { addToPlan, fetchNeighbors, fetchPlan, fetchSession, removeFromPlan, reorderPlan, seedPlan, type PlanItem, type Session } from '@/lib/sessions';
@@ -14,7 +17,8 @@ import { useDirectoryStore } from '@/stores/directory-store';
 // A session's plan: the tickets to work on. It starts as the previous
 // session's unfinished tickets (carried over automatically the first time
 // anyone opens it), and leads and admins add, remove, and reorder from
-// there, like planning a one-session sprint.
+// there, like planning a one-session sprint. Leads also add checklists to it
+// (copies of the team's checklist templates, each with an owner).
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const route = useRoute();
@@ -23,6 +27,7 @@ const session = ref<Session | null>(null);
 const neighbors = ref<{ previous: Session | null; next: Session | null }>({ previous: null, next: null });
 const plan = ref<PlanItem[]>([]);
 const tickets = ref<Map<string, Ticket>>(new Map());
+const checklists = ref<FullChecklist[]>([]);
 const loaded = ref(false);
 const error = ref('');
 const notice = ref('');
@@ -54,7 +59,9 @@ async function load() {
 
 async function loadPlan() {
   if (!session.value) return;
-  plan.value = await fetchPlan(session.value.id);
+  const [items, lists] = await Promise.all([fetchPlan(session.value.id), fetchSessionChecklists(session.value.id)]);
+  plan.value = items;
+  checklists.value = lists;
   const found = await fetchTicketsByIds(plan.value.map((p) => p.ticket_id));
   tickets.value = new Map(found.map((t) => [t.id, t]));
 }
@@ -136,6 +143,10 @@ function addChosen() {
   return act(() => addToPlan(session.value!.id, ids, last));
 }
 
+// Checklists on this session.
+const addingChecklist = ref(false);
+const signedOffCount = computed(() => checklists.value.filter((c) => c.signed_off_at).length);
+
 // A ticket opened from here goes straight into the plan.
 const creating = ref(false);
 function onCreated(ticket: Ticket) {
@@ -190,6 +201,20 @@ function onCreated(ticket: Ticket) {
           Nothing planned yet.<template v-if="auth.isLead"> Add tickets to set the goals for this session.</template>
         </p>
       </section>
+
+      <section v-if="checklists.length || auth.isLead" class="panel">
+        <div class="panel-header">
+          <h2>Checklists</h2>
+          <span v-if="checklists.length" class="muted">{{ signedOffCount }} of {{ checklists.length }} signed off</span>
+        </div>
+        <div v-if="auth.isLead" class="plan-actions">
+          <button class="button small" :disabled="busy" @click="addingChecklist = true">Add checklist</button>
+        </div>
+        <ul v-if="checklists.length" class="ticket-list">
+          <ChecklistRow v-for="checklist in checklists" :key="checklist.id" :checklist="checklist" />
+        </ul>
+        <p v-else class="empty">No checklists on this session. Add one of the team's checklists, with an owner who hands out its steps.</p>
+      </section>
     </template>
 
     <AppDialog :open="picking" title="Add tickets to the plan" @close="picking = false">
@@ -213,6 +238,7 @@ function onCreated(ticket: Ticket) {
     </AppDialog>
 
     <NewTicketDialog :open="creating" @close="creating = false" @created="onCreated" />
+    <AddChecklistDialog v-if="session" :open="addingChecklist" :session-id="session.id" @close="addingChecklist = false" @added="act(async () => {})" />
   </div>
 </template>
 
