@@ -4,7 +4,18 @@ import { RouterLink } from 'vue-router';
 import AppDialog from '@greybots/common/components/AppDialog.vue';
 import { errorMessage } from '@/lib/db';
 import { addDays, combine, parseDate, toDateString, toTimeString, weekdayShort } from '@/lib/dates';
-import { createSeries, createSession, deleteFollowing, deleteSession, seriesDates, updateFollowing, updateSession, type Session } from '@/lib/sessions';
+import {
+  createSeries,
+  createSession,
+  deleteFollowing,
+  deleteSession,
+  fetchLatestShopBoss,
+  seriesDates,
+  updateFollowing,
+  updateSession,
+  type Session
+} from '@/lib/sessions';
+import { useDirectoryStore } from '@/stores/directory-store';
 
 // Add a shop session (one-off or repeating), or change or cancel one (leads
 // and admins). A session in a repeating series can be changed on its own or
@@ -18,12 +29,15 @@ const props = defineProps<{
   end?: string | null;
 }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
+const directory = useDirectoryStore();
 
 const title = ref('');
 const date = ref('');
 const startTime = ref('18:00');
 const endTime = ref('21:00');
 const notes = ref('');
+// The shop boss's user id, or '' for nobody.
+const shopBoss = ref('');
 const repeat = ref(false);
 const weekdays = ref<number[]>([]);
 const until = ref('');
@@ -51,6 +65,7 @@ watch(
       startTime.value = toTimeString(s.starts_at);
       endTime.value = toTimeString(s.ends_at);
       notes.value = s.notes;
+      shopBoss.value = s.shop_boss ?? '';
     } else {
       title.value = 'Shop';
       const start = props.start ? new Date(props.start) : null;
@@ -58,11 +73,26 @@ watch(
       startTime.value = props.start ? toTimeString(props.start) : '18:00';
       endTime.value = props.end ? toTimeString(props.end) : '21:00';
       notes.value = '';
+      // A new session gets whoever ran the latest one.
+      shopBoss.value = '';
+      fetchLatestShopBoss()
+        .then((id) => {
+          if (props.open && !props.session && !shopBoss.value) shopBoss.value = id ?? '';
+        })
+        .catch(() => {});
     }
     weekdays.value = [parseDate(date.value).getDay()];
     until.value = addDays(date.value, 7 * 12);
   }
 );
+
+// Anyone with a Workshop role can run a session; someone who's since lost
+// theirs still shows while they're the boss.
+const bossChoices = computed(() => {
+  const people = directory.assignable;
+  if (!shopBoss.value || people.some((p) => p.user_id === shopBoss.value)) return people;
+  return [{ user_id: shopBoss.value, name: directory.personName(shopBoss.value) }, ...people];
+});
 
 // Starting a repeat on a different day keeps the day ticked.
 watch(date, (value) => {
@@ -96,13 +126,19 @@ function save() {
     error.value = 'Give the session a name.';
     return;
   }
-  const fields = { title: title.value.trim(), starts_at: combine(date.value, startTime.value), ends_at: combine(date.value, endTime.value), notes: notes.value.trim() };
+  const fields = { title: title.value.trim(), starts_at: combine(date.value, startTime.value), ends_at: combine(date.value, endTime.value), notes: notes.value.trim(), shop_boss: shopBoss.value || null };
   if (props.session) {
     const session = props.session;
     if (inSeries.value && scope.value === 'following') {
       return run(async () => {
         // The rest keep their own dates; only this one moves to a new day.
-        await updateFollowing(session, { title: fields.title, start_time: startTime.value, end_time: endTime.value, notes: fields.notes });
+        await updateFollowing(session, {
+          title: fields.title,
+          start_time: startTime.value,
+          end_time: endTime.value,
+          notes: fields.notes,
+          shop_boss: fields.shop_boss
+        });
         await updateSession(session.id, { starts_at: fields.starts_at, ends_at: fields.ends_at });
       });
     }
@@ -112,7 +148,8 @@ function save() {
     return run(() =>
       createSeries(
         { title: fields.title, weekdays: weekdays.value, start_time: startTime.value, end_time: endTime.value, starts_on: date.value, ends_on: until.value },
-        fields.notes
+        fields.notes,
+        fields.shop_boss
       )
     );
   }
@@ -146,6 +183,13 @@ function remove() {
         <input v-model="endTime" type="time" required />
       </label>
       <label class="field full">
+        <span>Shop boss</span>
+        <select v-model="shopBoss">
+          <option value="">Nobody yet</option>
+          <option v-for="person in bossChoices" :key="person.user_id" :value="person.user_id">{{ person.name }}</option>
+        </select>
+      </label>
+      <label class="field full">
         <span>Notes (shown with the plan)</span>
         <textarea v-model="notes" rows="2" placeholder="e.g. Build day, bring safety glasses"></textarea>
       </label>
@@ -175,7 +219,7 @@ function remove() {
       <fieldset v-if="inSeries" class="scope full">
         <legend class="muted">This session repeats. Apply changes to:</legend>
         <label class="check"><input v-model="scope" type="radio" value="one" /> Only this session</label>
-        <label class="check"><input v-model="scope" type="radio" value="following" /> This and the following sessions (name, times, notes)</label>
+        <label class="check"><input v-model="scope" type="radio" value="following" /> This and the following sessions (name, times, shop boss, notes)</label>
       </fieldset>
     </form>
 

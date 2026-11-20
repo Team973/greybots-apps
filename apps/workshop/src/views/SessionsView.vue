@@ -4,28 +4,37 @@ import { RouterLink, useRouter } from 'vue-router';
 import FullCalendar from '@fullcalendar/vue3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import type { CalendarOptions, EventClickArg, EventDropArg, EventInput, EventSourceFuncArg } from '@fullcalendar/core';
+import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput, EventSourceFuncArg } from '@fullcalendar/core';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
+import KeyDateDialog from '@/components/KeyDateDialog.vue';
 import SessionDialog from '@/components/SessionDialog.vue';
 import { errorMessage } from '@/lib/db';
 import { addDays, formatDay, formatSessionTime, toDateString, today } from '@/lib/dates';
 import { eventName, fetchEvents, type TeamEvent } from '@/lib/events';
+import { fetchKeyDates, updateKeyDate, type KeyDate } from '@/lib/keyDates';
 import { fetchPlansFor, fetchSessions, updateSession, type Session } from '@/lib/sessions';
 import { useAuthStore } from '@/stores/auth-store';
+import { useDirectoryStore } from '@/stores/directory-store';
 
 // The shop schedule, as a calendar. Leads and admins add sessions (one-off or
 // repeating) by dragging across empty time or with "Add session", move one by
 // dragging it, change its length from its bottom edge, and tap it to rename
-// or cancel it. Everyone can tap through to a session's plan. The team's
-// competition events (from GreyScout's event list) show in the all-day row in
-// their own colour, and in "Coming up"; they can't be moved or edited here.
+// or cancel it. Everyone can tap through to a session's plan.
+//
+// The all-day row ("Key dates") holds the team's competition events (from
+// GreyScout's event list, so they can't be moved or edited here) and, after
+// them in their own colour, the key milestones leads and admins mark: drag
+// across the row or use "Add milestone" to add one, drag one to move it, tap
+// it to change or remove it. Both also show in "Coming up".
 const auth = useAuthStore();
+const directory = useDirectoryStore();
 const router = useRouter();
 const viewMode = useViewModeStore();
 
 const upcoming = ref<Session[]>([]);
 const upcomingEvents = ref<TeamEvent[]>([]);
+const upcomingKeyDates = ref<KeyDate[]>([]);
 const upcomingCounts = ref<Map<string, number>>(new Map());
 const error = ref('');
 const calendar = ref<InstanceType<typeof FullCalendar> | null>(null);
@@ -33,6 +42,10 @@ const calendar = ref<InstanceType<typeof FullCalendar> | null>(null);
 const dialogOpen = ref(false);
 const editingSession = ref<Session | null>(null);
 const newRange = ref<{ start: string; end: string } | null>(null);
+
+const keyDateDialogOpen = ref(false);
+const editingKeyDate = ref<KeyDate | null>(null);
+const newKeyDateRange = ref<{ start: string; end: string } | null>(null);
 
 async function countsFor(list: Session[]) {
   const plan = await fetchPlansFor(list.map((s) => s.id));
@@ -44,9 +57,10 @@ async function countsFor(list: Session[]) {
 // The calendar asks for the sessions in whatever range it's showing.
 async function loadEvents(info: EventSourceFuncArg): Promise<EventInput[]> {
   try {
-    const [sessions, events] = await Promise.all([
+    const [sessions, events, keyDates] = await Promise.all([
       fetchSessions(info.start.toISOString(), info.end.toISOString()),
-      fetchEvents(toDateString(info.start), toDateString(info.end))
+      fetchEvents(toDateString(info.start), toDateString(info.end)),
+      fetchKeyDates(toDateString(info.start), toDateString(info.end))
     ]);
     const counts = await countsFor(sessions);
     const eventItems: EventInput[] = events.map((event) => ({
@@ -58,9 +72,19 @@ async function loadEvents(info: EventSourceFuncArg): Promise<EventInput[]> {
       allDay: true,
       editable: false,
       classNames: ['team-event'],
-      extendedProps: { event }
+      // Competition events come first in the row, then key milestones.
+      extendedProps: { event, order: 0 }
     }));
-    return eventItems.concat(sessions.map((session) => {
+    const keyDateItems: EventInput[] = keyDates.map((keyDate) => ({
+      id: `key-${keyDate.id}`,
+      title: keyDate.title,
+      start: keyDate.start_date,
+      end: addDays(keyDate.end_date, 1),
+      allDay: true,
+      classNames: ['key-date'],
+      extendedProps: { keyDate, order: 1 }
+    }));
+    return [...eventItems, ...keyDateItems].concat(sessions.map((session) => {
       const count = counts.get(session.id) ?? 0;
       return {
         id: session.id,
@@ -80,9 +104,10 @@ async function loadUpcoming() {
   try {
     const now = new Date();
     const later = new Date(now.getTime() + 28 * 86_400_000);
-    [upcoming.value, upcomingEvents.value] = await Promise.all([
+    [upcoming.value, upcomingEvents.value, upcomingKeyDates.value] = await Promise.all([
       fetchSessions(now.toISOString(), later.toISOString()),
-      fetchEvents(today(), toDateString(later))
+      fetchEvents(today(), toDateString(later)),
+      fetchKeyDates(today(), toDateString(later))
     ]);
     upcomingCounts.value = await countsFor(upcoming.value);
   } catch (e) {
@@ -90,22 +115,37 @@ async function loadUpcoming() {
   }
 }
 
-// Sessions and events in the next four weeks, in order (an event by its
-// first day, before that day's sessions).
-type Upcoming = { kind: 'session'; at: string; session: Session } | { kind: 'event'; at: string; event: TeamEvent };
+// Sessions, events, and key milestones in the next four weeks, in order (an
+// event or milestone by its first day, before that day's sessions; events
+// before milestones).
+type Upcoming =
+  | { kind: 'session'; at: string; session: Session }
+  | { kind: 'event'; at: string; event: TeamEvent }
+  | { kind: 'key'; at: string; keyDate: KeyDate };
+const dayStart = (day: string) => new Date(`${day}T00:00:00`).toISOString();
+const kindOrder = { event: 0, key: 1, session: 2 };
 const comingUp = computed<Upcoming[]>(() =>
   [
     ...upcoming.value.map((session) => ({ kind: 'session' as const, at: session.starts_at, session })),
-    ...upcomingEvents.value.map((event) => ({ kind: 'event' as const, at: new Date(`${event.start_date}T00:00:00`).toISOString(), event }))
-  ].sort((a, b) => a.at.localeCompare(b.at))
+    ...upcomingEvents.value.map((event) => ({ kind: 'event' as const, at: dayStart(event.start_date), event })),
+    ...upcomingKeyDates.value.map((keyDate) => ({ kind: 'key' as const, at: dayStart(keyDate.start_date), keyDate }))
+  ].sort((a, b) => a.at.localeCompare(b.at) || kindOrder[a.kind] - kindOrder[b.kind])
 );
-const eventDates = (e: TeamEvent) => (e.start_date === e.end_date ? formatDay(e.start_date) : `${formatDay(e.start_date)} – ${formatDay(e.end_date)}`);
+const upcomingKey = (item: Upcoming) => (item.kind === 'event' ? `event-${item.event.event_id}` : item.kind === 'key' ? `key-${item.keyDate.id}` : item.session.id);
+const dayRange = (start: string, end: string) => (start === end ? formatDay(start) : `${formatDay(start)} – ${formatDay(end)}`);
 
 function reload() {
   calendar.value?.getApi().refetchEvents();
   return loadUpcoming();
 }
 onMounted(loadUpcoming);
+
+function openKeyDate(keyDate: KeyDate | null, range?: { start: string; end: string }) {
+  if (!auth.isLead) return;
+  editingKeyDate.value = keyDate;
+  newKeyDateRange.value = range ?? null;
+  keyDateDialogOpen.value = true;
+}
 
 function openNew(start?: string, end?: string) {
   editingSession.value = null;
@@ -114,10 +154,18 @@ function openNew(start?: string, end?: string) {
 }
 
 async function reschedule(info: EventDropArg | EventResizeDoneArg) {
-  const session = info.event.extendedProps.session as Session;
+  const session = info.event.extendedProps.session as Session | undefined;
+  const keyDate = info.event.extendedProps.keyDate as KeyDate | undefined;
   error.value = '';
   try {
-    await updateSession(session.id, { starts_at: info.event.start!.toISOString(), ends_at: info.event.end!.toISOString() });
+    if (keyDate) {
+      // All-day ends are exclusive; a one-day item can come back with none.
+      const start = toDateString(info.event.start!);
+      const end = info.event.end ? addDays(toDateString(info.event.end), -1) : start;
+      await updateKeyDate(keyDate.id, { start_date: start, end_date: end });
+    } else if (session) {
+      await updateSession(session.id, { starts_at: info.event.start!.toISOString(), ends_at: info.event.end!.toISOString() });
+    }
     reload();
   } catch (e) {
     info.revert();
@@ -132,9 +180,10 @@ const options: CalendarOptions = {
   views: { threeDay: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3 days' } },
   headerToolbar: { left: 'prev,next today', center: 'title', right: viewMode.isMobile ? '' : 'timeGridWeek,threeDay' },
   height: 'auto',
-  // The all-day row is for events only.
+  // The all-day row is for competition events and key milestones.
   allDaySlot: true,
-  allDayText: 'Events',
+  allDayText: 'Key dates',
+  eventOrder: 'order,start,-duration,title',
   nowIndicator: true,
   slotMinTime: '07:00:00',
   slotMaxTime: '23:00:00',
@@ -146,12 +195,19 @@ const options: CalendarOptions = {
   editable: auth.isLead,
   longPressDelay: 350,
   events: loadEvents,
-  selectAllow: (info) => !info.allDay,
-  select: (info) => {
-    openNew(info.start.toISOString(), info.end.toISOString());
+  // Sessions stay in the time grid and milestones in the all-day row.
+  eventAllow: (span, moving) => span.allDay === !!moving?.allDay,
+  select: (info: DateSelectArg) => {
+    if (info.allDay) {
+      openKeyDate(null, { start: toDateString(info.start), end: addDays(toDateString(info.end), -1) });
+    } else {
+      openNew(info.start.toISOString(), info.end.toISOString());
+    }
     info.view.calendar.unselect();
   },
   eventClick: (info: EventClickArg) => {
+    const keyDate = info.event.extendedProps.keyDate as KeyDate | undefined;
+    if (keyDate) return openKeyDate(keyDate);
     const session = info.event.extendedProps.session as Session | undefined;
     if (!session) return;
     if (auth.isLead) {
@@ -170,9 +226,14 @@ const options: CalendarOptions = {
   <div class="page">
     <header class="page-header">
       <h1>Shop sessions</h1>
-      <button v-if="auth.isLead" class="button primary" @click="openNew()">Add session</button>
+      <div v-if="auth.isLead" class="header-actions">
+        <button class="button" @click="openKeyDate(null)">Add milestone</button>
+        <button class="button primary" @click="openNew()">Add session</button>
+      </div>
       <p class="hint">
-        <template v-if="auth.isLead">Drag across empty time to add a session, drag one to move it, or tap it to change or cancel it.</template>
+        <template v-if="auth.isLead">
+          Drag across empty time to add a session, or across the Key dates row to add a milestone. Drag either to move it, or tap it to change it.
+        </template>
         <template v-else>Tap a session to see its plan.</template>
       </p>
     </header>
@@ -181,15 +242,28 @@ const options: CalendarOptions = {
     <section class="panel">
       <h2>Coming up</h2>
       <ul v-if="comingUp.length" class="upcoming">
-        <li v-for="item in comingUp" :key="item.kind === 'event' ? `event-${item.event.event_id}` : item.session.id">
+        <li v-for="item in comingUp" :key="upcomingKey(item)">
           <div v-if="item.kind === 'event'" class="upcoming-link event">
             <span class="chip event-chip">Event</span>
             <strong>{{ eventName(item.event) }}</strong>
-            <span class="muted">{{ eventDates(item.event) }}</span>
+            <span class="muted">{{ dayRange(item.event.start_date, item.event.end_date) }}</span>
           </div>
+          <component
+            :is="auth.isLead ? 'button' : 'div'"
+            v-else-if="item.kind === 'key'"
+            :type="auth.isLead ? 'button' : undefined"
+            class="upcoming-link key"
+            @click="openKeyDate(item.keyDate)"
+          >
+            <span class="chip key-chip">Milestone</span>
+            <strong>{{ item.keyDate.title }}</strong>
+            <span class="muted">{{ dayRange(item.keyDate.start_date, item.keyDate.end_date) }}</span>
+            <span v-if="item.keyDate.notes" class="muted key-notes">{{ item.keyDate.notes }}</span>
+          </component>
           <RouterLink v-else :to="`/sessions/${item.session.id}`" class="upcoming-link">
             <strong>{{ item.session.title }}</strong>
             <span class="muted">{{ formatSessionTime(item.session.starts_at, item.session.ends_at) }}</span>
+            <span v-if="item.session.shop_boss" class="muted">Boss: {{ directory.personName(item.session.shop_boss) }}</span>
             <span class="chip">{{ upcomingCounts.get(item.session.id) ?? 0 }} planned</span>
           </RouterLink>
         </li>
@@ -201,6 +275,14 @@ const options: CalendarOptions = {
       <FullCalendar ref="calendar" :options="options" />
     </section>
 
+    <KeyDateDialog
+      :open="keyDateDialogOpen"
+      :key-date="editingKeyDate"
+      :start="newKeyDateRange?.start"
+      :end="newKeyDateRange?.end"
+      @close="keyDateDialogOpen = false"
+      @saved="reload"
+    />
     <SessionDialog :open="dialogOpen" :session="editingSession" :start="newRange?.start" :end="newRange?.end" @close="dialogOpen = false" @saved="reload" />
   </div>
 </template>
@@ -226,8 +308,38 @@ const options: CalendarOptions = {
   text-decoration: none;
 }
 
-a.upcoming-link:hover {
+a.upcoming-link:hover,
+button.upcoming-link:hover {
   background: rgba(128, 128, 128, 0.12);
+}
+
+button.upcoming-link {
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.upcoming-link.key {
+  box-shadow: inset 4px 0 0 var(--key-date-color);
+}
+
+.key-chip {
+  border-color: var(--key-date-color);
+  color: var(--key-date-color);
+  font-weight: 600;
+}
+
+.key-notes {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .upcoming-link.event {
@@ -273,5 +385,17 @@ a.upcoming-link:hover {
   background-color: var(--event-color);
   border-color: var(--event-color);
   cursor: default;
+}
+
+/* Key milestones: a lighter fill in their own colour, so competition events
+   stay the boldest thing in the row. */
+.calendar :deep(.fc-event.key-date) {
+  background-color: var(--key-date-bg);
+  border-color: var(--key-date-color);
+}
+
+.calendar :deep(.fc-event.key-date .fc-event-main) {
+  color: var(--key-date-color);
+  font-weight: 600;
 }
 </style>

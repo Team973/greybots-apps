@@ -267,6 +267,14 @@
   --stage-closed: #8a8f98;
   /* Competition events (the countdown on My tasks, the schedule). */
   --event-color: #8b5cf6;
+  /* Key milestones on the schedule: teal, a lighter fill than events. */
+  --key-date-color: #0f766e;
+  --key-date-bg: rgba(20, 184, 166, 0.16);
+}
+
+html[theme='dark'] {
+  --key-date-color: #2dd4bf;
+  --key-date-bg: rgba(45, 212, 191, 0.16);
 }
 
 .chip.status-open {
