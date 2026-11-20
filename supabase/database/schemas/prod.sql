@@ -2870,6 +2870,8 @@ CREATE TABLE IF NOT EXISTS public."WorkshopSession" (
     "created_at" timestamp with time zone NOT NULL DEFAULT now(),
     -- The person running the session (20261119120000_workshop_key_dates_and_shop_boss.sql).
     "shop_boss" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
+    -- 'shop' or 'driver_practice' (same migration): only shop sessions count as shop time.
+    "kind" text NOT NULL DEFAULT 'shop' CHECK ("kind" IN ('shop', 'driver_practice')),
     CONSTRAINT "WorkshopSession_time_check" CHECK ("ends_at" > "starts_at")
 );
 
@@ -2922,8 +2924,14 @@ BEGIN
     RETURN 0;
   END IF;
 
+  -- Only shop sessions carry plans over; driver practice starts empty.
+  IF this_session."kind" <> 'shop' THEN
+    UPDATE public."WorkshopSession" SET "plan_seeded" = true WHERE "id" = p_session_id;
+    RETURN 0;
+  END IF;
+
   SELECT s."id" INTO previous_id FROM public."WorkshopSession" s
-    WHERE s."starts_at" < this_session."starts_at"
+    WHERE s."starts_at" < this_session."starts_at" AND s."kind" = 'shop'
     ORDER BY s."starts_at" DESC LIMIT 1;
 
   IF previous_id IS NOT NULL THEN

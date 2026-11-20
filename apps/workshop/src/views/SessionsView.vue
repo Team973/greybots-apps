@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import FullCalendar from '@fullcalendar/vue3';
+import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput, EventSourceFuncArg } from '@fullcalendar/core';
@@ -13,7 +14,7 @@ import { errorMessage } from '@/lib/db';
 import { addDays, formatDay, formatSessionTime, toDateString, today } from '@/lib/dates';
 import { eventName, fetchEvents, type TeamEvent } from '@/lib/events';
 import { fetchKeyDates, updateKeyDate, type KeyDate } from '@/lib/keyDates';
-import { fetchPlansFor, fetchSessions, updateSession, type Session } from '@/lib/sessions';
+import { fetchPlansFor, fetchSessions, sessionKindLabels, updateSession, type Session } from '@/lib/sessions';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDirectoryStore } from '@/stores/directory-store';
 
@@ -21,6 +22,11 @@ import { useDirectoryStore } from '@/stores/directory-store';
 // repeating) by dragging across empty time or with "Add session", move one by
 // dragging it, change its length from its bottom edge, and tap it to rename
 // or cancel it. Everyone can tap through to a session's plan.
+//
+// Sessions are shop sessions or driver practice, each in its own colour.
+// The month view shows each day's highlights, most important first:
+// competition events, then key milestones, then sessions ("+n more" when a
+// day is full).
 //
 // The all-day row ("Key dates") holds the team's competition events (from
 // GreyScout's event list, so they can't be moved or edited here) and, after
@@ -91,7 +97,8 @@ async function loadEvents(info: EventSourceFuncArg): Promise<EventInput[]> {
         title: count ? `${session.title} · ${count} ${count === 1 ? 'ticket' : 'tickets'}` : session.title,
         start: session.starts_at,
         end: session.ends_at,
-        extendedProps: { session }
+        classNames: ['kind-' + (session.kind ?? 'shop')],
+        extendedProps: { session, order: 2 }
       };
     }));
   } catch (e) {
@@ -175,18 +182,29 @@ async function reschedule(info: EventDropArg | EventResizeDoneArg) {
 
 // Built once: the role can't change while the page is open.
 const options: CalendarOptions = {
-  plugins: [timeGridPlugin, interactionPlugin],
+  plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
   initialView: viewMode.isMobile ? 'threeDay' : 'timeGridWeek',
-  views: { threeDay: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3 days' } },
-  headerToolbar: { left: 'prev,next today', center: 'title', right: viewMode.isMobile ? '' : 'timeGridWeek,threeDay' },
-  height: 'auto',
+  views: {
+    threeDay: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3 days' },
+    // Each day's highlights, as many as fit, then "+n more".
+    dayGridMonth: { dayMaxEvents: true, eventDisplay: 'block', displayEventEnd: false }
+  },
+  headerToolbar: {
+    left: 'prev,next today',
+    center: 'title',
+    right: viewMode.isMobile ? 'dayGridMonth,threeDay' : 'dayGridMonth,timeGridWeek,threeDay'
+  },
+  // A fixed height: the day scrolls inside it, starting at the afternoon,
+  // when sessions usually are.
+  height: viewMode.isMobile ? 560 : 640,
+  scrollTime: '15:00:00',
   // The all-day row is for competition events and key milestones.
   allDaySlot: true,
   allDayText: 'Key dates',
   eventOrder: 'order,start,-duration,title',
   nowIndicator: true,
   slotMinTime: '07:00:00',
-  slotMaxTime: '23:00:00',
+  slotMaxTime: '24:00:00',
   slotDuration: '00:30:00',
   snapDuration: '00:15:00',
   dayHeaderFormat: { weekday: 'short', month: 'numeric', day: 'numeric' },
@@ -260,7 +278,8 @@ const options: CalendarOptions = {
             <span class="muted">{{ dayRange(item.keyDate.start_date, item.keyDate.end_date) }}</span>
             <span v-if="item.keyDate.notes" class="muted key-notes">{{ item.keyDate.notes }}</span>
           </component>
-          <RouterLink v-else :to="`/sessions/${item.session.id}`" class="upcoming-link">
+          <RouterLink v-else :to="`/sessions/${item.session.id}`" class="upcoming-link" :class="'kind-' + (item.session.kind ?? 'shop')">
+            <span v-if="item.session.kind === 'driver_practice'" class="chip practice-chip">{{ sessionKindLabels.driver_practice }}</span>
             <strong>{{ item.session.title }}</strong>
             <span class="muted">{{ formatSessionTime(item.session.starts_at, item.session.ends_at) }}</span>
             <span v-if="item.session.shop_boss" class="muted">Boss: {{ directory.personName(item.session.shop_boss) }}</span>
@@ -346,6 +365,16 @@ button.upcoming-link {
   box-shadow: inset 4px 0 0 var(--event-color);
 }
 
+.upcoming-link.kind-driver_practice {
+  box-shadow: inset 4px 0 0 var(--driver-practice-color);
+}
+
+.practice-chip {
+  border-color: var(--driver-practice-color);
+  color: var(--driver-practice-color);
+  font-weight: 600;
+}
+
 .event-chip {
   border-color: var(--event-color);
   color: var(--event-color);
@@ -367,8 +396,8 @@ button.upcoming-link {
   --fc-button-hover-border-color: var(--header-color);
   --fc-button-active-bg-color: var(--header-color);
   --fc-button-active-border-color: var(--header-color);
-  --fc-event-bg-color: #b05703;
-  --fc-event-border-color: #b05703;
+  --fc-event-bg-color: var(--session-color);
+  --fc-event-border-color: var(--session-color);
   --fc-event-text-color: #fff;
 }
 
@@ -385,6 +414,12 @@ button.upcoming-link {
   background-color: var(--event-color);
   border-color: var(--event-color);
   cursor: default;
+}
+
+/* Driver practice: blue. */
+.calendar :deep(.fc-event.kind-driver_practice) {
+  background-color: var(--driver-practice-color);
+  border-color: var(--driver-practice-color);
 }
 
 /* Key milestones: a lighter fill in their own colour, so competition events

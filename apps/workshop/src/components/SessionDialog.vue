@@ -12,8 +12,12 @@ import {
   fetchLatestShopBoss,
   seriesDates,
   updateFollowing,
+  sessionKindLabels,
+  sessionKinds,
+  sessionKindTitles,
   updateSession,
-  type Session
+  type Session,
+  type SessionKind
 } from '@/lib/sessions';
 import { useDirectoryStore } from '@/stores/directory-store';
 
@@ -32,6 +36,7 @@ const emit = defineEmits<{ close: []; saved: [] }>();
 const directory = useDirectoryStore();
 
 const title = ref('');
+const kind = ref<SessionKind>('shop');
 const date = ref('');
 const startTime = ref('18:00');
 const endTime = ref('21:00');
@@ -60,6 +65,7 @@ watch(
     repeat.value = false;
     const s = props.session;
     if (s) {
+      kind.value = s.kind ?? 'shop';
       title.value = s.title;
       date.value = toDateString(new Date(s.starts_at));
       startTime.value = toTimeString(s.starts_at);
@@ -67,7 +73,8 @@ watch(
       notes.value = s.notes;
       shopBoss.value = s.shop_boss ?? '';
     } else {
-      title.value = 'Shop';
+      kind.value = 'shop';
+      title.value = sessionKindTitles.shop;
       const start = props.start ? new Date(props.start) : null;
       date.value = start ? toDateString(start) : toDateString(new Date());
       startTime.value = props.start ? toTimeString(props.start) : '18:00';
@@ -85,6 +92,12 @@ watch(
     until.value = addDays(date.value, 7 * 12);
   }
 );
+
+// Changing the kind changes the name too, unless it's been given its own.
+function setKind(to: SessionKind) {
+  if (!title.value.trim() || title.value === sessionKindTitles[kind.value]) title.value = sessionKindTitles[to];
+  kind.value = to;
+}
 
 // Anyone with a Workshop role can run a session; someone who's since lost
 // theirs still shows while they're the boss.
@@ -126,7 +139,7 @@ function save() {
     error.value = 'Give the session a name.';
     return;
   }
-  const fields = { title: title.value.trim(), starts_at: combine(date.value, startTime.value), ends_at: combine(date.value, endTime.value), notes: notes.value.trim(), shop_boss: shopBoss.value || null };
+  const fields = { title: title.value.trim(), kind: kind.value, starts_at: combine(date.value, startTime.value), ends_at: combine(date.value, endTime.value), notes: notes.value.trim(), shop_boss: shopBoss.value || null };
   if (props.session) {
     const session = props.session;
     if (inSeries.value && scope.value === 'following') {
@@ -137,7 +150,8 @@ function save() {
           start_time: startTime.value,
           end_time: endTime.value,
           notes: fields.notes,
-          shop_boss: fields.shop_boss
+          shop_boss: fields.shop_boss,
+          kind: fields.kind
         });
         await updateSession(session.id, { starts_at: fields.starts_at, ends_at: fields.ends_at });
       });
@@ -149,7 +163,8 @@ function save() {
       createSeries(
         { title: fields.title, weekdays: weekdays.value, start_time: startTime.value, end_time: endTime.value, starts_on: date.value, ends_on: until.value },
         fields.notes,
-        fields.shop_boss
+        fields.shop_boss,
+        fields.kind
       )
     );
   }
@@ -166,6 +181,15 @@ function remove() {
 <template>
   <AppDialog :open="open" :title="editing ? 'Change session' : 'Add a shop session'" @close="emit('close')">
     <form id="session-form" class="form-grid" @submit.prevent="save">
+      <div class="field full">
+        <span>Type</span>
+        <div class="kinds" role="radiogroup" aria-label="Type">
+          <label v-for="k in sessionKinds" :key="k" class="kind" :class="['kind-' + k, { on: kind === k }]">
+            <input type="radio" name="session-kind" :value="k" :checked="kind === k" @change="setKind(k)" />
+            {{ sessionKindLabels[k] }}
+          </label>
+        </div>
+      </div>
       <label class="field full">
         <span>Name</span>
         <input v-model="title" type="text" maxlength="80" required />
@@ -219,7 +243,7 @@ function remove() {
       <fieldset v-if="inSeries" class="scope full">
         <legend class="muted">This session repeats. Apply changes to:</legend>
         <label class="check"><input v-model="scope" type="radio" value="one" /> Only this session</label>
-        <label class="check"><input v-model="scope" type="radio" value="following" /> This and the following sessions (name, times, shop boss, notes)</label>
+        <label class="check"><input v-model="scope" type="radio" value="following" /> This and the following sessions (type, name, times, shop boss, notes)</label>
       </fieldset>
     </form>
 
@@ -240,6 +264,36 @@ function remove() {
 </template>
 
 <style scoped>
+.kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kind input {
+  margin: 0;
+}
+
+.kind.on.kind-shop {
+  border-color: var(--session-color);
+  box-shadow: inset 0 0 0 1px var(--session-color);
+}
+
+.kind.on.kind-driver_practice {
+  border-color: var(--driver-practice-color);
+  box-shadow: inset 0 0 0 1px var(--driver-practice-color);
+}
+
 .full {
   flex-basis: 100%;
 }

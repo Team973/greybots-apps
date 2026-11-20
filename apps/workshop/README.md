@@ -11,7 +11,7 @@ own role (`workshop_role`), managed from the shared People page.
 | My tasks (`/`) | everyone | How many shop sessions are left before the team's next event, then the next shop session (your tickets in its plan, and its checklists), then your checklists with steps to do, then your other open tickets. |
 | Tickets | everyone | Every ticket, filterable by status, person, milestone, and component. Members and above open and edit them. |
 | Ticket (`/tickets/:number`) | everyone | One ticket, with its details in a sidebar. Members and above click a field to edit it (each change saves straight away). Leads add it to upcoming sessions' plans. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
-| Sessions | everyone | The shop schedule as a calendar. Its Key dates row holds the team's competition events and, in their own colour, key milestones (see below). Leads add one-off or weekly sessions, drag to move them, and cancel them, and set each session's shop boss. |
+| Sessions | everyone | The schedule as a calendar (7am to midnight, scrolling inside a fixed height), by week, three days, or month. Sessions are shop sessions (orange) or driver practice (blue). Its Key dates row holds the team's competition events and, in their own colour, key milestones (see below). The month view shows each day's highlights, most important first: competition, then key milestones, then sessions. Leads add one-off or weekly sessions, drag to move them, and cancel them, and set each session's type and shop boss. |
 | Session (`/sessions/:id`) | everyone | A session's plan, with its details in a sidebar (as on a ticket): leads click the shop boss to change it. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. Also its checklists; leads add them. |
 | Checklists | everyone | The team's checklist templates (members and above write and edit them, and archive old ones), and every checklist on a session that isn't signed off yet. |
 | Checklist (`/checklists/:id`) | everyone | A checklist on a session: tick off steps in any order (each shows who did it and when), hand steps to people, and sign it off. See below for who can do what. |
@@ -107,6 +107,12 @@ event TBA doesn't list won't appear.
   Add milestone) to add one, drag one to move it, and tap it to change or
   remove it. They're only dates: ticket milestones (the Milestones page) are
   separate.
+- **Session type** (`WorkshopSession.kind`): a shop session or driver
+  practice, picked in the session dialog. Only shop sessions count as shop
+  time: sessions and hours left before an event, burnup session forecasts,
+  the next session on My tasks, and the sessions a ticket can be added to.
+  A plan carries over from the previous *shop* session, skipping driver
+  practice, and driver practice doesn't carry anything over.
 - **Shop boss** (`WorkshopSession.shop_boss`): who runs a session. It's in
   the session page's sidebar, where leads and admins click it to change it
   (it saves straight away, like a ticket's owner). They can also set it in

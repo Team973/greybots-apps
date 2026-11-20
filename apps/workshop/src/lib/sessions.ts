@@ -13,10 +13,20 @@ import { addDays, combine, parseDate, toDateString } from './dates';
 // first time anyone opens it (workshop_seed_session_plan in the database);
 // leads add and remove tickets from there.
 
+// What a session is. Only shop sessions count as shop time (sessions left
+// before an event, burnup forecasts), and plans carry over from one shop
+// session to the next; driver practice is on the schedule in its own colour.
+export type SessionKind = 'shop' | 'driver_practice';
+export const sessionKinds: SessionKind[] = ['shop', 'driver_practice'];
+export const sessionKindLabels: Record<SessionKind, string> = { shop: 'Shop session', driver_practice: 'Driver practice' };
+// The name a new one starts with.
+export const sessionKindTitles: Record<SessionKind, string> = { shop: 'Shop', driver_practice: 'Driver practice' };
+
 export interface Session {
     id: string;
     series_id: string | null;
     title: string;
+    kind: SessionKind;
     starts_at: string;
     ends_at: string;
     notes: string;
@@ -47,27 +57,28 @@ export interface PlanItem {
 // The most sessions one series makes (a year of three-a-week).
 const maxSeriesSessions = 160;
 
-export async function fetchSessions(fromIso: string, toIso: string): Promise<Session[]> {
-    return unwrap(
-        await supabase.from('WorkshopSession').select('*').gte('ends_at', fromIso).lt('starts_at', toIso).order('starts_at')
-    ) as Session[];
+// Sessions overlapping [from, to); `shopOnly` leaves out driver practice.
+export async function fetchSessions(fromIso: string, toIso: string, { shopOnly = false } = {}): Promise<Session[]> {
+    let query = supabase.from('WorkshopSession').select('*').gte('ends_at', fromIso).lt('starts_at', toIso);
+    if (shopOnly) query = query.eq('kind', 'shop');
+    return unwrap(await query.order('starts_at')) as Session[];
 }
 
 // The sessions burnup forecasts are made from: the past two years (for the
 // recent pace) and the next year (where it's carried forward).
 export async function fetchForecastSessions(): Promise<Session[]> {
     const day = 86_400_000;
-    return fetchSessions(new Date(Date.now() - 730 * day).toISOString(), new Date(Date.now() + 366 * day).toISOString());
+    return fetchSessions(new Date(Date.now() - 730 * day).toISOString(), new Date(Date.now() + 366 * day).toISOString(), { shopOnly: true });
 }
 
 export async function fetchSession(id: string): Promise<Session | null> {
     return unwrap(await supabase.from('WorkshopSession').select('*').eq('id', id).maybeSingle()) as Session | null;
 }
 
-// The session happening now, or the next one to start.
+// The shop session happening now, or the next one to start.
 export async function fetchNextSession(): Promise<Session | null> {
     return unwrap(
-        await supabase.from('WorkshopSession').select('*').gt('ends_at', new Date().toISOString()).order('starts_at').limit(1).maybeSingle()
+        await supabase.from('WorkshopSession').select('*').eq('kind', 'shop').gt('ends_at', new Date().toISOString()).order('starts_at').limit(1).maybeSingle()
     ) as Session | null;
 }
 
@@ -93,7 +104,7 @@ export async function fetchSeries(id: string): Promise<SessionSeries | null> {
 
 // --- Creating ---
 
-export async function createSession(session: Pick<Session, 'title' | 'starts_at' | 'ends_at' | 'notes' | 'shop_boss'>): Promise<Session> {
+export async function createSession(session: Pick<Session, 'title' | 'kind' | 'starts_at' | 'ends_at' | 'notes' | 'shop_boss'>): Promise<Session> {
     validateTimes(session.starts_at, session.ends_at);
     return unwrap(await supabase.from('WorkshopSession').insert(session).select().single()) as Session;
 }
@@ -107,7 +118,7 @@ export function seriesDates(weekdays: number[], startsOn: string, endsOn: string
     return dates;
 }
 
-export async function createSeries(series: Omit<SessionSeries, 'id'>, notes = '', shopBoss: string | null = null): Promise<number> {
+export async function createSeries(series: Omit<SessionSeries, 'id'>, notes = '', shopBoss: string | null = null, kind: SessionKind = 'shop'): Promise<number> {
     if (series.weekdays.length === 0) throw new Error('Pick at least one day of the week.');
     if (series.ends_on < series.starts_on) throw new Error('The last day is before the first.');
     if (series.end_time <= series.start_time) throw new Error('Sessions have to end after they start.');
@@ -121,7 +132,8 @@ export async function createSeries(series: Omit<SessionSeries, 'id'>, notes = ''
         starts_at: combine(day, series.start_time),
         ends_at: combine(day, series.end_time),
         notes,
-        shop_boss: shopBoss
+        shop_boss: shopBoss,
+        kind
     }));
     check(await supabase.from('WorkshopSession').insert(rows));
     return rows.length;
@@ -133,16 +145,16 @@ function validateTimes(startsAt: string, endsAt: string) {
     if (Date.parse(endsAt) <= Date.parse(startsAt)) throw new Error('Sessions have to end after they start.');
 }
 
-export async function updateSession(id: string, changes: Partial<Pick<Session, 'title' | 'starts_at' | 'ends_at' | 'notes' | 'shop_boss'>>): Promise<void> {
+export async function updateSession(id: string, changes: Partial<Pick<Session, 'title' | 'kind' | 'starts_at' | 'ends_at' | 'notes' | 'shop_boss'>>): Promise<void> {
     if (changes.starts_at && changes.ends_at) validateTimes(changes.starts_at, changes.ends_at);
     check(await supabase.from('WorkshopSession').update(changes).eq('id', id));
 }
 
-// Give this session and every later one in its series the same title, time
-// of day, and shop boss (each keeps its own date).
+// Give this session and every later one in its series the same title, kind,
+// time of day, and shop boss (each keeps its own date).
 export async function updateFollowing(
     session: Session,
-    changes: { title: string; start_time: string; end_time: string; notes?: string; shop_boss?: string | null }
+    changes: { title: string; start_time: string; end_time: string; notes?: string; shop_boss?: string | null; kind?: SessionKind }
 ): Promise<number> {
     if (!session.series_id) throw new Error('This session isn’t part of a series.');
     if (changes.end_time <= changes.start_time) throw new Error('Sessions have to end after they start.');
@@ -159,6 +171,7 @@ export async function updateFollowing(
             };
             if (changes.notes !== undefined) update.notes = changes.notes;
             if (changes.shop_boss !== undefined) update.shop_boss = changes.shop_boss;
+            if (changes.kind !== undefined) update.kind = changes.kind;
             return supabase.from('WorkshopSession').update(update).eq('id', s.id).then(check);
         })
     );

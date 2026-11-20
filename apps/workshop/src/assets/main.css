@@ -267,6 +267,9 @@
   --stage-closed: #8a8f98;
   /* Competition events (the countdown on My tasks, the schedule). */
   --event-color: #8b5cf6;
+  /* Session kinds on the schedule: shop sessions orange, driver practice blue. */
+  --session-color: #b05703;
+  --driver-practice-color: #2563eb;
   /* Key milestones on the schedule: teal, a lighter fill than events. */
   --key-date-color: #0f766e;
   --key-date-bg: rgba(20, 184, 166, 0.16);

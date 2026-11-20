@@ -19,6 +19,7 @@ import {
   removeFromPlan,
   reorderPlan,
   seedPlan,
+  sessionKindLabels,
   updateSession,
   type PlanItem,
   type Session
@@ -221,7 +222,7 @@ function onCreated(ticket: Ticket) {
             <div v-if="auth.isLead" class="plan-actions">
               <button class="button small" :disabled="busy" @click="openPicker">Add tickets</button>
               <button class="button small" :disabled="busy" @click="creating = true">New ticket</button>
-              <button class="button small" :disabled="busy" @click="pullFromPrevious">Pull in unfinished from the previous session</button>
+              <button v-if="session.kind !== 'driver_practice'" class="button small" :disabled="busy" @click="pullFromPrevious">Pull in unfinished from the previous session</button>
             </div>
 
             <ul v-if="planned.length" class="ticket-list">
@@ -275,6 +276,13 @@ function onCreated(ticket: Ticket) {
                   <PeoplePicker single label="Shop boss" :model-value="session.shop_boss ? [session.shop_boss] : []" @update:model-value="saveBoss" />
                 </template>
               </EditableField>
+            </dd>
+          </div>
+          <div>
+            <dt>Type</dt>
+            <dd>
+              <span class="kind-dot" :class="'kind-' + (session.kind ?? 'shop')" aria-hidden="true"></span>
+              {{ sessionKindLabels[session.kind ?? 'shop'] }}
             </dd>
           </div>
           <div>
@@ -384,6 +392,19 @@ function onCreated(ticket: Ticket) {
 
 .details dd {
   margin: 0;
+}
+
+.kind-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--session-color);
+}
+
+.kind-dot.kind-driver_practice {
+  background: var(--driver-practice-color);
 }
 
 .neighbors {
