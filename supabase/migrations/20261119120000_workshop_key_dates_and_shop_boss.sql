@@ -1,7 +1,7 @@
 -- Workshop: key milestones on the schedule, and a shop boss for each session.
 --
 -- * WorkshopKeyDate: a date (or run of days) leads and admins mark on the
---   Sessions calendar, such as "Robot reveal" or "Drive team practice". It
+--   Sessions calendar, such as "Robot reveal" or "Bag and tag". It
 --   shows in the calendar's all-day row next to the team's competition
 --   events (which come from GreyScout's Event table and aren't kept here).
 --   It's only a date on the calendar; ticket milestones (WorkshopMilestone)

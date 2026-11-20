@@ -100,7 +100,7 @@ event TBA doesn't list won't appear.
 `20261119120000_workshop_key_dates_and_shop_boss.sql`.
 
 - **Key milestones** (`WorkshopKeyDate`) are dates leads and admins mark on
-  the schedule ("Robot reveal", "Drive team practice"): a day or a run of
+  the schedule ("Robot reveal", "Bag and tag"): a day or a run of
   days, with a name and notes. They go in the calendar's Key dates row after
   the competition events, in teal with a lighter fill so the events stay the
   boldest thing there, and in Coming up. Leads drag across the row (or use

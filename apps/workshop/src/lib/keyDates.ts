@@ -1,7 +1,7 @@
 import { supabase } from '@greybots/common/supabase/client';
 import { check, unwrap } from './db';
 
-// Key milestones on the schedule ("Robot reveal", "Drive team practice"):
+// Key milestones on the schedule ("Robot reveal", "Bag and tag"):
 // dates leads and admins mark on the Sessions calendar. They sit in the
 // calendar's all-day row next to the team's competition events, in their own
 // colour. Just dates: ticket milestones (the Milestones page) are separate.
