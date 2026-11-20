@@ -81,7 +81,7 @@ async function loadExtras(found: Ticket) {
   ) as unknown as { session: Session }[];
   sessions.value = plan.map((p) => p.session).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
   const now = new Date();
-  upcoming.value = await fetchSessions(now.toISOString(), new Date(now.getTime() + 120 * 86_400_000).toISOString());
+  upcoming.value = await fetchSessions(now.toISOString(), new Date(now.getTime() + 120 * 86_400_000).toISOString(), { shopOnly: true });
 }
 
 // --- Shop sessions (leads and admins) ---

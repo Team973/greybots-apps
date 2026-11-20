@@ -11,12 +11,11 @@ own role (`workshop_role`), managed from the shared People page.
 | My tasks (`/`) | everyone | How many shop sessions are left before the team's next event, then the next shop session (your tickets in its plan, and its checklists), then your checklists with steps to do, then your other open tickets. |
 | Tickets | everyone | Every ticket, filterable by status, person, milestone, and component. Members and above open and edit them. |
 | Ticket (`/tickets/:number`) | everyone | One ticket, with its details in a sidebar. Members and above click a field to edit it (each change saves straight away). Leads add it to upcoming sessions' plans. Leads and admins close it (complete, duplicate, or won't do) or reopen it. No comments, on purpose. |
-| Sessions | everyone | The shop schedule as a calendar, with the team's events in their own colour. Leads add one-off or weekly sessions, drag to move them, and cancel them. |
-| Session (`/sessions/:id`) | everyone | A session's plan. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. Also its checklists; leads add them. |
+| Sessions | everyone | The schedule as a calendar (7am to midnight, scrolling inside a fixed height), by week, three days, or month. Sessions are shop sessions (orange) or driver practice (blue). Its Key dates row holds the team's competition events and, in their own colour, key milestones (see below). The month view shows each day's highlights, most important first: competition, then key milestones, then sessions. Leads add one-off or weekly sessions, drag to move them, and cancel them, and set each session's type and shop boss. |
+| Session (`/sessions/:id`) | everyone | A session's plan, with its details in a sidebar (as on a ticket): leads click the shop boss to change it. It starts from the previous session's unfinished tickets; leads add, remove, and reorder. Also its checklists; leads add them. |
 | Checklists | everyone | The team's checklist templates (members and above write and edit them, and archive old ones), and every checklist on a session that isn't signed off yet. |
 | Checklist (`/checklists/:id`) | everyone | A checklist on a session: tick off steps in any order (each shows who did it and when), hand steps to people, and sign it off. See below for who can do what. |
 | Milestones | everyone | Progress, burnup, and forecasts for each milestone; leads add, edit, and close them, move tickets between them, and pick which forecasts everyone sees. |
-| Part sorter | everyone | Snap a photo of a pile of bolts; it groups them by type and highlights the largest type first. Take those out, Check, and it moves on to the next. Runs on the phone (see below). |
 | Dashboard | everyone | Burnup charts over any set of tickets (some milestones, some components, or both). Leads add, edit, reorder, and remove them. |
 | Setup | leads | The components tickets are tagged with. |
 | People | leads | The shared user management page. |
@@ -96,7 +95,36 @@ ended and start before its first day), and the Sessions page shows them in
 the calendar's all-day row and in Coming up. Nothing to enter by hand; an
 event TBA doesn't list won't appear.
 
+## Key milestones and shop bosses
+
+`20261119120000_workshop_key_dates_and_shop_boss.sql`.
+
+- **Key milestones** (`WorkshopKeyDate`) are dates leads and admins mark on
+  the schedule ("Robot reveal", "Bag and tag"): a day or a run of
+  days, with a name and notes. They go in the calendar's Key dates row after
+  the competition events, in teal with a lighter fill so the events stay the
+  boldest thing there, and in Coming up. Leads drag across the row (or use
+  Add milestone) to add one, drag one to move it, and tap it to change or
+  remove it. They're only dates: ticket milestones (the Milestones page) are
+  separate.
+- **Session type** (`WorkshopSession.kind`): a shop session or driver
+  practice, picked in the session dialog. Only shop sessions count as shop
+  time: sessions and hours left before an event, burnup session forecasts,
+  the next session on My tasks, and the sessions a ticket can be added to.
+  A plan carries over from the previous *shop* session, skipping driver
+  practice, and driver practice doesn't carry anything over.
+- **Shop boss** (`WorkshopSession.shop_boss`): who runs a session. It's in
+  the session page's sidebar, where leads and admins click it to change it
+  (it saves straight away, like a ticket's owner). They can also set it in
+  the session dialog, where "this and following" carries it through a
+  series. A new session starts with whoever ran the latest one.
+  The migration gave every existing session Allen Bailey (matched by name).
+
 ## Part sorter
+
+Hidden for now: its route is commented out in `router.ts` and its link taken
+out of `NavBar.vue`, so `/part-sorter` goes to My tasks. The page and its files
+are kept.
 
 Finds the bolts in a photo with a small neural network (ONNX Runtime Web, on
 the phone's GPU where the browser allows, else its CPU), then measures and
