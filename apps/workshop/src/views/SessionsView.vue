@@ -5,16 +5,17 @@ import FullCalendar from '@fullcalendar/vue3';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import type { CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput, EventSourceFuncArg } from '@fullcalendar/core';
+import type { CalendarApi, CalendarOptions, DateSelectArg, EventClickArg, EventDropArg, EventInput, EventSourceFuncArg } from '@fullcalendar/core';
+import AppDialog from '@greybots/common/components/AppDialog.vue';
 import type { EventResizeDoneArg } from '@fullcalendar/interaction';
 import { useViewModeStore } from '@greybots/common/stores/view-mode-store';
 import KeyDateDialog from '@/components/KeyDateDialog.vue';
 import SessionDialog from '@/components/SessionDialog.vue';
 import { errorMessage } from '@/lib/db';
-import { addDays, formatDay, formatSessionTime, toDateString, today } from '@/lib/dates';
+import { addDays, combine, formatDay, formatSessionTime, parseDate, toDateString, today } from '@/lib/dates';
 import { eventName, fetchEvents, type TeamEvent } from '@/lib/events';
 import { fetchKeyDates, updateKeyDate, type KeyDate } from '@/lib/keyDates';
-import { fetchPlansFor, fetchSessions, sessionKindLabels, updateSession, type Session } from '@/lib/sessions';
+import { fetchPlansFor, fetchSessions, sessionKindLabels, updateSession, type Session, type SessionKind } from '@/lib/sessions';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDirectoryStore } from '@/stores/directory-store';
 
@@ -26,7 +27,9 @@ import { useDirectoryStore } from '@/stores/directory-store';
 // Sessions are shop sessions or driver practice, each in its own colour.
 // The month view shows each day's highlights, most important first:
 // competition events, then key milestones, then sessions ("+n more" when a
-// day is full).
+// day is full). Leads tap an empty day there to add something to it, or
+// drag across days to add a key milestone. The week numbers down the side
+// (and each day's number) open that week.
 //
 // The all-day row ("Key dates") holds the team's competition events (from
 // GreyScout's event list, so they can't be moved or edited here) and, after
@@ -48,6 +51,7 @@ const calendar = ref<InstanceType<typeof FullCalendar> | null>(null);
 const dialogOpen = ref(false);
 const editingSession = ref<Session | null>(null);
 const newRange = ref<{ start: string; end: string } | null>(null);
+const newKind = ref<SessionKind | null>(null);
 
 const keyDateDialogOpen = ref(false);
 const editingKeyDate = ref<KeyDate | null>(null);
@@ -154,10 +158,34 @@ function openKeyDate(keyDate: KeyDate | null, range?: { start: string; end: stri
   keyDateDialogOpen.value = true;
 }
 
-function openNew(start?: string, end?: string) {
+function openNew(start?: string, end?: string, kind: SessionKind | null = null) {
   editingSession.value = null;
   newRange.value = start && end ? { start, end } : null;
+  newKind.value = kind;
   dialogOpen.value = true;
+}
+
+// --- Month view: tapping an empty day ---
+
+// The day ("YYYY-MM-DD") a lead tapped in the month view, to add something to.
+const addingOn = ref<string | null>(null);
+
+function dayIsEmpty(api: CalendarApi, day: string) {
+  const start = parseDate(day).getTime();
+  const end = parseDate(addDays(day, 1)).getTime();
+  return !api.getEvents().some((e) => {
+    const from = e.start?.getTime() ?? 0;
+    const to = e.end?.getTime() ?? from + 1;
+    return from < end && to > start;
+  });
+}
+
+function addOnDay(what: 'key' | SessionKind) {
+  const day = addingOn.value;
+  addingOn.value = null;
+  if (!day) return;
+  if (what === 'key') openKeyDate(null, { start: day, end: day });
+  else openNew(combine(day, '18:00'), combine(day, '21:00'), what);
 }
 
 async function reschedule(info: EventDropArg | EventResizeDoneArg) {
@@ -185,15 +213,23 @@ const options: CalendarOptions = {
   plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
   initialView: viewMode.isMobile ? 'threeDay' : 'timeGridWeek',
   views: {
+    timeGridWeek: { buttonText: 'Week' },
     threeDay: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3 days' },
-    // Each day's highlights, as many as fit, then "+n more".
-    dayGridMonth: { dayMaxEvents: true, eventDisplay: 'block', displayEventEnd: false }
+    // Each day's highlights, as many as fit, then "+n more". The week
+    // numbers open that week.
+    dayGridMonth: { buttonText: 'Month', dayMaxEvents: true, eventDisplay: 'block', displayEventEnd: false, weekNumbers: true }
   },
   headerToolbar: {
     left: 'prev,next today',
     center: 'title',
-    right: viewMode.isMobile ? 'dayGridMonth,threeDay' : 'dayGridMonth,timeGridWeek,threeDay'
+    right: 'dayGridMonth,timeGridWeek,threeDay'
   },
+  // Week numbers and day numbers (in the month view) open the week.
+  navLinks: true,
+  navLinkDayClick: (date) => calendar.value?.getApi().changeView('timeGridWeek', date),
+  navLinkWeekClick: (weekStart) => calendar.value?.getApi().changeView('timeGridWeek', weekStart),
+  weekText: 'W',
+  weekNumberFormat: { week: 'numeric' },
   // A fixed height: the day scrolls inside it, starting at the afternoon,
   // when sessions usually are.
   height: viewMode.isMobile ? 560 : 640,
@@ -216,7 +252,12 @@ const options: CalendarOptions = {
   // Sessions stay in the time grid and milestones in the all-day row.
   eventAllow: (span, moving) => span.allDay === !!moving?.allDay,
   select: (info: DateSelectArg) => {
-    if (info.allDay) {
+    const day = toDateString(info.start);
+    const oneDay = addDays(day, 1) === toDateString(info.end);
+    if (info.view.type === 'dayGridMonth' && oneDay) {
+      // A tap on a day: offer to add something only if the day is free.
+      if (dayIsEmpty(info.view.calendar, day)) addingOn.value = day;
+    } else if (info.allDay) {
       openKeyDate(null, { start: toDateString(info.start), end: addDays(toDateString(info.end), -1) });
     } else {
       openNew(info.start.toISOString(), info.end.toISOString());
@@ -302,7 +343,35 @@ const options: CalendarOptions = {
       @close="keyDateDialogOpen = false"
       @saved="reload"
     />
-    <SessionDialog :open="dialogOpen" :session="editingSession" :start="newRange?.start" :end="newRange?.end" @close="dialogOpen = false" @saved="reload" />
+    <AppDialog :open="!!addingOn" :title="addingOn ? `Add to ${formatDay(addingOn)}` : ''" @close="addingOn = null">
+      <div class="add-choices">
+        <button type="button" class="add-choice key" @click="addOnDay('key')">
+          <strong>Key milestone</strong>
+          <span class="muted">A date on the schedule, like a reveal</span>
+        </button>
+        <button type="button" class="add-choice shop" @click="addOnDay('shop')">
+          <strong>{{ sessionKindLabels.shop }}</strong>
+          <span class="muted">Shop time, with a plan</span>
+        </button>
+        <button type="button" class="add-choice practice" @click="addOnDay('driver_practice')">
+          <strong>{{ sessionKindLabels.driver_practice }}</strong>
+          <span class="muted">On the schedule, not counted as shop time</span>
+        </button>
+      </div>
+      <template #actions>
+        <span class="actions-spacer"></span>
+        <button type="button" class="button" @click="addingOn = null">Cancel</button>
+      </template>
+    </AppDialog>
+    <SessionDialog
+      :open="dialogOpen"
+      :session="editingSession"
+      :start="newRange?.start"
+      :end="newRange?.end"
+      :kind="newKind"
+      @close="dialogOpen = false"
+      @saved="reload"
+    />
   </div>
 </template>
 
@@ -354,6 +423,43 @@ button.upcoming-link {
 .key-notes {
   flex-basis: 100%;
   font-size: 0.85rem;
+}
+
+.add-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--primary-text-color);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-choice:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.add-choice.key {
+  box-shadow: inset 4px 0 0 var(--key-date-color);
+}
+
+.add-choice.shop {
+  box-shadow: inset 4px 0 0 var(--session-color);
+}
+
+.add-choice.practice {
+  box-shadow: inset 4px 0 0 var(--driver-practice-color);
 }
 
 .header-actions {

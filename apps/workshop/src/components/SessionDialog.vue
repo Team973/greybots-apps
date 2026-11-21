@@ -31,6 +31,8 @@ const props = defineProps<{
   // Where a new one starts and ends (from dragging across the calendar).
   start?: string | null;
   end?: string | null;
+  // What a new one is (shop unless said otherwise).
+  kind?: SessionKind | null;
 }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 const directory = useDirectoryStore();
@@ -73,8 +75,8 @@ watch(
       notes.value = s.notes;
       shopBoss.value = s.shop_boss ?? '';
     } else {
-      kind.value = 'shop';
-      title.value = sessionKindTitles.shop;
+      kind.value = props.kind ?? 'shop';
+      title.value = sessionKindTitles[kind.value];
       const start = props.start ? new Date(props.start) : null;
       date.value = start ? toDateString(start) : toDateString(new Date());
       startTime.value = props.start ? toTimeString(props.start) : '18:00';
@@ -179,7 +181,7 @@ function remove() {
 </script>
 
 <template>
-  <AppDialog :open="open" :title="editing ? 'Change session' : 'Add a shop session'" @close="emit('close')">
+  <AppDialog :open="open" :title="editing ? 'Change session' : kind === 'driver_practice' ? 'Add driver practice' : 'Add a shop session'" @close="emit('close')">
     <form id="session-form" class="form-grid" @submit.prevent="save">
       <div class="field full">
         <span>Type</span>
