@@ -2868,6 +2868,10 @@ CREATE TABLE IF NOT EXISTS public."WorkshopSession" (
     -- unfinished tickets (see workshop_seed_session_plan).
     "plan_seeded" boolean NOT NULL DEFAULT false,
     "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    -- The person running the session (20261119120000_workshop_key_dates_and_shop_boss.sql).
+    "shop_boss" uuid REFERENCES public."User"("user_id") ON DELETE SET NULL,
+    -- 'shop' or 'driver_practice' (same migration): only shop sessions count as shop time.
+    "kind" text NOT NULL DEFAULT 'shop' CHECK ("kind" IN ('shop', 'driver_practice')),
     CONSTRAINT "WorkshopSession_time_check" CHECK ("ends_at" > "starts_at")
 );
 
@@ -2920,8 +2924,14 @@ BEGIN
     RETURN 0;
   END IF;
 
+  -- Only shop sessions carry plans over; driver practice starts empty.
+  IF this_session."kind" <> 'shop' THEN
+    UPDATE public."WorkshopSession" SET "plan_seeded" = true WHERE "id" = p_session_id;
+    RETURN 0;
+  END IF;
+
   SELECT s."id" INTO previous_id FROM public."WorkshopSession" s
-    WHERE s."starts_at" < this_session."starts_at"
+    WHERE s."starts_at" < this_session."starts_at" AND s."kind" = 'shop'
     ORDER BY s."starts_at" DESC LIMIT 1;
 
   IF previous_id IS NOT NULL THEN
@@ -3583,6 +3593,34 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+
+-- Workshop key dates on the schedule (see supabase/migrations/20261119120000_workshop_key_dates_and_shop_boss.sql)
+
+-- ---------------------------------------------------------------------------
+-- Key dates
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public."WorkshopKeyDate" (
+    "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "title" text NOT NULL CHECK (btrim("title") <> ''),
+    -- The days it covers, inclusive.
+    "start_date" date NOT NULL,
+    "end_date" date NOT NULL,
+    "notes" text NOT NULL DEFAULT '',
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "created_by" uuid DEFAULT auth.uid() REFERENCES public."User"("user_id") ON DELETE SET NULL,
+    CONSTRAINT "WorkshopKeyDate_range_check" CHECK ("end_date" >= "start_date")
+);
+
+CREATE INDEX IF NOT EXISTS "workshop_key_date_start_idx" ON public."WorkshopKeyDate" ("start_date");
+
+ALTER TABLE public."WorkshopKeyDate" ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON public."WorkshopKeyDate" TO authenticated, service_role;
+
+CREATE POLICY "Enable read access for Workshop" ON public."WorkshopKeyDate" FOR SELECT TO authenticated USING ((SELECT public.has_app_access('workshop')));
+CREATE POLICY "Enable insert for leads and admins" ON public."WorkshopKeyDate" FOR INSERT TO authenticated WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
+CREATE POLICY "Enable update for leads and admins" ON public."WorkshopKeyDate" FOR UPDATE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin')) WITH CHECK ((SELECT public.workshop_role()) IN ('lead', 'admin'));
+CREATE POLICY "Enable delete for leads and admins" ON public."WorkshopKeyDate" FOR DELETE TO authenticated USING ((SELECT public.workshop_role()) IN ('lead', 'admin'));
 
 
 

@@ -11,6 +11,7 @@ import { formatSessionTime } from '@/lib/dates';
 import { fetchNextSession, fetchPlan, seedPlan, type Session } from '@/lib/sessions';
 import { fetchTickets, fetchTicketsByIds, isInterested, type Ticket } from '@/lib/tickets';
 import { useAuthStore } from '@/stores/auth-store';
+import { useDirectoryStore } from '@/stores/directory-store';
 
 // "My tasks": what's on your plate. First, how many shop sessions are left
 // before the next event; then the next shop session
@@ -18,6 +19,7 @@ import { useAuthStore } from '@/stores/auth-store';
 // checklists), then your checklist steps, then everything else of yours
 // that's still open.
 const auth = useAuthStore();
+const directory = useDirectoryStore();
 
 const session = ref<Session | null>(null);
 const planTickets = ref<Ticket[]>([]);
@@ -89,6 +91,7 @@ onMounted(load);
         </div>
         <p v-if="session" class="when">
           <strong>{{ session.title }}</strong> · {{ formatSessionTime(session.starts_at, session.ends_at) }}
+          <template v-if="session.shop_boss"> · Shop boss: {{ directory.personName(session.shop_boss) }}</template>
         </p>
         <p v-if="session?.notes" class="notes">{{ session.notes }}</p>
 

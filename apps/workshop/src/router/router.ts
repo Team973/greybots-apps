@@ -27,13 +27,15 @@ const router = createRouter({
     { path: '/tickets', name: 'tickets', component: () => import('@/views/TicketsView.vue'), meta: { title: 'Tickets', requiresAccess: true, wide: true } },
     { path: '/tickets/:number(\\d+)', name: 'ticket', component: () => import('@/views/TicketView.vue'), meta: { title: 'Ticket', requiresAccess: true, wide: true } },
     { path: '/sessions', name: 'sessions', component: () => import('@/views/SessionsView.vue'), meta: { title: 'Sessions', requiresAccess: true, wide: true } },
-    { path: '/sessions/:id', name: 'session', component: () => import('@/views/SessionView.vue'), meta: { title: 'Session plan', requiresAccess: true } },
+    { path: '/sessions/:id', name: 'session', component: () => import('@/views/SessionView.vue'), meta: { title: 'Session plan', requiresAccess: true, wide: true } },
     { path: '/checklists', name: 'checklists', component: () => import('@/views/ChecklistsView.vue'), meta: { title: 'Checklists', requiresAccess: true } },
     { path: '/checklists/templates/new', name: 'checklist-template-new', component: () => import('@/views/ChecklistTemplateView.vue'), meta: { title: 'New checklist', requiresAccess: true } },
     { path: '/checklists/templates/:id', name: 'checklist-template', component: () => import('@/views/ChecklistTemplateView.vue'), meta: { title: 'Checklist template', requiresAccess: true } },
     { path: '/checklists/:id', name: 'checklist', component: () => import('@/views/ChecklistView.vue'), meta: { title: 'Checklist', requiresAccess: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: 'Dashboard', requiresAccess: true, wide: true } },
-    { path: '/part-sorter', name: 'part-sorter', component: () => import('@/views/PartSorterView.vue'), meta: { title: 'Part sorter', requiresAccess: true, wide: true } },
+    // The Part sorter is hidden for now (its page, PartSorterView.vue, is kept).
+    // To bring it back, restore this route and its link in NavBar.vue:
+    // { path: '/part-sorter', name: 'part-sorter', component: () => import('@/views/PartSorterView.vue'), meta: { title: 'Part sorter', requiresAccess: true, wide: true } },
     { path: '/milestones', name: 'milestones', component: () => import('@/views/MilestonesView.vue'), meta: { title: 'Milestones', requiresAccess: true } },
     { path: '/milestones/:id', name: 'milestone', component: () => import('@/views/MilestoneView.vue'), meta: { title: 'Milestone', requiresAccess: true } },
     { path: '/setup', name: 'setup', component: () => import('@/views/SetupView.vue'), meta: { title: 'Setup', requiresAccess: true, requiresLead: true } },

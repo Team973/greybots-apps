@@ -54,7 +54,7 @@ export async function fetchCountdown(): Promise<Countdown | null> {
     const now = new Date();
     const eventStart = combine(event.start_date, '00:00');
     const underway = event.start_date <= today();
-    const sessions: Session[] = underway ? [] : await fetchSessions(now.toISOString(), eventStart);
+    const sessions: Session[] = underway ? [] : await fetchSessions(now.toISOString(), eventStart, { shopOnly: true });
     const daysLeft = Math.max(0, Math.round((parseDate(event.start_date).getTime() - parseDate(today()).getTime()) / 86_400_000));
 
     const nowMs = now.getTime();
